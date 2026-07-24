@@ -11,3 +11,269 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+// ==========================================
+// ENUMS
+// ==========================================
+
+enum Role {
+  ADMIN
+  EMPLOYEE
+  SCHOLAR
+}
+
+enum ApplicationStatus {
+  PENDING
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum GradeReportStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum ContractStatus {
+  PENDING
+  SIGNED
+  TERMINATED
+}
+
+enum DisbursementStatus {
+  PENDING
+  RELEASED
+  CLAIMED
+  CANCELLED
+}
+
+enum DocumentStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+// ==========================================
+// CORE USER & PROFILE MODELS
+// ==========================================
+
+model User {
+  user_id       Int       @id @default(autoincrement())
+  email         String    @unique @db.VarChar(255)
+  password_hash String    @db.VarChar(255)
+  role          Role      @default(SCHOLAR)
+  is_active     Boolean   @default(true)
+  last_login_at DateTime?
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  employee         Employee?
+  scholar_profile  ScholarProfile?
+  signed_contracts Contract[]      @relation("UserSignedContracts")
+  messages_sent    Message[]       @relation("UserSentMessages")
+
+  @@map("users")
+}
+
+model Employee {
+  employee_id Int     @id @default(autoincrement())
+  user_id     Int     @unique
+  first_name  String  @db.VarChar(100)
+  last_name   String  @db.VarChar(100)
+  title       String? @db.VarChar(150)
+  department  String? @db.VarChar(150)
+  bio         String? @db.Text
+  avatar_url  String? @db.VarChar(255)
+  banner_url  String? @db.VarChar(255)
+  is_active   Boolean @default(true)
+
+  user User @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+
+  sponsored_scholars     ScholarProfile[]  @relation("SponsorEmployee")
+  reviewed_applications  Application[]     @relation("EmployeeReviewedApplications")
+  reviewed_grade_reports GradeReport[]     @relation("EmployeeReviewedGradeReports")
+  approved_disbursements Disbursement[]    @relation("EmployeeApprovedDisbursements")
+  reviewed_documents     ScholarDocument[] @relation("EmployeeReviewedDocuments")
+  meetings               Meeting[]
+
+  @@map("employees")
+}
+
+model ScholarProfile {
+  profile_id          Int     @id @default(autoincrement())
+  user_id             Int     @unique
+  sponsor_employee_id Int?
+  scholarship_track   String? @db.VarChar(100)
+  course_of_study     String? @db.VarChar(150)
+  school_name         String? @db.VarChar(150)
+  current_year_level  Int?    @db.SmallInt
+  bio                 String? @db.Text
+  avatar_url          String? @db.VarChar(255)
+  banner_url          String? @db.VarChar(255)
+  student_number      String? @db.VarChar(50)
+
+  user             User      @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+  sponsor_employee Employee? @relation("SponsorEmployee", fields: [sponsor_employee_id], references: [employee_id])
+
+  applications  Application[]
+  grade_reports GradeReport[]
+  contracts     Contract[]
+  disbursements Disbursement[]
+  documents     ScholarDocument[]
+  meetings      Meeting[]
+
+  @@map("scholar_profiles")
+}
+
+// ==========================================
+// SCHOLARSHIP WORKFLOW MODELS
+// ==========================================
+
+model Application {
+  application_id          Int               @id @default(autoincrement())
+  scholar_profile_id      Int
+  reviewed_by_employee_id Int?
+  status                  ApplicationStatus @default(PENDING)
+  stage                   String            @db.VarChar(100)
+  submitted_at            DateTime          @default(now())
+  stage_updated_at        DateTime?
+  interview_at            DateTime?
+  decision_at             DateTime?
+  verified_at             DateTime?
+  provider_notes          String?           @db.Text
+  rejection_reason        String?           @db.Text
+  closed_at               DateTime?
+
+  scholar_profile      ScholarProfile @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
+  reviewed_by_employee Employee?       @relation("EmployeeReviewedApplications", fields: [reviewed_by_employee_id], references: [employee_id])
+
+  @@map("applications")
+}
+
+model GradeReport {
+  report_id               Int               @id @default(autoincrement())
+  scholar_profile_id      Int
+  academic_year           String            @db.VarChar(15)
+  semester                String            @db.VarChar(15)
+  term                    String?           @db.VarChar(15)
+  gpa                     Decimal           @db.Decimal(3, 2)
+  document_url            String?           @db.VarChar(255)
+  file_name               String?           @db.VarChar(100)
+  file_size               String?           @db.VarChar(50)
+  status                  GradeReportStatus @default(PENDING)
+  submitted_at            DateTime          @default(now())
+  reviewed_at             DateTime?
+  reviewed_by_employee_id Int?
+  remarks                 String?           @db.Text
+
+  scholar_profile      ScholarProfile @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
+  reviewed_by_employee Employee?       @relation("EmployeeReviewedGradeReports", fields: [reviewed_by_employee_id], references: [employee_id])
+
+  @@map("grade_reports")
+}
+
+model Contract {
+  contract_id        Int            @id @default(autoincrement())
+  scholar_profile_id Int
+  signed_by_user_id  Int?
+  contract_number    String         @db.VarChar(100)
+  document_url       String?        @db.VarChar(255)
+  status             ContractStatus @default(PENDING)
+  effective_date     DateTime?      @db.Date
+  expiry_date        DateTime?      @db.Date
+  signed_at          DateTime?
+  version            Int            @default(1)
+
+  scholar_profile ScholarProfile @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
+  signed_by_user  User?          @relation("UserSignedContracts", fields: [signed_by_user_id], references: [user_id])
+
+  @@map("contracts")
+}
+
+model Disbursement {
+  disbursement_id         Int                @id @default(autoincrement())
+  scholar_profile_id      Int
+  academic_year           String             @db.VarChar(15)
+  semester                String             @db.VarChar(15)
+  amount                  Decimal            @db.Decimal(10, 2)
+  check_payee             String?            @db.VarChar(100)
+  check_number            String?            @db.VarChar(100)
+  payment_method          String?            @db.VarChar(100)
+  status                  DisbursementStatus @default(PENDING)
+  date_issued             DateTime?          @db.Date
+  date_claimed            DateTime?          @db.Date
+  approved_by_employee_id Int?
+  remarks                 String?            @db.Text
+
+  scholar_profile      ScholarProfile @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
+  approved_by_employee Employee?       @relation("EmployeeApprovedDisbursements", fields: [approved_by_employee_id], references: [employee_id])
+
+  @@map("disbursements")
+}
+
+model ScholarDocument {
+  document_id             Int            @id @default(autoincrement())
+  scholar_profile_id      Int
+  document_type           String         @db.VarChar(100)
+  label                   String?        @db.VarChar(100)
+  file_name               String?        @db.VarChar(100)
+  file_url                String         @db.VarChar(255)
+  file_size               String?        @db.VarChar(100)
+  status                  DocumentStatus @default(PENDING)
+  uploaded_at             DateTime       @default(now())
+  verified_at             DateTime?
+  reviewed_by_employee_id Int?
+
+  scholar_profile      ScholarProfile @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
+  reviewed_by_employee Employee?       @relation("EmployeeReviewedDocuments", fields: [reviewed_by_employee_id], references: [employee_id])
+
+  @@map("scholar_documents")
+}
+
+// ==========================================
+// COMMUNICATION & SCHEDULING MODELS
+// ==========================================
+
+model Conversation {
+  conversation_id Int       @id @default(autoincrement())
+  subject         String?   @db.VarChar(255)
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  messages Message[]
+
+  @@map("conversations")
+}
+
+model Message {
+  message_id      Int       @id @default(autoincrement())
+  conversation_id Int
+  sender_user_id  Int
+  message_text    String    @db.Text
+  sent_at         DateTime  @default(now())
+  read_at         DateTime?
+
+  conversation Conversation @relation(fields: [conversation_id], references: [conversation_id], onDelete: Cascade)
+  sender_user  User         @relation("UserSentMessages", fields: [sender_user_id], references: [user_id])
+
+  @@map("messages")
+}
+
+model Meeting {
+  meeting_id         Int       @id @default(autoincrement())
+  scholar_profile_id Int?
+  employee_id        Int?
+  title              String    @db.VarChar(150)
+  meeting_date       DateTime  @db.Date
+  meeting_time       String?   @db.VarChar(50)
+  invitee_role       String?   @db.VarChar(100)
+  status             String?   @db.VarChar(100)
+  notes              String?   @db.Text
+  created_at         DateTime  @default(now())
+
+  scholar_profile ScholarProfile? @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
+  employee        Employee?       @relation(fields: [employee_id], references: [employee_id])
+
+  @@map("meetings")
+}
