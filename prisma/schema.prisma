@@ -18,7 +18,8 @@ datasource db {
 
 enum Role {
   ADMIN
-  EMPLOYEE
+  GRANTOR
+  COORDINATOR
   SCHOLAR
 }
 
@@ -103,6 +104,8 @@ model Employee {
 model ScholarProfile {
   profile_id          Int     @id @default(autoincrement())
   user_id             Int     @unique
+  first_name          String  @default("")  @db.VarChar(100)
+  last_name           String  @default("")  @db.VarChar(100)
   sponsor_employee_id Int?
   scholarship_track   String? @db.VarChar(100)
   course_of_study     String? @db.VarChar(150)
