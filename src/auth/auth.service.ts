@@ -13,13 +13,39 @@ import { LoginDto } from './dto/login.dto.js';
 import { Role } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
+import { CloudinaryService } from '../cloudinary/cloudinary.service.js';
 
 @Injectable()
 export class AuthService {
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
+    private cloudinaryService: CloudinaryService,
   ) {}
+
+  // Method to handle Avatar upload
+  async uploadAvatar(userId: number, file: Express.Multer.File) {
+    const result = await this.cloudinaryService.uploadImage(
+      file,
+      'viascholar/avatars',
+    );
+    const imageUrl = result.secure_url;
+
+    // Save the URL to user's profile
+    return this.updateProfile(userId, { avatar_url: imageUrl });
+  }
+
+  // Method to handle Banner upload
+  async uploadBanner(userId: number, file: Express.Multer.File) {
+    const result = await this.cloudinaryService.uploadImage(
+      file,
+      'viascholar/banners',
+    );
+    const imageUrl = result.secure_url;
+
+    // Save the URL to user's profile
+    return this.updateProfile(userId, { banner_url: imageUrl });
+  }
 
   // 1. Public Scholar Signup
   async registerScholar(dto: RegisterScholarDto) {
