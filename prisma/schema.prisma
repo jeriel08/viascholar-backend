@@ -73,6 +73,7 @@ model User {
   scholar_profile  ScholarProfile?
   signed_contracts Contract[]      @relation("UserSignedContracts")
   messages_sent    Message[]       @relation("UserSentMessages")
+  auditLogs        AuditLog[]
 
   @@map("users")
 }
@@ -279,4 +280,16 @@ model Meeting {
   employee        Employee?       @relation(fields: [employee_id], references: [employee_id])
 
   @@map("meetings")
+}
+
+model AuditLog {
+  log_id     Int      @id @default(autoincrement())
+  user_id    Int?
+  action     String   @db.VarChar(100)
+  details    String?  @db.Text
+  created_at DateTime @default(now())
+
+  user User? @relation(fields: [user_id], references: [user_id], onDelete: SetNull)
+
+  @@map("audit_logs")
 }

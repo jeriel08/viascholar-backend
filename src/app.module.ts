@@ -3,6 +3,8 @@ import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { CloudinaryModule } from './cloudinary/cloudinary.module.js';
+import { AuditModule } from './audit/audit.module.js';
+import { UsersModule } from './users/users.module.js';
 
 @Module({
   imports: [
@@ -10,6 +12,8 @@ import { CloudinaryModule } from './cloudinary/cloudinary.module.js';
     PrismaModule,
     AuthModule,
     CloudinaryModule,
+    AuditModule,
+    UsersModule,
   ],
   controllers: [],
   providers: [],
