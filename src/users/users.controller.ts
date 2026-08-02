@@ -18,6 +18,7 @@ import { Roles } from '../auth/decorators/roles.decorator.js';
 import { Role } from '../generated/prisma/enums.js';
 import { QueryUsersDto } from './dto/query-users.dto.js';
 import { UpdateUserStatusDto } from './dto/update-user-status.dto.js';
+import { ResetPasswordDto } from './dto/reset-password.dto.js';
 
 @ApiTags('User Management (Admin)')
 @ApiBearerAuth()
@@ -63,5 +64,16 @@ export class UsersController {
     @Body() dto: UpdateUserStatusDto,
   ) {
     return this.usersService.updateStatus(req.user.user_id, id, dto);
+  }
+
+  @Patch(':id/reset-password')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Reset a user password (Admin only)' })
+  resetPassword(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ResetPasswordDto,
+  ) {
+    return this.usersService.resetPassword(req.user.user_id, id, dto);
   }
 }

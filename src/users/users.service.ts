@@ -3,6 +3,8 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { QueryUsersDto } from './dto/query-users.dto.js';
 import { UpdateUserStatusDto } from './dto/update-user-status.dto.js';
+import { ResetPasswordDto } from './dto/reset-password.dto.js';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class UsersService {
@@ -119,5 +121,37 @@ export class UsersService {
     );
 
     return updatedUser;
+  }
+
+  async resetPassword(
+    adminUserId: number,
+    targetUserId: number,
+    dto: ResetPasswordDto,
+  ) {
+    const user = await this.prisma.user.findUnique({
+      where: { user_id: targetUserId },
+    });
+
+    if (!user) {
+      throw new NotFoundException(`User with ID ${targetUserId} not found.`);
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.new_password, 10);
+
+    await this.prisma.user.update({
+      where: { user_id: targetUserId },
+      data: { password_hash: hashedPassword },
+    });
+
+    // 🚀 Audit log the password reset
+    await this.auditService.log(
+      adminUserId,
+      'USER_PASSWORD_RESET',
+      `Admin (ID: ${adminUserId}) reset password for User (ID: ${targetUserId})`,
+    );
+
+    return {
+      message: `Password for user ID ${targetUserId} reset successfully.`,
+    };
   }
 }

@@ -76,6 +76,7 @@ model User {
   auditLogs        AuditLog[]
 
   @@map("users")
+  systemSettings SystemSetting[] @relation("SettingsUpdatedBy")
 }
 
 model Employee {
@@ -292,4 +293,30 @@ model AuditLog {
   user User? @relation(fields: [user_id], references: [user_id], onDelete: SetNull)
 
   @@map("audit_logs")
+}
+
+model SystemSetting {
+  setting_id          Int      @id @default(autoincrement())
+  grade_threshold     Decimal  @default(90.00) @db.Decimal(5, 2)
+  updated_at          DateTime @updatedAt
+  updated_by_user_id  Int?
+
+  updated_by_user User? @relation("SettingsUpdatedBy", fields: [updated_by_user_id], references: [user_id])
+
+  @@map("system_settings")
+}
+
+model SchoolGradingSystem {
+  school_id     Int      @id @default(autoincrement())
+  school_name   String   @unique @db.VarChar(150)
+  grading_scale String   @db.VarChar(50) // e.g. "PERCENTAGE_100", "NUMERIC_5_POINT", "NUMERIC_4_POINT"
+  passing_grade Decimal  @db.Decimal(5, 2) // e.g. 75.00 or 3.00
+  highest_grade Decimal  @db.Decimal(5, 2) // e.g. 100.00 or 1.00
+  failing_grade  Decimal  @db.Decimal(5, 2) // e.g. 50.00 or 5.00
+  special_codes Json?    @db.JsonB
+  notes         String?  @db.Text
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  @@map("school_grading_systems")
 }

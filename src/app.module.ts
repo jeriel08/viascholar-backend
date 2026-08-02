@@ -5,6 +5,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { CloudinaryModule } from './cloudinary/cloudinary.module.js';
 import { AuditModule } from './audit/audit.module.js';
 import { UsersModule } from './users/users.module.js';
+import { SettingsModule } from './settings/settings.module.js';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { UsersModule } from './users/users.module.js';
     CloudinaryModule,
     AuditModule,
     UsersModule,
+    SettingsModule,
   ],
   controllers: [],
   providers: [],
