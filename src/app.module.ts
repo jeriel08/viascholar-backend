@@ -7,6 +7,8 @@ import { AuditModule } from './audit/audit.module.js';
 import { UsersModule } from './users/users.module.js';
 import { SettingsModule } from './settings/settings.module.js';
 import { ApplicationsModule } from './applications/applications.module.js';
+import { WebhooksModule } from './webhooks/webhooks.module.js';
+import { DocumentsModule } from './documents/documents.module.js';
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { ApplicationsModule } from './applications/applications.module.js';
     UsersModule,
     SettingsModule,
     ApplicationsModule,
+    WebhooksModule,
+    DocumentsModule,
   ],
   providers: [],
 })

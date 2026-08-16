@@ -5,5 +5,6 @@ import { SettingsService } from './settings.service.js';
 @Module({
   controllers: [SettingsController],
   providers: [SettingsService],
+  exports: [SettingsService],
 })
 export class SettingsModule {}

@@ -32,7 +32,8 @@ enum ApplicationStatus {
 
 enum GradeReportStatus {
   PENDING
-  VERIFIED
+  APPROVED
+  FLAGGED
   REJECTED
 }
 
@@ -51,6 +52,8 @@ enum DisbursementStatus {
 
 enum DocumentStatus {
   PENDING
+  PASSED_PRECHECK
+  NEEDS_REUPLOAD
   VERIFIED
   REJECTED
 }
@@ -159,14 +162,14 @@ model Application {
 model GradeReport {
   report_id               Int               @id @default(autoincrement())
   scholar_profile_id      Int
+  document_id             Int?
   academic_year           String            @db.VarChar(15)
   semester                String            @db.VarChar(15)
   term                    String?           @db.VarChar(15)
   gpa                     Decimal           @db.Decimal(3, 2)
-  document_url            String?           @db.VarChar(255)
-  file_name               String?           @db.VarChar(100)
-  file_size               String?           @db.VarChar(50)
   status                  GradeReportStatus @default(PENDING)
+  evaluation_flag         String?           @db.VarChar(50)  // "CLEARED", "BELOW_PASSING_MARK", "ACADEMIC_FAILURE"
+  is_eligible             Boolean           @default(false)
   submitted_at            DateTime          @default(now())
   reviewed_at             DateTime?
   reviewed_by_employee_id Int?
@@ -174,6 +177,8 @@ model GradeReport {
 
   scholar_profile      ScholarProfile @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
   reviewed_by_employee Employee?       @relation("EmployeeReviewedGradeReports", fields: [reviewed_by_employee_id], references: [employee_id])
+  document             ScholarDocument? @relation(fields: [document_id], references: [document_id], onDelete: SetNull)
+  grade_items          GradeItem[]
 
   @@map("grade_reports")
 }
@@ -225,15 +230,34 @@ model ScholarDocument {
   file_name               String?        @db.VarChar(100)
   file_url                String         @db.VarChar(255)
   file_size               String?        @db.VarChar(100)
+  file_type               String         @db.VarChar(20)
   status                  DocumentStatus @default(PENDING)
+  rejection_reason        String?        @db.Text
+  extracted_data          Json?          @db.JsonB // Raw JSON returned by Parseur AI
+  parseur_doc_id          String?        @db.VarChar(100)
   uploaded_at             DateTime       @default(now())
   verified_at             DateTime?
   reviewed_by_employee_id Int?
 
   scholar_profile      ScholarProfile @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
   reviewed_by_employee Employee?       @relation("EmployeeReviewedDocuments", fields: [reviewed_by_employee_id], references: [employee_id])
+  grade_reports        GradeReport[]
 
   @@map("scholar_documents")
+}
+
+model GradeItem {
+  item_id      Int     @id @default(autoincrement())
+  report_id    Int
+  subject_code String  @db.VarChar(50)  // e.g. "IT 411", "GE 101"
+  subject_name String? @db.VarChar(150) // e.g. "Capstone Project 1"
+  units        Decimal @db.Decimal(3, 1) // e.g. 3.0, 1.5
+  grade        Decimal @db.Decimal(5, 2) // e.g. 3.50, 92.00, 1.00
+  raw_status   String? @db.VarChar(50)  // e.g. "PASSED", "FAILED", "DROPPED", "7.2"
+
+  grade_report GradeReport @relation(fields: [report_id], references: [report_id], onDelete: Cascade)
+
+  @@map("grade_items")
 }
 
 // ==========================================
