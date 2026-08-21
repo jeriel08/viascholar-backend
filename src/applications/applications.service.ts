@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
+import { Role } from '../generated/prisma/enums.js';
 import { CreateApplicationDto } from './dto/create-application.dto.js';
 import { QueryApplicationsDto } from './dto/query-applications.dto.js';
 import { UpdateApplicationStageDto } from './dto/update-stage.dto.js';
@@ -130,27 +131,49 @@ export class ApplicationsService {
       throw new NotFoundException(`Application ID ${applicationId} not found.`);
     }
 
-    const updated = await this.prisma.application.update({
-      where: { application_id: applicationId },
-      data: {
-        status: dto.status,
-        stage: dto.stage,
-        stage_updated_at: new Date(),
-        interview_at: dto.interview_at ? new Date(dto.interview_at) : undefined,
-        provider_notes: dto.provider_notes,
-        rejection_reason: dto.rejection_reason,
-        reviewed_by_employee_id: employee.employee_id,
-        decision_at: ['APPROVED', 'REJECTED'].includes(dto.status)
-          ? new Date()
-          : undefined,
+    const { application: updated, promoted } = await this.prisma.$transaction(
+      async (tx) => {
+        const application = await tx.application.update({
+          where: { application_id: applicationId },
+          data: {
+            status: dto.status,
+            stage: dto.stage,
+            stage_updated_at: new Date(),
+            interview_at: dto.interview_at
+              ? new Date(dto.interview_at)
+              : undefined,
+            provider_notes: dto.provider_notes,
+            rejection_reason: dto.rejection_reason,
+            reviewed_by_employee_id: employee.employee_id,
+            decision_at: ['APPROVED', 'REJECTED'].includes(dto.status)
+              ? new Date()
+              : undefined,
+          },
+        });
+
+        let promotedCount = 0;
+
+        if (dto.status === 'APPROVED') {
+          const result = await tx.user.updateMany({
+            where: {
+              scholar_profile: { profile_id: application.scholar_profile_id },
+              role: Role.APPLICANT,
+            },
+            data: { role: Role.SCHOLAR },
+          });
+          promotedCount = result.count;
+        }
+
+        return { application, promoted: promotedCount > 0 };
       },
-    });
+    );
 
     // Audit log stage transition
     await this.auditService.log(
       employeeUserId,
       'APPLICATION_STAGE_UPDATED',
-      `Application ID ${applicationId} stage updated to '${dto.stage}' (${dto.status})`,
+      `Application ID ${applicationId} stage updated to '${dto.stage}' (${dto.status})` +
+        (promoted ? ' — applicant promoted to SCHOLAR' : ''),
     );
 
     return updated;

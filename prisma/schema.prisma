@@ -21,6 +21,7 @@ enum Role {
   GRANTOR
   COORDINATOR
   SCHOLAR
+  APPLICANT
 }
 
 enum ApplicationStatus {
@@ -54,6 +55,7 @@ enum DocumentStatus {
   PENDING
   PASSED_PRECHECK
   NEEDS_REUPLOAD
+  STUDENT_CONFIRMED
   VERIFIED
   REJECTED
 }
@@ -66,7 +68,7 @@ model User {
   user_id       Int       @id @default(autoincrement())
   email         String    @unique @db.VarChar(255)
   password_hash String    @db.VarChar(255)
-  role          Role      @default(SCHOLAR)
+  role          Role      @default(APPLICANT)
   is_active     Boolean   @default(true)
   last_login_at DateTime?
   created_at    DateTime  @default(now())
@@ -234,6 +236,7 @@ model ScholarDocument {
   status                  DocumentStatus @default(PENDING)
   rejection_reason        String?        @db.Text
   extracted_data          Json?          @db.JsonB // Raw JSON returned by Parseur AI
+  confirmed_data          Json?          @db.JsonB // Student-reviewed/corrected data
   parseur_doc_id          String?        @db.VarChar(100)
   uploaded_at             DateTime       @default(now())
   verified_at             DateTime?

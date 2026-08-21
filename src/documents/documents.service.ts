@@ -1,11 +1,28 @@
 // src/documents/documents.service.ts
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CloudinaryService } from '../cloudinary/cloudinary.service.js';
 import { SettingsService } from '../settings/settings.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { VerifyDocumentDto } from './dto/verify-document.dto.js';
+import { ConfirmDocumentDto } from './dto/confirm-document.dto.js';
 import { ConfigService } from '@nestjs/config';
+import type { Application } from '../generated/prisma/client.js';
+
+interface ConfirmedGradeData {
+  academic_year?: string;
+  grade_items?: {
+    subject_code: string;
+    subject_name?: string;
+    units: number;
+    grade: number;
+  }[];
+}
 
 @Injectable()
 export class DocumentsService {
@@ -34,7 +51,7 @@ export class DocumentsService {
     }
 
     // Upload image or PDF to Cloudinary
-    const cloudinaryResult = await this.cloudinaryService.uploadImage(
+    const cloudinaryResult = await this.cloudinaryService.uploadDocument(
       file,
       'viascholar/documents',
     );
@@ -52,8 +69,8 @@ export class DocumentsService {
       },
     });
 
-    // Send the Cloudinary URL to Parseur for background OCR processing
-    this.sendToParseur(document.document_id, document.file_url).catch((err) => {
+    // Send the document to Parseur for background OCR processing
+    this.sendToParseur(document.document_id, file).catch((err) => {
       this.logger.error(
         `Parseur dispatch failed for doc ${document.document_id}: ${err.message}`,
       );
@@ -62,8 +79,8 @@ export class DocumentsService {
     return document;
   }
 
-  // Helper method: Dispatches document URL to Parseur Mailbox
-  private async sendToParseur(documentId: number, fileUrl: string) {
+  // Helper method: Uploads the document buffer to the Parseur mailbox
+  private async sendToParseur(documentId: number, file: Express.Multer.File) {
     const apiKey = this.configService.get<string>('PARSEUR_API_KEY');
     const mailboxId = this.configService.get<string>('PARSEUR_MAILBOX_ID');
 
@@ -74,20 +91,22 @@ export class DocumentsService {
       return null;
     }
 
+    const form = new FormData();
+    form.append(
+      'file',
+      new Blob([new Uint8Array(file.buffer)], { type: file.mimetype }),
+      file.originalname,
+    );
+    form.append('viascholar_document_id', String(documentId));
+
     const response = await fetch(
       `https://api.parseur.com/parser/${mailboxId}/upload`,
       {
         method: 'POST',
         headers: {
           Authorization: `Token ${apiKey}`,
-          'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          url: fileUrl,
-          custom_fields: {
-            document_id: documentId, // Returned in webhook payload
-          },
-        }),
+        body: form,
       },
     );
 
@@ -98,19 +117,168 @@ export class DocumentsService {
       );
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as {
+      attachments?: { DocumentID?: string | number }[];
+    };
+
+    const parseurDocId = data.attachments?.[0]?.DocumentID;
+    if (parseurDocId != null) {
+      await this.prisma.scholarDocument.update({
+        where: { document_id: documentId },
+        data: { parseur_doc_id: String(parseurDocId) },
+      });
+    }
+
     this.logger.log(
       `Document ID ${documentId} dispatched to Parseur successfully.`,
     );
     return data;
   }
 
-  // 2. Coordinator views pending documents for verification
+  // 2. Scholar views their own documents (incl. OCR data & coordinator remarks)
+  async getMyDocuments(userId: number) {
+    const scholar = await this.prisma.scholarProfile.findUnique({
+      where: { user_id: userId },
+    });
+
+    if (!scholar) {
+      throw new NotFoundException('Scholar profile not found.');
+    }
+
+    return this.prisma.scholarDocument.findMany({
+      where: { scholar_profile_id: scholar.profile_id },
+      orderBy: { uploaded_at: 'desc' },
+      select: {
+        document_id: true,
+        document_type: true,
+        label: true,
+        file_name: true,
+        file_url: true,
+        file_type: true,
+        status: true,
+        rejection_reason: true,
+        extracted_data: true,
+        confirmed_data: true,
+        uploaded_at: true,
+        verified_at: true,
+      },
+    });
+  }
+
+  // 3. Scholar confirms/corrects the OCR-extracted fields for review
+  async confirmDocument(
+    userId: number,
+    documentId: number,
+    dto: ConfirmDocumentDto,
+  ) {
+    const doc = await this.prisma.scholarDocument.findUnique({
+      where: { document_id: documentId },
+      include: { scholar_profile: true },
+    });
+
+    if (!doc) {
+      throw new NotFoundException(`Document ID ${documentId} not found.`);
+    }
+
+    if (doc.scholar_profile.user_id !== userId) {
+      throw new NotFoundException(`Document ID ${documentId} not found.`);
+    }
+
+    if (!['PENDING', 'PASSED_PRECHECK'].includes(doc.status)) {
+      throw new BadRequestException(
+        `Document ID ${documentId} cannot be confirmed while in '${doc.status}' status.`,
+      );
+    }
+
+    const confirmedData = {
+      academic_year: dto.academic_year ?? null,
+      grade_items: (dto.grade_items ?? []).map((i) => ({
+        subject_code: i.subject_code,
+        subject_name: i.subject_name,
+        units: i.units,
+        grade: i.grade,
+      })),
+    };
+
+    const updated = await this.prisma.scholarDocument.update({
+      where: { document_id: documentId },
+      data: {
+        status: 'STUDENT_CONFIRMED',
+        confirmed_data: confirmedData,
+        verified_at: null,
+      },
+    });
+
+    await this.auditService.log(
+      userId,
+      'DOCUMENT_CONFIRMED',
+      `Scholar confirmed document ID ${documentId} (${confirmedData.grade_items.length} grade items).`,
+    );
+
+    return updated;
+  }
+
+  // 4. Staff views the full detail of a single document submission
+  async getDocumentDetail(documentId: number) {
+    const doc = await this.prisma.scholarDocument.findUnique({
+      where: { document_id: documentId },
+      include: {
+        scholar_profile: {
+          include: { user: true, applications: true },
+        },
+      },
+    });
+
+    if (!doc) {
+      throw new NotFoundException(`Document ID ${documentId} not found.`);
+    }
+
+    return doc;
+  }
+
+  // 5. Staff requests re-upload / corrections on an unclear document
+  async requestChanges(
+    employeeUserId: number,
+    documentId: number,
+    reason: string,
+  ) {
+    const doc = await this.prisma.scholarDocument.findUnique({
+      where: { document_id: documentId },
+    });
+
+    if (!doc) {
+      throw new NotFoundException(`Document ID ${documentId} not found.`);
+    }
+
+    const updated = await this.prisma.scholarDocument.update({
+      where: { document_id: documentId },
+      data: {
+        status: 'NEEDS_REUPLOAD',
+        rejection_reason: reason,
+        verified_at: null,
+      },
+    });
+
+    await this.auditService.log(
+      employeeUserId,
+      'DOCUMENT_CHANGES_REQUESTED',
+      `Staff requested changes on document ID ${documentId}: ${reason}`,
+    );
+
+    return updated;
+  }
+
+  // 6. Coordinator views pending documents for verification
   async getPendingDocuments() {
     return this.prisma.scholarDocument.findMany({
       where: {
         status: {
-          in: ['PENDING', 'PASSED_PRECHECK', 'NEEDS_REUPLOAD'],
+          in: [
+            'PENDING',
+            'PASSED_PRECHECK',
+            'NEEDS_REUPLOAD',
+            'STUDENT_CONFIRMED',
+          ],
         },
       },
       orderBy: { uploaded_at: 'asc' },
@@ -122,7 +290,7 @@ export class DocumentsService {
     });
   }
 
-  // 3. Coordinator confirms extracted grades & evaluates against school thresholds
+  // 7. Coordinator confirms extracted grades & evaluates against school thresholds
   async verifyAndEvaluate(
     coordinatorUserId: number,
     documentId: number,
@@ -137,6 +305,20 @@ export class DocumentsService {
       throw new NotFoundException(`Document ID ${documentId} not found.`);
     }
 
+    // Manual entry wins; otherwise fall back to student-confirmed data
+    const confirmed = doc.confirmed_data as ConfirmedGradeData | null;
+    const gradeItems = dto.grade_items?.length
+      ? dto.grade_items
+      : (confirmed?.grade_items ?? []);
+
+    if (gradeItems.length === 0) {
+      throw new BadRequestException(
+        'No grade items provided and no student-confirmed data available for this document.',
+      );
+    }
+
+    const academicYear = dto.academic_year ?? confirmed?.academic_year ?? '';
+
     // Fetch school grading configuration
     const schoolName =
       doc.scholar_profile.school_name || 'University of Mindanao';
@@ -148,9 +330,8 @@ export class DocumentsService {
     let totalUnits = 0;
     let weightedSum = 0;
     let hasFailedGrade = false;
-    let failureReason = '';
 
-    for (const item of dto.grade_items) {
+    for (const item of gradeItems) {
       totalUnits += item.units;
       weightedSum += item.grade * item.units;
 
@@ -161,16 +342,16 @@ export class DocumentsService {
         );
         if (!evaluation.isPassing) {
           hasFailedGrade = true;
-          failureReason = evaluation.statusLabel;
         }
       }
     }
 
     const computedGwa = totalUnits > 0 ? weightedSum / totalUnits : 0;
     const normalizedAcademicYear =
-      dto.academic_year.match(/\d{4}-\d{4}/)?.[0] ??
-      dto.academic_year.slice(0, 15);
-    const normalizedSemester = /2nd/i.test(dto.academic_year)
+      academicYear.match(/\d{4}-\d{4}/)?.[0] ??
+      academicYear.slice(0, 15) ??
+      'AY';
+    const normalizedSemester = /2nd/i.test(academicYear)
       ? '2nd Semester'
       : '1st Semester';
 
@@ -199,7 +380,7 @@ export class DocumentsService {
         evaluation_flag: evalFlag,
         reviewed_by_employee_id: coordinatorUserId,
         grade_items: {
-          create: dto.grade_items.map((i) => ({
+          create: gradeItems.map((i) => ({
             subject_code: i.subject_code,
             subject_name: i.subject_name,
             units: i.units,
@@ -216,12 +397,41 @@ export class DocumentsService {
       data: { status: 'VERIFIED' },
     });
 
+    // Auto-progress the application while it is still awaiting review
+    const application = await this.prisma.application.findFirst({
+      where: { scholar_profile_id: doc.scholar_profile_id },
+      orderBy: { submitted_at: 'desc' },
+    });
+
+    let updatedApplication: Application | null = null;
+
+    if (application && application.status === 'PENDING') {
+      updatedApplication = await this.prisma.application.update({
+        where: { application_id: application.application_id },
+        data: {
+          status: 'UNDER_REVIEW',
+          stage: isEligible
+            ? 'Document Verification Complete'
+            : 'Flagged for Review',
+          stage_updated_at: new Date(),
+        },
+      });
+    }
+
     await this.auditService.log(
       coordinatorUserId,
       'DOCUMENT_VERIFIED',
-      `Coordinator verified document ID ${documentId}. Computed GWA: ${computedGwa.toFixed(2)}, Eligible: ${isEligible}`,
+      `Coordinator verified document ID ${documentId}. Computed GWA: ${computedGwa.toFixed(2)}, Eligible: ${isEligible}` +
+        (updatedApplication
+          ? `; Application ID ${updatedApplication.application_id} moved to '${updatedApplication.stage}'`
+          : ''),
     );
 
-    return { report, isEligible, evaluationFlag: evalFlag };
+    return {
+      report,
+      isEligible,
+      evaluationFlag: evalFlag,
+      application: updatedApplication,
+    };
   }
 }

@@ -63,16 +63,12 @@ export class AuthService {
       data: {
         email: dto.email,
         password_hash: hashedPassword,
-        role: Role.SCHOLAR,
+        role: Role.APPLICANT,
         scholar_profile: {
           create: {
             first_name: dto.first_name,
             last_name: dto.last_name,
             student_number: dto.student_number,
-            school_name: dto.school_name,
-            scholarship_track: dto.scholarship_track,
-            course_of_study: dto.course_of_study,
-            current_year_level: dto.current_year_level,
           },
         },
       },
@@ -179,10 +175,11 @@ export class AuthService {
   ) {
     const payload = { sub: userId, email, role };
     const token = await this.jwtService.signAsync(payload);
-    const profile = ((scholar_profile ?? employee ?? {}) as {
-      first_name?: string;
-      last_name?: string;
-    }) || {};
+    const profile =
+      ((scholar_profile ?? employee ?? {}) as {
+        first_name?: string;
+        last_name?: string;
+      }) || {};
 
     return {
       access_token: token,
@@ -209,8 +206,9 @@ export class AuthService {
       throw new NotFoundException('User account not found.');
     }
 
-    // 1. If User is a Scholar, update scholar_profiles table
-    if (user.role === Role.SCHOLAR && user.scholar_profile) {
+    // 1. If User is an Applicant or Scholar, update scholar_profiles table
+    const studentRoles: Role[] = [Role.APPLICANT, Role.SCHOLAR];
+    if (studentRoles.includes(user.role) && user.scholar_profile) {
       await this.prisma.scholarProfile.update({
         where: { profile_id: user.scholar_profile.profile_id },
         data: {

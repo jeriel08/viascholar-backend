@@ -35,35 +35,4 @@ export class RegisterScholarDto {
   @IsString()
   @IsOptional()
   student_number?: string;
-
-  @ApiProperty({
-    description: 'The school or university of the scholar',
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  school_name?: string;
-
-  @ApiProperty({
-    description: 'The scholarship track of the scholar',
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  scholarship_track?: string;
-
-  @ApiProperty({
-    description: 'The course or degree program of the scholar',
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  course_of_study?: string;
-
-  @ApiProperty({
-    description: 'The current year level of the scholar',
-    required: false,
-  })
-  @IsOptional()
-  current_year_level?: number;
 }

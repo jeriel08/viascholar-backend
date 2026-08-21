@@ -29,6 +29,8 @@ import { DocumentsService } from './documents.service.js';
 import { Roles } from '../auth/decorators/roles.decorator.js';
 import { Role } from '../generated/prisma/enums.js';
 import { VerifyDocumentDto } from './dto/verify-document.dto.js';
+import { ConfirmDocumentDto } from './dto/confirm-document.dto.js';
+import { RequestChangesDto } from './dto/request-changes.dto.js';
 
 @ApiTags('Scholar Documents & Grade Verification')
 @ApiBearerAuth()
@@ -38,7 +40,7 @@ export class DocumentsController {
   constructor(private readonly documentsService: DocumentsService) {}
 
   @Post('upload')
-  @Roles(Role.SCHOLAR)
+  @Roles(Role.APPLICANT, Role.SCHOLAR)
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Scholar uploads TOR / Form 137 / Grade Slip' })
@@ -71,6 +73,29 @@ export class DocumentsController {
     );
   }
 
+  @Get('me')
+  @Roles(Role.APPLICANT, Role.SCHOLAR)
+  @ApiOperation({
+    summary: 'List own documents with OCR data and coordinator remarks',
+  })
+  getMyDocuments(@Request() req) {
+    return this.documentsService.getMyDocuments(req.user.user_id);
+  }
+
+  @Patch(':id/confirm')
+  @Roles(Role.APPLICANT, Role.SCHOLAR)
+  @ApiOperation({
+    summary:
+      'Confirm or correct the OCR-extracted fields and submit for review',
+  })
+  confirmDocument(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ConfirmDocumentDto,
+  ) {
+    return this.documentsService.confirmDocument(req.user.user_id, id, dto);
+  }
+
   @Get('pending')
   @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({
@@ -78,6 +103,30 @@ export class DocumentsController {
   })
   getPendingDocuments() {
     return this.documentsService.getPendingDocuments();
+  }
+
+  @Get(':id')
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @ApiOperation({ summary: 'View full detail of a document submission' })
+  getDocumentDetail(@Param('id', ParseIntPipe) id: number) {
+    return this.documentsService.getDocumentDetail(id);
+  }
+
+  @Patch(':id/request-changes')
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @ApiOperation({
+    summary: 'Flag a document as unclear/inconsistent and request re-upload',
+  })
+  requestChanges(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RequestChangesDto,
+  ) {
+    return this.documentsService.requestChanges(
+      req.user.user_id,
+      id,
+      dto.reason,
+    );
   }
 
   @Patch(':id/verify')

@@ -9,7 +9,6 @@ import { ConfigService } from '@nestjs/config';
 import {
   v2 as cloudinary,
   UploadApiResponse,
-  UploadApiErrorResponse,
 } from 'cloudinary';
 import * as streamifier from 'streamifier';
 
@@ -26,19 +25,16 @@ export class CloudinaryService implements OnModuleInit {
     });
   }
 
-  async uploadImage(
+  private streamUpload(
     file: Express.Multer.File,
-    folder: string = 'viascholar/avatars',
-  ): Promise<UploadApiResponse | UploadApiErrorResponse> {
-    if (!file || !file.buffer) {
-      throw new BadRequestException('No valid file buffer provided.');
-    }
-
+    folder: string,
+    allowedFormats: string[],
+  ): Promise<UploadApiResponse> {
     return new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
           folder: folder,
-          allowed_formats: ['jpg', 'png', 'jpeg', 'webp'],
+          allowed_formats: allowedFormats,
         },
         (error, result) => {
           if (error || !result) {
@@ -65,5 +61,35 @@ export class CloudinaryService implements OnModuleInit {
         );
       }
     });
+  }
+
+  // Method to handle Avatar/Banner uploads (images only)
+  async uploadImage(
+    file: Express.Multer.File,
+    folder: string = 'viascholar/avatars',
+  ): Promise<UploadApiResponse> {
+    if (!file || !file.buffer) {
+      throw new BadRequestException('No valid file buffer provided.');
+    }
+
+    return this.streamUpload(file, folder, ['jpg', 'jpeg', 'png', 'webp']);
+  }
+
+  // Method to handle Scholar document uploads (images and PDFs)
+  async uploadDocument(
+    file: Express.Multer.File,
+    folder: string = 'viascholar/documents',
+  ): Promise<UploadApiResponse> {
+    if (!file || !file.buffer) {
+      throw new BadRequestException('No valid file buffer provided.');
+    }
+
+    return this.streamUpload(file, folder, [
+      'jpg',
+      'jpeg',
+      'png',
+      'webp',
+      'pdf',
+    ]);
   }
 }

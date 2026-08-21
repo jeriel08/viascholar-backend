@@ -20,13 +20,17 @@ export class WebhooksController {
     summary: 'Receive OCR parsed payloads directly from Parseur AI',
   })
   async handleParseurWebhook(@Body() payload: any) {
-    // Extract document ID or metadata passed when posting to Parseur
+    // Extract the internal document ID merged into the parsed result at upload time
     const documentId =
-      payload?.custom_fields?.document_id || payload?.metadata?.document_id;
+      payload?.custom_fields?.viascholar_document_id ??
+      payload?.metadata?.viascholar_document_id ??
+      payload?.Result?.viascholar_document_id ??
+      payload?.result?.viascholar_document_id ??
+      payload?.viascholar_document_id;
 
     if (!documentId) {
       console.warn(
-        'Received Parseur webhook without valid document_id in custom_fields',
+        'Received Parseur webhook without valid viascholar_document_id',
       );
       return { status: 'ignored' };
     }

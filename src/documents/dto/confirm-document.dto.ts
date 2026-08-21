@@ -1,15 +1,11 @@
-// src/documents/dto/verify-document.dto.ts
+// src/documents/dto/confirm-document.dto.ts
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsArray, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { GradeItemDto } from './grade-item.dto.js';
 
-export class VerifyDocumentDto {
-  @ApiPropertyOptional({
-    example: 'AY 2025-2026 1st Sem',
-    description:
-      'Falls back to the student-confirmed academic year when omitted',
-  })
+export class ConfirmDocumentDto {
+  @ApiPropertyOptional({ example: 'AY 2025-2026 1st Sem' })
   @IsString()
   @IsOptional()
   academic_year?: string;
@@ -17,18 +13,11 @@ export class VerifyDocumentDto {
   @ApiPropertyOptional({
     type: [GradeItemDto],
     description:
-      'Omit to evaluate using the student-confirmed grade items instead',
+      'Student-corrected grade items; merged over the OCR extracted data',
   })
   @IsArray()
   @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => GradeItemDto)
   grade_items?: GradeItemDto[];
-
-  @ApiPropertyOptional({
-    example: 'Image was blurry on subject 2, manually updated grade.',
-  })
-  @IsString()
-  @IsOptional()
-  notes?: string;
 }

@@ -28,7 +28,7 @@ export class ApplicationsController {
   constructor(private readonly applicationsService: ApplicationsService) {}
 
   @Post()
-  @Roles(Role.SCHOLAR)
+  @Roles(Role.APPLICANT, Role.SCHOLAR)
   @ApiOperation({
     summary: 'Submit or update scholarship application track (Scholar only)',
   })
@@ -37,7 +37,7 @@ export class ApplicationsController {
   }
 
   @Get('me')
-  @Roles(Role.SCHOLAR)
+  @Roles(Role.APPLICANT, Role.SCHOLAR)
   @ApiOperation({
     summary: 'Get current scholar application status and stage timeline',
   })
