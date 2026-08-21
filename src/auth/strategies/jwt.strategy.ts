@@ -30,6 +30,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
 
     const { password_hash, ...result } = user;
-    return result;
+    const profile = ((result.scholar_profile ?? result.employee ?? {}) as {
+      first_name?: string;
+      last_name?: string;
+    }) || {};
+
+    return {
+      ...result,
+      first_name: profile.first_name || '',
+      last_name: profile.last_name || '',
+    };
   }
 }

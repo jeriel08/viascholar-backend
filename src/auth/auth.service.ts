@@ -69,6 +69,10 @@ export class AuthService {
             first_name: dto.first_name,
             last_name: dto.last_name,
             student_number: dto.student_number,
+            school_name: dto.school_name,
+            scholarship_track: dto.scholarship_track,
+            course_of_study: dto.course_of_study,
+            current_year_level: dto.current_year_level,
           },
         },
       },
@@ -90,7 +94,13 @@ export class AuthService {
       },
     });
 
-    return this.generateToken(user.user_id, user.email, user.role);
+    return this.generateToken(
+      user.user_id,
+      user.email,
+      user.role,
+      user.scholar_profile,
+      null,
+    );
   }
 
   // 2. Admin Creates Coordinator or Grantor (Staff)
@@ -151,12 +161,28 @@ export class AuthService {
       data: { last_login_at: new Date() },
     });
 
-    return this.generateToken(user.user_id, user.email, user.role);
+    return this.generateToken(
+      user.user_id,
+      user.email,
+      user.role,
+      user.scholar_profile,
+      user.employee,
+    );
   }
 
-  private async generateToken(userId: number, email: string, role: string) {
+  private async generateToken(
+    userId: number,
+    email: string,
+    role: string,
+    scholar_profile?: unknown,
+    employee?: unknown,
+  ) {
     const payload = { sub: userId, email, role };
     const token = await this.jwtService.signAsync(payload);
+    const profile = ((scholar_profile ?? employee ?? {}) as {
+      first_name?: string;
+      last_name?: string;
+    }) || {};
 
     return {
       access_token: token,
@@ -164,6 +190,10 @@ export class AuthService {
         id: userId,
         email,
         role,
+        first_name: profile.first_name || '',
+        last_name: profile.last_name || '',
+        scholar_profile: scholar_profile ?? null,
+        employee: employee ?? null,
       },
     };
   }
