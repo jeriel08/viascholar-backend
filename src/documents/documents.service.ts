@@ -12,7 +12,7 @@ import { AuditService } from '../audit/audit.service.js';
 import { VerifyDocumentDto } from './dto/verify-document.dto.js';
 import { ConfirmDocumentDto } from './dto/confirm-document.dto.js';
 import { ConfigService } from '@nestjs/config';
-import type { Application } from '../generated/prisma/client.js';
+import type { Application, Prisma } from '../generated/prisma/client.js';
 
 interface ConfirmedGradeData {
   academic_year?: string;
@@ -22,6 +22,11 @@ interface ConfirmedGradeData {
     units: number;
     grade: number;
   }[];
+}
+
+interface ParseurFieldSet {
+  grades?: unknown[];
+  [key: string]: unknown;
 }
 
 @Injectable()
@@ -163,6 +168,40 @@ export class DocumentsService {
         verified_at: true,
       },
     });
+  }
+
+  async getExtractedData(
+    userId: number,
+    documentId: number,
+    callerRole: string,
+  ) {
+    const doc = await this.prisma.scholarDocument.findUnique({
+      where: { document_id: documentId },
+      include: { scholar_profile: true },
+    });
+
+    if (!doc) {
+      throw new NotFoundException(`Document ID ${documentId} not found.`);
+    }
+
+    const isOwner = doc.scholar_profile.user_id === userId;
+    const isStaff = ['ADMIN', 'GRANTOR', 'COORDINATOR'].includes(callerRole);
+
+    if (!isOwner && !isStaff) {
+      throw new NotFoundException(`Document ID ${documentId} not found.`);
+    }
+
+    return {
+      document_id: doc.document_id,
+      document_type: doc.document_type,
+      label: doc.label,
+      file_url: doc.file_url,
+      status: doc.status,
+      rejection_reason: doc.rejection_reason,
+      extracted_data: doc.extracted_data,
+      confirmed_data: doc.confirmed_data,
+      uploaded_at: doc.uploaded_at,
+    };
   }
 
   // 3. Scholar confirms/corrects the OCR-extracted fields for review
@@ -432,6 +471,102 @@ export class DocumentsService {
       isEligible,
       evaluationFlag: evalFlag,
       application: updatedApplication,
+    };
+  }
+
+  // 8. Staff re-fetches Parseur results for documents whose webhook was missed
+  async syncFromParseur(actorUserId: number, documentId: number) {
+    const doc = await this.prisma.scholarDocument.findUnique({
+      where: { document_id: documentId },
+    });
+
+    if (!doc) {
+      throw new NotFoundException(`Document ID ${documentId} not found.`);
+    }
+
+    if (!doc.parseur_doc_id) {
+      throw new BadRequestException(
+        `Document ID ${documentId} was never dispatched to Parseur.`,
+      );
+    }
+
+    const apiKey = this.configService.get<string>('PARSEUR_API_KEY');
+    if (!apiKey) {
+      throw new BadRequestException('PARSEUR_API_KEY is not configured.');
+    }
+
+    const response = await fetch(
+      `https://api.parseur.com/document/${doc.parseur_doc_id}`,
+      { headers: { Authorization: `Token ${apiKey}` } },
+    );
+
+    if (!response.ok) {
+      throw new BadRequestException(
+        `Parseur API responded with status ${response.status} for document ${doc.parseur_doc_id}.`,
+      );
+    }
+
+    const meta = (await response.json()) as {
+      status?: string;
+      result?: string | Record<string, unknown> | null;
+    };
+
+    if (meta.status !== 'PARSEDOK') {
+      return {
+        synced: false,
+        message: `Parseur has not finished processing this document (status: ${meta.status ?? 'UNKNOWN'}).`,
+      };
+    }
+
+    let parsed: Record<string, unknown> | null = null;
+    if (typeof meta.result === 'string') {
+      try {
+        parsed = JSON.parse(meta.result) as Record<string, unknown>;
+      } catch {
+        parsed = null;
+      }
+    } else if (meta.result && typeof meta.result === 'object') {
+      parsed = meta.result;
+    }
+
+    const nestedFields =
+      parsed && typeof parsed.fields === 'object' && parsed.fields !== null
+        ? (parsed.fields as ParseurFieldSet)
+        : null;
+    const fields: ParseurFieldSet | null = nestedFields ?? parsed;
+
+    if (!fields) {
+      return {
+        synced: false,
+        message:
+          'Parseur reported the document as processed but returned no parsable result.',
+      };
+    }
+
+    const hasGrades = Array.isArray(fields.grades) && fields.grades.length > 0;
+    const validationStatus = hasGrades ? 'PASSED_PRECHECK' : 'NEEDS_REUPLOAD';
+
+    const updated = await this.prisma.scholarDocument.update({
+      where: { document_id: documentId },
+      data: {
+        status: validationStatus,
+        extracted_data: fields as unknown as Prisma.InputJsonValue,
+        rejection_reason: hasGrades
+          ? null
+          : 'Unreadable document or missing grade records.',
+      },
+    });
+
+    await this.auditService.log(
+      actorUserId,
+      'DOCUMENT_SYNCED',
+      `Staff synced Parseur results for document ID ${documentId}. Status: ${validationStatus}, grade items: ${hasGrades ? fields.grades?.length : 0}.`,
+    );
+
+    return {
+      synced: true,
+      status: updated.status,
+      extracted_data: updated.extracted_data,
     };
   }
 }

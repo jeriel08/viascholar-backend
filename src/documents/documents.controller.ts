@@ -82,6 +82,25 @@ export class DocumentsController {
     return this.documentsService.getMyDocuments(req.user.user_id);
   }
 
+  @Get(':id/extracted-data')
+  @Roles(
+    Role.APPLICANT,
+    Role.SCHOLAR,
+    Role.COORDINATOR,
+    Role.GRANTOR,
+    Role.ADMIN,
+  )
+  @ApiOperation({
+    summary: 'Retrieve the Parseur OCR-extracted data of a specific document',
+  })
+  getExtractedData(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    return this.documentsService.getExtractedData(
+      req.user.user_id,
+      id,
+      req.user.role,
+    );
+  }
+
   @Patch(':id/confirm')
   @Roles(Role.APPLICANT, Role.SCHOLAR)
   @ApiOperation({
@@ -110,6 +129,16 @@ export class DocumentsController {
   @ApiOperation({ summary: 'View full detail of a document submission' })
   getDocumentDetail(@Param('id', ParseIntPipe) id: number) {
     return this.documentsService.getDocumentDetail(id);
+  }
+
+  @Post(':id/sync-parseur')
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @ApiOperation({
+    summary:
+      'Re-fetch OCR results from Parseur and backfill the extracted data',
+  })
+  syncFromParseur(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    return this.documentsService.syncFromParseur(req.user.user_id, id);
   }
 
   @Patch(':id/request-changes')
