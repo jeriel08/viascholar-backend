@@ -9,6 +9,7 @@ import { SettingsModule } from './settings/settings.module.js';
 import { ApplicationsModule } from './applications/applications.module.js';
 import { WebhooksModule } from './webhooks/webhooks.module.js';
 import { DocumentsModule } from './documents/documents.module.js';
+import { ContractsModule } from './contracts/contracts.module.js';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { DocumentsModule } from './documents/documents.module.js';
     ApplicationsModule,
     WebhooksModule,
     DocumentsModule,
+    ContractsModule,
   ],
   providers: [],
 })

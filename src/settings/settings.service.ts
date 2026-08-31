@@ -175,12 +175,56 @@ export class SettingsService implements OnModuleInit {
       }
     }
 
-    // 2. Evaluate Numerical Thresholds
-    const isPassing = grade >= Number(schoolConfig.passing_grade);
+    // 2. Evaluate Numerical Thresholds (Respecting scale direction)
+    const highest = Number(schoolConfig?.highest_grade ?? 100);
+    const passing = Number(schoolConfig?.passing_grade ?? 75);
+    const failing = Number(schoolConfig?.failing_grade ?? 50);
+
+    let isPassing = false;
+    if (highest < failing) {
+      // 5-point inverted scale (e.g. 1.0 highest, 3.0 passing, 5.0 failing)
+      isPassing = grade <= passing && grade >= highest;
+    } else {
+      // Standard percentage or 4.0 scale (e.g. 100 highest, 75 passing)
+      isPassing = grade >= passing && grade <= highest;
+    }
+
     return {
       isPassing,
       flag: isPassing ? 'CLEARED' : 'BELOW_PASSING_MARK',
       statusLabel: isPassing ? 'PASSED' : 'FAILED',
     };
+  }
+
+  /**
+   * Evaluates if computed GWA meets retention threshold across different grading scales
+   */
+  evaluateGwaThreshold(
+    gwa: number,
+    globalThresholdPercent: number,
+    schoolConfig?: any,
+  ): boolean {
+    if (!schoolConfig || schoolConfig.grading_scale === 'PERCENTAGE_100') {
+      return gwa >= globalThresholdPercent;
+    }
+
+    const highest = Number(schoolConfig.highest_grade ?? 1.0);
+    const passing = Number(schoolConfig.passing_grade ?? 3.0);
+    const failing = Number(schoolConfig.failing_grade ?? 5.0);
+
+    if (highest < failing) {
+      // 5-point scale (e.g. 1.0 highest, 3.0 passing at 75%)
+      // 90% translates to ~1.80 on a 5-point scale
+      const normalizedPercent = Math.max(75, Math.min(100, globalThresholdPercent));
+      const thresholdGwa =
+        passing - ((normalizedPercent - 75) / 25) * (passing - highest);
+      return gwa <= Number(thresholdGwa.toFixed(2));
+    } else {
+      // Standard scale
+      const normalizedPercent = Math.max(75, Math.min(100, globalThresholdPercent));
+      const thresholdGwa =
+        passing + ((normalizedPercent - 75) / 25) * (highest - passing);
+      return gwa >= Number(thresholdGwa.toFixed(2));
+    }
   }
 }

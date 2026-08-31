@@ -1,14 +1,31 @@
-// src/documents/dto/confirm-document.dto.ts
-import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsArray,
+  IsNumber,
+  IsOptional,
+  IsString,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { GradeItemDto } from './grade-item.dto.js';
 
 export class ConfirmDocumentDto {
-  @ApiPropertyOptional({ example: 'AY 2025-2026 1st Sem' })
+  @ApiPropertyOptional({
+    example: '2017-2018',
+    description: 'Academic year or period (e.g. 2017-2018, AY 2025-2026 1st Sem)',
+  })
   @IsString()
   @IsOptional()
   academic_year?: string;
+
+  @ApiPropertyOptional({
+    example: 86.0,
+    description:
+      'Official General Average / GWA directly extracted or confirmed from report card',
+  })
+  @IsNumber()
+  @IsOptional()
+  general_average?: number;
 
   @ApiPropertyOptional({
     type: [GradeItemDto],
@@ -21,3 +38,4 @@ export class ConfirmDocumentDto {
   @Type(() => GradeItemDto)
   grade_items?: GradeItemDto[];
 }
+

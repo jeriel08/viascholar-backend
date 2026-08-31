@@ -31,6 +31,9 @@ import { Role } from '../generated/prisma/enums.js';
 import { VerifyDocumentDto } from './dto/verify-document.dto.js';
 import { ConfirmDocumentDto } from './dto/confirm-document.dto.js';
 import { RequestChangesDto } from './dto/request-changes.dto.js';
+import { QueryGradeReportsDto } from './dto/query-grade-reports.dto.js';
+import { UpdateGradeReportStatusDto } from './dto/update-grade-report-status.dto.js';
+import { Query } from '@nestjs/common';
 
 @ApiTags('Scholar Documents & Grade Verification')
 @ApiBearerAuth()
@@ -80,6 +83,42 @@ export class DocumentsController {
   })
   getMyDocuments(@Request() req) {
     return this.documentsService.getMyDocuments(req.user.user_id);
+  }
+
+  @Get('grade-reports/me')
+  @Roles(Role.SCHOLAR, Role.APPLICANT)
+  @ApiOperation({
+    summary: 'Scholar views all their semestral grade reports (Grade Monitoring)',
+  })
+  getMyGradeReports(@Request() req) {
+    return this.documentsService.getMyGradeReports(req.user.user_id);
+  }
+
+  @Get('grade-reports')
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @ApiOperation({
+    summary:
+      'Staff views all semestral grade reports with filters (Grade Monitoring)',
+  })
+  getAllGradeReports(@Query() query: QueryGradeReportsDto) {
+    return this.documentsService.getAllGradeReports(query);
+  }
+
+  @Patch('grade-reports/:id/status')
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @ApiOperation({
+    summary: 'Staff overrides or updates the review status of a grade report',
+  })
+  updateGradeReportStatus(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateGradeReportStatusDto,
+  ) {
+    return this.documentsService.updateGradeReportStatus(
+      req.user.user_id,
+      id,
+      dto,
+    );
   }
 
   @Get(':id/extracted-data')

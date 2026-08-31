@@ -1,11 +1,11 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
-import { Role } from '../generated/prisma/enums.js';
 import { CreateApplicationDto } from './dto/create-application.dto.js';
 import { QueryApplicationsDto } from './dto/query-applications.dto.js';
 import { UpdateApplicationStageDto } from './dto/update-stage.dto.js';
@@ -35,6 +35,7 @@ export class ApplicationsService {
         scholarship_track: dto.scholarship_track,
         course_of_study: dto.course_of_study,
         school_name: dto.school_name,
+        relative_employee: dto.relative_employee,
       },
     });
 
@@ -50,6 +51,12 @@ export class ApplicationsService {
         },
       });
     }
+
+    await this.auditService.log(
+      userId,
+      'APPLICATION_SUBMITTED',
+      `Scholar (User ID: ${userId}) submitted application (ID: ${application.application_id}).`,
+    );
 
     return application;
   }
@@ -112,7 +119,21 @@ export class ApplicationsService {
     employeeUserId: number,
     applicationId: number,
     dto: UpdateApplicationStageDto,
+    callerRole: string,
   ) {
+    const canDecide = ['ADMIN', 'GRANTOR'].includes(callerRole);
+    if (!canDecide && ['APPROVED', 'REJECTED'].includes(dto.status)) {
+      throw new ForbiddenException(
+        'Only grantors can approve or reject applications.',
+      );
+    }
+
+    if (dto.status === 'REJECTED' && !dto.rejection_reason) {
+      throw new BadRequestException(
+        'A rejection reason is required when rejecting an application.',
+      );
+    }
+
     const employee = await this.prisma.employee.findUnique({
       where: { user_id: employeeUserId },
     });
@@ -131,49 +152,29 @@ export class ApplicationsService {
       throw new NotFoundException(`Application ID ${applicationId} not found.`);
     }
 
-    const { application: updated, promoted } = await this.prisma.$transaction(
-      async (tx) => {
-        const application = await tx.application.update({
-          where: { application_id: applicationId },
-          data: {
-            status: dto.status,
-            stage: dto.stage,
-            stage_updated_at: new Date(),
-            interview_at: dto.interview_at
-              ? new Date(dto.interview_at)
-              : undefined,
-            provider_notes: dto.provider_notes,
-            rejection_reason: dto.rejection_reason,
-            reviewed_by_employee_id: employee.employee_id,
-            decision_at: ['APPROVED', 'REJECTED'].includes(dto.status)
-              ? new Date()
-              : undefined,
-          },
-        });
-
-        let promotedCount = 0;
-
-        if (dto.status === 'APPROVED') {
-          const result = await tx.user.updateMany({
-            where: {
-              scholar_profile: { profile_id: application.scholar_profile_id },
-              role: Role.APPLICANT,
-            },
-            data: { role: Role.SCHOLAR },
-          });
-          promotedCount = result.count;
-        }
-
-        return { application, promoted: promotedCount > 0 };
+    const updated = await this.prisma.application.update({
+      where: { application_id: applicationId },
+      data: {
+        status: dto.status,
+        stage: dto.stage,
+        stage_updated_at: new Date(),
+        interview_at: dto.interview_at
+          ? new Date(dto.interview_at)
+          : undefined,
+        provider_notes: dto.provider_notes,
+        rejection_reason: dto.rejection_reason,
+        reviewed_by_employee_id: employee.employee_id,
+        decision_at: ['APPROVED', 'REJECTED'].includes(dto.status)
+          ? new Date()
+          : undefined,
       },
-    );
+    });
 
     // Audit log stage transition
     await this.auditService.log(
       employeeUserId,
       'APPLICATION_STAGE_UPDATED',
-      `Application ID ${applicationId} stage updated to '${dto.stage}' (${dto.status})` +
-        (promoted ? ' — applicant promoted to SCHOLAR' : ''),
+      `Application ID ${applicationId} stage updated to '${dto.stage}' (${dto.status}).`,
     );
 
     return updated;

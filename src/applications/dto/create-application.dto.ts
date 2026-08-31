@@ -19,4 +19,12 @@ export class CreateApplicationDto {
   @IsString()
   @IsOptional()
   school_name?: string;
+
+  @ApiPropertyOptional({
+    example: 'Juan Dela Cruz',
+    description: 'Name of a relative who is an employee of the organization',
+  })
+  @IsString()
+  @IsOptional()
+  relative_employee?: string;
 }

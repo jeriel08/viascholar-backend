@@ -14,6 +14,7 @@ import { Role } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
 import { CloudinaryService } from '../cloudinary/cloudinary.service.js';
+import { AuditService } from '../audit/audit.service.js';
 
 @Injectable()
 export class AuthService {
@@ -21,6 +22,7 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private cloudinaryService: CloudinaryService,
+    private auditService: AuditService,
   ) {}
 
   // Method to handle Avatar upload
@@ -32,7 +34,15 @@ export class AuthService {
     const imageUrl = result.secure_url;
 
     // Save the URL to user's profile
-    return this.updateProfile(userId, { avatar_url: imageUrl });
+    const updated = await this.updateProfile(userId, { avatar_url: imageUrl });
+
+    await this.auditService.log(
+      userId,
+      'AVATAR_UPLOADED',
+      `User (ID: ${userId}) uploaded a new avatar`,
+    );
+
+    return updated;
   }
 
   // Method to handle Banner upload
@@ -44,7 +54,15 @@ export class AuthService {
     const imageUrl = result.secure_url;
 
     // Save the URL to user's profile
-    return this.updateProfile(userId, { banner_url: imageUrl });
+    const updated = await this.updateProfile(userId, { banner_url: imageUrl });
+
+    await this.auditService.log(
+      userId,
+      'BANNER_UPLOADED',
+      `User (ID: ${userId}) uploaded a new banner`,
+    );
+
+    return updated;
   }
 
   // 1. Public Scholar Signup
@@ -90,6 +108,12 @@ export class AuthService {
       },
     });
 
+    await this.auditService.log(
+      user.user_id,
+      'SCHOLAR_REGISTERED',
+      `New scholar registered (ID: ${user.user_id}, Email: ${user.email})`,
+    );
+
     return this.generateToken(
       user.user_id,
       user.email,
@@ -128,6 +152,12 @@ export class AuthService {
       include: { employee: true },
     });
 
+    await this.auditService.log(
+      user.user_id,
+      'STAFF_CREATED',
+      `New staff account created (ID: ${user.user_id}, Role: ${dto.role}, Email: ${dto.email})`,
+    );
+
     const { password_hash, ...result } = user;
     return result;
   }
@@ -156,6 +186,12 @@ export class AuthService {
       where: { user_id: user.user_id },
       data: { last_login_at: new Date() },
     });
+
+    await this.auditService.log(
+      user.user_id,
+      'USER_LOGIN',
+      `User logged in (ID: ${user.user_id}, Email: ${user.email}, Role: ${user.role})`,
+    );
 
     return this.generateToken(
       user.user_id,
@@ -250,6 +286,12 @@ export class AuthService {
     if (!updatedUser) {
       throw new NotFoundException('Updated user record not found.');
     }
+
+    await this.auditService.log(
+      userId,
+      'PROFILE_UPDATED',
+      `User (ID: ${userId}) updated their profile`,
+    );
 
     const { password_hash, ...result } = updatedUser;
     return result;

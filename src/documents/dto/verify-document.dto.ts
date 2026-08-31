@@ -1,6 +1,11 @@
-// src/documents/dto/verify-document.dto.ts
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsOptional, IsString, ValidateNested } from 'class-validator';
+import {
+  IsArray,
+  IsNumber,
+  IsOptional,
+  IsString,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { GradeItemDto } from './grade-item.dto.js';
 
@@ -8,16 +13,25 @@ export class VerifyDocumentDto {
   @ApiPropertyOptional({
     example: 'AY 2025-2026 1st Sem',
     description:
-      'Falls back to the student-confirmed academic year when omitted',
+      'Optional override. Falls back to the student-confirmed academic year when omitted.',
   })
   @IsString()
   @IsOptional()
   academic_year?: string;
 
   @ApiPropertyOptional({
+    example: 86.0,
+    description:
+      'Optional override for the official General Average / GWA. Falls back to student confirmed or extracted average when omitted.',
+  })
+  @IsNumber()
+  @IsOptional()
+  general_average?: number;
+
+  @ApiPropertyOptional({
     type: [GradeItemDto],
     description:
-      'Omit to evaluate using the student-confirmed grade items instead',
+      'Optional override. Omit to evaluate using the student-confirmed grade items instead.',
   })
   @IsArray()
   @IsOptional()

@@ -64,6 +64,11 @@ export class ApplicationsController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateApplicationStageDto,
   ) {
-    return this.applicationsService.updateStage(req.user.user_id, id, dto);
+    return this.applicationsService.updateStage(
+      req.user.user_id,
+      id,
+      dto,
+      req.user.role,
+    );
   }
 }

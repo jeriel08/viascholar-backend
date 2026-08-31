@@ -98,7 +98,6 @@ model Employee {
 
   user User @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
 
-  sponsored_scholars     ScholarProfile[]  @relation("SponsorEmployee")
   reviewed_applications  Application[]     @relation("EmployeeReviewedApplications")
   reviewed_grade_reports GradeReport[]     @relation("EmployeeReviewedGradeReports")
   approved_disbursements Disbursement[]    @relation("EmployeeApprovedDisbursements")
@@ -113,7 +112,7 @@ model ScholarProfile {
   user_id             Int     @unique
   first_name          String  @default("")  @db.VarChar(100)
   last_name           String  @default("")  @db.VarChar(100)
-  sponsor_employee_id Int?
+  relative_employee   String? @db.VarChar(150)
   scholarship_track   String? @db.VarChar(100)
   course_of_study     String? @db.VarChar(150)
   school_name         String? @db.VarChar(150)
@@ -124,7 +123,6 @@ model ScholarProfile {
   student_number      String? @db.VarChar(50)
 
   user             User      @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
-  sponsor_employee Employee? @relation("SponsorEmployee", fields: [sponsor_employee_id], references: [employee_id])
 
   applications  Application[]
   grade_reports GradeReport[]
@@ -168,7 +166,7 @@ model GradeReport {
   academic_year           String            @db.VarChar(15)
   semester                String            @db.VarChar(15)
   term                    String?           @db.VarChar(15)
-  gpa                     Decimal           @db.Decimal(3, 2)
+  gpa                     Decimal           @db.Decimal(5, 2)
   status                  GradeReportStatus @default(PENDING)
   evaluation_flag         String?           @db.VarChar(50)  // "CLEARED", "BELOW_PASSING_MARK", "ACADEMIC_FAILURE"
   is_eligible             Boolean           @default(false)
