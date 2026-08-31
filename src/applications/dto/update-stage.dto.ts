@@ -31,6 +31,28 @@ export class UpdateApplicationStageDto {
   interview_at?: string;
 
   @ApiPropertyOptional({
+    example: 'https://meet.google.com/abc-defg-hij',
+    description: 'Google Meet or video meeting link',
+  })
+  @IsString()
+  @IsOptional()
+  interview_meeting_link?: string;
+
+  @ApiPropertyOptional({
+    description: 'Google Calendar Event ID',
+  })
+  @IsString()
+  @IsOptional()
+  interview_calendar_event_id?: string;
+
+  @ApiPropertyOptional({
+    description: 'Reason provided if reschedule was requested/performed',
+  })
+  @IsString()
+  @IsOptional()
+  reschedule_reason?: string;
+
+  @ApiPropertyOptional({
     example: 'Applicant meets GWA threshold requirements.',
   })
   @IsString()
@@ -44,3 +66,4 @@ export class UpdateApplicationStageDto {
   @IsOptional()
   rejection_reason?: string;
 }
+

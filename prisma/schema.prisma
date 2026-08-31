@@ -144,14 +144,17 @@ model Application {
   reviewed_by_employee_id Int?
   status                  ApplicationStatus @default(PENDING)
   stage                   String            @db.VarChar(100)
-  submitted_at            DateTime          @default(now())
-  stage_updated_at        DateTime?
-  interview_at            DateTime?
-  decision_at             DateTime?
-  verified_at             DateTime?
-  provider_notes          String?           @db.Text
-  rejection_reason        String?           @db.Text
-  closed_at               DateTime?
+  submitted_at                DateTime          @default(now())
+  stage_updated_at            DateTime?
+  interview_at                DateTime?
+  interview_meeting_link      String?           @db.VarChar(255)
+  interview_calendar_event_id String?           @db.VarChar(255)
+  reschedule_reason           String?           @db.Text
+  decision_at                 DateTime?
+  verified_at                 DateTime?
+  provider_notes              String?           @db.Text
+  rejection_reason            String?           @db.Text
+  closed_at                   DateTime?
 
   scholar_profile      ScholarProfile @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
   reviewed_by_employee Employee?       @relation("EmployeeReviewedApplications", fields: [reviewed_by_employee_id], references: [employee_id])

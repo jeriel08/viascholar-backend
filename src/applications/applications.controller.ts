@@ -19,6 +19,9 @@ import { CreateApplicationDto } from './dto/create-application.dto.js';
 import { ApplicationsService } from './applications.service.js';
 import { QueryApplicationsDto } from './dto/query-applications.dto.js';
 import { UpdateApplicationStageDto } from './dto/update-stage.dto.js';
+import { ScheduleInterviewDto } from './dto/schedule-interview.dto.js';
+import { RequestRescheduleDto } from './dto/request-reschedule.dto.js';
+import { RescheduleInterviewDto } from './dto/reschedule-interview.dto.js';
 
 @ApiTags('Scholarship Applications')
 @ApiBearerAuth()
@@ -45,6 +48,15 @@ export class ApplicationsController {
     return this.applicationsService.getMyApplication(req.user.user_id);
   }
 
+  @Post('me/request-reschedule')
+  @Roles(Role.APPLICANT, Role.SCHOLAR)
+  @ApiOperation({
+    summary: 'Request interview rescheduling with a reason (Student only)',
+  })
+  requestReschedule(@Request() req, @Body() dto: RequestRescheduleDto) {
+    return this.applicationsService.requestReschedule(req.user.user_id, dto);
+  }
+
   @Get()
   @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({
@@ -52,6 +64,42 @@ export class ApplicationsController {
   })
   findAll(@Query() query: QueryApplicationsDto) {
     return this.applicationsService.findAll(query);
+  }
+
+  @Post(':id/schedule-interview')
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @ApiOperation({
+    summary:
+      'Schedule interview with automated Google Meet & Calendar invite (Staff only)',
+  })
+  scheduleInterview(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ScheduleInterviewDto,
+  ) {
+    return this.applicationsService.scheduleInterview(
+      req.user.user_id,
+      id,
+      dto,
+    );
+  }
+
+  @Patch(':id/reschedule-interview')
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @ApiOperation({
+    summary:
+      'Reschedule existing interview and update calendar event (Staff only)',
+  })
+  rescheduleInterview(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RescheduleInterviewDto,
+  ) {
+    return this.applicationsService.rescheduleInterview(
+      req.user.user_id,
+      id,
+      dto,
+    );
   }
 
   @Patch(':id/stage')
@@ -72,3 +120,4 @@ export class ApplicationsController {
     );
   }
 }
+
