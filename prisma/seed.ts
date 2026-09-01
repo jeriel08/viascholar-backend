@@ -11,7 +11,7 @@ const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  const adminEmail = 'admin@viascholar.com';
+  const adminEmail = 'admin.viascholar@yopmail.com';
 
   // Check if admin already exists
   const existingAdmin = await prisma.user.findUnique({

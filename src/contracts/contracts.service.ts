@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
+import { MailService } from '../mail/mail.service.js';
 import { ContractStatus, Role } from '../generated/prisma/enums.js';
 import { CreateContractDto } from './dto/create-contract.dto.js';
 
@@ -13,6 +14,7 @@ export class ContractsService {
   constructor(
     private prisma: PrismaService,
     private auditService: AuditService,
+    private mailService: MailService,
   ) {}
 
   // 1. Staff creates a pending contract for a scholar with an approved application
@@ -21,6 +23,7 @@ export class ContractsService {
       where: { profile_id: dto.scholar_profile_id },
       include: {
         applications: { orderBy: { submitted_at: 'desc' }, take: 1 },
+        user: true,
       },
     });
 
@@ -55,6 +58,18 @@ export class ContractsService {
       'CONTRACT_CREATED',
       `Contract ${dto.contract_number} created for scholar profile ID ${dto.scholar_profile_id}.`,
     );
+
+    // Notify student that contract is ready for review and signing
+    const studentEmail = scholar.user?.email;
+    const studentName =
+      `${scholar.first_name} ${scholar.last_name}`.trim() || 'Student';
+
+    if (studentEmail) {
+      this.mailService.sendContractReadyToSign(studentEmail, {
+        studentName,
+        contractNumber: dto.contract_number,
+      });
+    }
 
     return contract;
   }
@@ -91,7 +106,11 @@ export class ContractsService {
   async signContract(userId: number, contractId: number) {
     const contract = await this.prisma.contract.findUnique({
       where: { contract_id: contractId },
-      include: { scholar_profile: true },
+      include: {
+        scholar_profile: {
+          include: { user: true },
+        },
+      },
     });
 
     if (!contract) {
@@ -144,6 +163,29 @@ export class ContractsService {
         (promoted ? ' and was promoted to SCHOLAR.' : '.'),
     );
 
+    // Send contract signed confirmation emails
+    const studentEmail = contract.scholar_profile?.user?.email;
+    const studentName =
+      `${contract.scholar_profile?.first_name} ${contract.scholar_profile?.last_name}`.trim() ||
+      'Scholar';
+
+    if (studentEmail) {
+      this.mailService.sendContractSignedStudent(studentEmail, {
+        studentName,
+        contractNumber: contract.contract_number,
+      });
+    }
+
+    this.mailService.getStaffEmails().then((staffEmails) => {
+      if (staffEmails.length > 0) {
+        this.mailService.sendContractSignedStaff(staffEmails, {
+          studentName,
+          contractNumber: contract.contract_number,
+        });
+      }
+    });
+
     return updated;
   }
 }
+

@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { GoogleCalendarService } from '../google-calendar/google-calendar.service.js';
+import { MailService } from '../mail/mail.service.js';
 import { CreateApplicationDto } from './dto/create-application.dto.js';
 import { QueryApplicationsDto } from './dto/query-applications.dto.js';
 import { UpdateApplicationStageDto } from './dto/update-stage.dto.js';
@@ -20,13 +21,14 @@ export class ApplicationsService {
     private prisma: PrismaService,
     private auditService: AuditService,
     private googleCalendarService: GoogleCalendarService,
+    private mailService: MailService,
   ) {}
 
   // 1. Scholar submits or updates their application details
   async submitApplication(userId: number, dto: CreateApplicationDto) {
     const scholar = await this.prisma.scholarProfile.findUnique({
       where: { user_id: userId },
-      include: { applications: true },
+      include: { applications: true, user: true },
     });
 
     if (!scholar) {
@@ -62,6 +64,30 @@ export class ApplicationsService {
       'APPLICATION_SUBMITTED',
       `Scholar (User ID: ${userId}) submitted application (ID: ${application.application_id}).`,
     );
+
+    // Dispatch emails (non-blocking)
+    const studentName =
+      `${scholar.first_name} ${scholar.last_name}`.trim() || 'Applicant';
+
+    if (scholar.user?.email) {
+      this.mailService.sendApplicationSubmittedStudent(scholar.user.email, {
+        studentName,
+        track: dto.scholarship_track,
+        applicationId: application.application_id,
+      });
+    }
+
+    this.mailService.getStaffEmails().then((staffEmails) => {
+      if (staffEmails.length > 0) {
+        this.mailService.sendApplicationSubmittedStaff(staffEmails, {
+          studentName,
+          track: dto.scholarship_track,
+          course: dto.course_of_study,
+          school: dto.school_name,
+          applicationId: application.application_id,
+        });
+      }
+    });
 
     return application;
   }
@@ -151,6 +177,11 @@ export class ApplicationsService {
 
     const application = await this.prisma.application.findUnique({
       where: { application_id: applicationId },
+      include: {
+        scholar_profile: {
+          include: { user: true },
+        },
+      },
     });
 
     if (!application) {
@@ -184,6 +215,33 @@ export class ApplicationsService {
       'APPLICATION_STAGE_UPDATED',
       `Application ID ${applicationId} stage updated to '${dto.stage}' (${dto.status}).`,
     );
+
+    // Dispatch email notification to student
+    const studentEmail = application.scholar_profile?.user?.email;
+    const studentName =
+      `${application.scholar_profile?.first_name} ${application.scholar_profile?.last_name}`.trim() ||
+      'Applicant';
+
+    if (studentEmail) {
+      if (dto.status === 'APPROVED') {
+        this.mailService.sendApplicationApproved(studentEmail, {
+          studentName,
+          track: application.scholar_profile?.scholarship_track || undefined,
+        });
+      } else if (dto.status === 'REJECTED') {
+        this.mailService.sendApplicationRejected(studentEmail, {
+          studentName,
+          reason: dto.rejection_reason,
+        });
+      } else {
+        this.mailService.sendStageUpdated(studentEmail, {
+          studentName,
+          stage: dto.stage,
+          status: dto.status,
+          notes: dto.provider_notes,
+        });
+      }
+    }
 
     return updated;
   }
@@ -262,6 +320,16 @@ export class ApplicationsService {
       `Interview scheduled for application ID ${applicationId} on ${startTime.toISOString()} with meeting link ${calendarResult.meetingUrl}.`,
     );
 
+    // Send interview invitation email to student
+    if (studentEmail) {
+      this.mailService.sendInterviewScheduled(studentEmail, {
+        studentName,
+        interviewAt: startTime,
+        meetingLink: calendarResult.meetingUrl,
+        notes: dto.provider_notes,
+      });
+    }
+
     return updated;
   }
 
@@ -274,6 +342,7 @@ export class ApplicationsService {
           orderBy: { submitted_at: 'desc' },
           take: 1,
         },
+        user: true,
       },
     });
 
@@ -308,6 +377,20 @@ export class ApplicationsService {
       'INTERVIEW_RESCHEDULE_REQUESTED',
       `Student requested interview reschedule for application ID ${application.application_id}. Reason: ${formattedReason}`,
     );
+
+    // Notify staff of the reschedule request
+    const studentName =
+      `${scholar.first_name} ${scholar.last_name}`.trim() || 'Applicant';
+
+    this.mailService.getStaffEmails().then((staffEmails) => {
+      if (staffEmails.length > 0) {
+        this.mailService.sendInterviewRescheduleRequestedStaff(staffEmails, {
+          studentName,
+          reason: formattedReason,
+          applicationId: application.application_id,
+        });
+      }
+    });
 
     return updated;
   }
@@ -382,6 +465,21 @@ export class ApplicationsService {
       'INTERVIEW_RESCHEDULED',
       `Interview rescheduled for application ID ${applicationId} to ${newStartTime.toISOString()}.`,
     );
+
+    // Send updated schedule email to student
+    const studentEmail = application.scholar_profile?.user?.email;
+    const studentName =
+      `${application.scholar_profile?.first_name} ${application.scholar_profile?.last_name}`.trim() ||
+      'Applicant';
+
+    if (studentEmail) {
+      this.mailService.sendInterviewRescheduled(studentEmail, {
+        studentName,
+        newInterviewAt: newStartTime,
+        meetingLink: meetingUrl || undefined,
+        notes: dto.reschedule_notes,
+      });
+    }
 
     return updated;
   }

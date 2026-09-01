@@ -13,6 +13,7 @@ import { VerifyDocumentDto } from './dto/verify-document.dto.js';
 import { ConfirmDocumentDto } from './dto/confirm-document.dto.js';
 import { QueryGradeReportsDto } from './dto/query-grade-reports.dto.js';
 import { UpdateGradeReportStatusDto } from './dto/update-grade-report-status.dto.js';
+import { MailService } from '../mail/mail.service.js';
 import { ConfigService } from '@nestjs/config';
 import type { Application, Prisma } from '../generated/prisma/client.js';
 
@@ -42,6 +43,7 @@ export class DocumentsService {
     private settingsService: SettingsService,
     private auditService: AuditService,
     private configService: ConfigService,
+    private mailService: MailService,
   ) {}
 
   // 1. Scholar Uploads TOR / Form 137
@@ -324,6 +326,11 @@ export class DocumentsService {
   ) {
     const doc = await this.prisma.scholarDocument.findUnique({
       where: { document_id: documentId },
+      include: {
+        scholar_profile: {
+          include: { user: true },
+        },
+      },
     });
 
     if (!doc) {
@@ -344,6 +351,20 @@ export class DocumentsService {
       'DOCUMENT_CHANGES_REQUESTED',
       `Staff requested changes on document ID ${documentId}: ${reason}`,
     );
+
+    // Notify student that document needs re-upload
+    const studentEmail = doc.scholar_profile?.user?.email;
+    const studentName =
+      `${doc.scholar_profile?.first_name} ${doc.scholar_profile?.last_name}`.trim() ||
+      'Student';
+
+    if (studentEmail) {
+      this.mailService.sendDocumentActionRequired(studentEmail, {
+        studentName,
+        documentType: doc.document_type,
+        reason,
+      });
+    }
 
     return updated;
   }
@@ -829,6 +850,11 @@ export class DocumentsService {
 
     const report = await this.prisma.gradeReport.findUnique({
       where: { report_id: reportId },
+      include: {
+        scholar_profile: {
+          include: { user: true },
+        },
+      },
     });
 
     if (!report) {
@@ -858,6 +884,22 @@ export class DocumentsService {
       'GRADE_REPORT_STATUS_UPDATED',
       `Staff updated Grade Report ID ${reportId} status to ${dto.status}${dto.remarks ? `: ${dto.remarks}` : ''}`,
     );
+
+    // Send email notification to scholar
+    const studentEmail = report.scholar_profile?.user?.email;
+    const studentName =
+      `${report.scholar_profile?.first_name} ${report.scholar_profile?.last_name}`.trim() ||
+      'Scholar';
+
+    if (studentEmail) {
+      this.mailService.sendGradeReportStatusUpdated(studentEmail, {
+        studentName,
+        academicYear: report.academic_year,
+        semester: report.semester,
+        status: dto.status,
+        remarks: dto.remarks,
+      });
+    }
 
     return updated;
   }
