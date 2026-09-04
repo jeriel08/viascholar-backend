@@ -30,6 +30,30 @@ export class UpdateProfileDto {
 
   // Scholar-Specific Fields
   @ApiProperty({
+    description: 'The contact mobile phone number of the Scholar',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  phone_number?: string;
+
+  @ApiProperty({
+    description: 'The permanent/home address of the Scholar',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  student_address?: string;
+
+  @ApiProperty({
+    description: 'The campus address of the school/university',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  school_address?: string;
+
+  @ApiProperty({
     description: 'The student number of the Scholar',
     required: false,
   })

@@ -75,6 +75,14 @@ export class AuthService {
       throw new ConflictException('Email address is already in use.');
     }
 
+    const existingPhone = await this.prisma.scholarProfile.findFirst({
+      where: { phone_number: dto.phone_number },
+    });
+
+    if (existingPhone) {
+      throw new ConflictException('Phone number is already registered.');
+    }
+
     const hashedPassword = await bcrypt.hash(dto.password, 10);
 
     const user = await this.prisma.user.create({
@@ -86,7 +94,7 @@ export class AuthService {
           create: {
             first_name: dto.first_name,
             last_name: dto.last_name,
-            student_number: dto.student_number,
+            phone_number: dto.phone_number,
           },
         },
       },
@@ -99,19 +107,10 @@ export class AuthService {
       );
     }
 
-    // Automatically create their initial Application entry with PENDING stage
-    await this.prisma.application.create({
-      data: {
-        scholar_profile_id: user.scholar_profile.profile_id,
-        stage: 'Submitted',
-        status: 'PENDING',
-      },
-    });
-
     await this.auditService.log(
       user.user_id,
       'SCHOLAR_REGISTERED',
-      `New scholar registered (ID: ${user.user_id}, Email: ${user.email})`,
+      `Scholar registered (User ID: ${user.user_id}, Email: ${user.email})`,
     );
 
     return this.generateToken(
@@ -119,11 +118,12 @@ export class AuthService {
       user.email,
       user.role,
       user.scholar_profile,
-      null,
+      undefined,
+      user.created_at,
     );
   }
 
-  // 2. Admin Creates Coordinator or Grantor (Staff)
+  // 2. Admin/Grantor creates Staff Accounts
   async createStaff(dto: CreateStaffDto) {
     const existingUser = await this.prisma.user.findUnique({
       where: { email: dto.email },
@@ -152,17 +152,30 @@ export class AuthService {
       include: { employee: true },
     });
 
+    if (!user.employee) {
+      throw new InternalServerErrorException(
+        'Staff profile was not created successfully.',
+      );
+    }
+
     await this.auditService.log(
       user.user_id,
       'STAFF_CREATED',
-      `New staff account created (ID: ${user.user_id}, Role: ${dto.role}, Email: ${dto.email})`,
+      `Staff account created (User ID: ${user.user_id}, Email: ${user.email}, Role: ${user.role})`,
     );
 
-    const { password_hash, ...result } = user;
-    return result;
+    return {
+      message: 'Staff account successfully created.',
+      user: {
+        id: user.user_id,
+        email: user.email,
+        role: user.role,
+        employee: user.employee,
+      },
+    };
   }
 
-  // 3. System Login
+  // 3. Global Login (Scholar and Staff)
   async login(dto: LoginDto) {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
@@ -173,10 +186,17 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials.');
     }
 
+    if (!user.is_active) {
+      throw new UnauthorizedException(
+        'Account is disabled. Please contact the administrator.',
+      );
+    }
+
     const isPasswordValid = await bcrypt.compare(
       dto.password,
       user.password_hash,
     );
+
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid credentials.');
     }
@@ -199,6 +219,7 @@ export class AuthService {
       user.role,
       user.scholar_profile,
       user.employee,
+      user.created_at,
     );
   }
 
@@ -208,6 +229,7 @@ export class AuthService {
     role: string,
     scholar_profile?: unknown,
     employee?: unknown,
+    created_at?: Date,
   ) {
     const payload = { sub: userId, email, role };
     const token = await this.jwtService.signAsync(payload);
@@ -215,16 +237,24 @@ export class AuthService {
       ((scholar_profile ?? employee ?? {}) as {
         first_name?: string;
         last_name?: string;
+        bio?: string;
+        avatar_url?: string;
+        banner_url?: string;
       }) || {};
 
     return {
       access_token: token,
       user: {
         id: userId,
+        user_id: userId,
         email,
         role,
         first_name: profile.first_name || '',
         last_name: profile.last_name || '',
+        bio: profile.bio ?? null,
+        avatar_url: profile.avatar_url ?? null,
+        banner_url: profile.banner_url ?? null,
+        created_at: created_at ?? null,
         scholar_profile: scholar_profile ?? null,
         employee: employee ?? null,
       },
@@ -245,15 +275,46 @@ export class AuthService {
     // 1. If User is an Applicant or Scholar, update scholar_profiles table
     const studentRoles: Role[] = [Role.APPLICANT, Role.SCHOLAR];
     if (studentRoles.includes(user.role) && user.scholar_profile) {
+      if (dto.phone_number) {
+        const duplicatePhone = await this.prisma.scholarProfile.findFirst({
+          where: {
+            phone_number: dto.phone_number,
+            profile_id: { not: user.scholar_profile.profile_id },
+          },
+        });
+        if (duplicatePhone) {
+          throw new ConflictException(
+            'Phone number is already in use by another profile.',
+          );
+        }
+      }
+
+      if (dto.student_number) {
+        const duplicateStudentNum = await this.prisma.scholarProfile.findFirst({
+          where: {
+            student_number: dto.student_number,
+            profile_id: { not: user.scholar_profile.profile_id },
+          },
+        });
+        if (duplicateStudentNum) {
+          throw new ConflictException(
+            'Student number is already in use by another scholar.',
+          );
+        }
+      }
+
       await this.prisma.scholarProfile.update({
         where: { profile_id: user.scholar_profile.profile_id },
         data: {
           first_name: dto.first_name,
           last_name: dto.last_name,
+          phone_number: dto.phone_number,
+          student_address: dto.student_address,
+          school_address: dto.school_address,
+          student_number: dto.student_number,
           bio: dto.bio,
           avatar_url: dto.avatar_url,
           banner_url: dto.banner_url,
-          student_number: dto.student_number,
           course_of_study: dto.course_of_study,
           school_name: dto.school_name,
           current_year_level: dto.current_year_level,

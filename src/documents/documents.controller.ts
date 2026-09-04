@@ -3,19 +3,20 @@ import {
   Controller,
   Get,
   Post,
+  Put,
+  Delete,
   Patch,
   Param,
   Body,
   UseGuards,
   Request,
-  UploadedFile,
+  UploadedFiles,
   UseInterceptors,
   ParseIntPipe,
-  ParseFilePipe,
-  MaxFileSizeValidator,
-  FileTypeValidator,
+  BadRequestException,
+  Query,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import { AuthGuard } from '@nestjs/passport';
 import {
   ApiTags,
@@ -33,7 +34,6 @@ import { ConfirmDocumentDto } from './dto/confirm-document.dto.js';
 import { RequestChangesDto } from './dto/request-changes.dto.js';
 import { QueryGradeReportsDto } from './dto/query-grade-reports.dto.js';
 import { UpdateGradeReportStatusDto } from './dto/update-grade-report-status.dto.js';
-import { Query } from '@nestjs/common';
 
 @ApiTags('Scholar Documents & Grade Verification')
 @ApiBearerAuth()
@@ -42,39 +42,112 @@ import { Query } from '@nestjs/common';
 export class DocumentsController {
   constructor(private readonly documentsService: DocumentsService) {}
 
+  private validateUploadedFiles(files: Express.Multer.File[]) {
+    if (!files || files.length === 0) {
+      throw new BadRequestException('At least one file must be provided.');
+    }
+    const maxSizeBytes = 10 * 1024 * 1024; // 10MB per file
+    const allowedExtensions = /(jpg|jpeg|png|webp|pdf)$/i;
+
+    for (const f of files) {
+      if (f.size > maxSizeBytes) {
+        throw new BadRequestException(
+          `File "${f.originalname}" exceeds the 10MB size limit.`,
+        );
+      }
+      const ext = f.originalname.split('.').pop() || '';
+      const isFormatAllowed =
+        allowedExtensions.test(f.mimetype) || allowedExtensions.test(ext);
+      if (!isFormatAllowed) {
+        throw new BadRequestException(
+          `File "${f.originalname}" has an unsupported format. Allowed formats: JPG, PNG, WEBP, PDF.`,
+        );
+      }
+    }
+  }
+
   @Post('upload')
   @Roles(Role.APPLICANT, Role.SCHOLAR)
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(AnyFilesInterceptor())
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({ summary: 'Scholar uploads TOR / Form 137 / Grade Slip' })
+  @ApiOperation({
+    summary:
+      'Scholar uploads TOR / Form 137 / Form 138 (Supports single or multi-page / front & back images or PDFs)',
+  })
   @ApiBody({
     schema: {
       type: 'object',
       properties: {
-        file: { type: 'string', format: 'binary' },
-        document_type: { type: 'string', example: 'TOR' },
+        files: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          description: 'One or multiple files (Front & Back images / PDFs)',
+        },
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Single file (for backward compatibility)',
+        },
+        document_type: { type: 'string', example: 'Form 138' },
       },
     },
   })
   uploadDocument(
     @Request() req,
-    @UploadedFile(
-      new ParseFilePipe({
-        validators: [
-          new MaxFileSizeValidator({ maxSize: 10 * 1024 * 1024 }), // 10MB
-          new FileTypeValidator({ fileType: /(jpg|jpeg|png|webp|pdf)$/ }),
-        ],
-      }),
-    )
-    file: Express.Multer.File,
+    @UploadedFiles() files: Express.Multer.File[],
     @Body('document_type') documentType: string,
   ) {
+    this.validateUploadedFiles(files);
     return this.documentsService.uploadDocument(
       req.user.user_id,
-      file,
+      files,
       documentType || 'TOR',
     );
   }
+
+  @Put(':id/replace')
+  @Roles(Role.APPLICANT, Role.SCHOLAR)
+  @UseInterceptors(AnyFilesInterceptor())
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary:
+      'Scholar replaces / re-uploads an unverified document (e.g. adding missing back page or clearer scan)',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        files: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          description: 'New file(s) to replace the existing document with',
+        },
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Single replacement file',
+        },
+      },
+    },
+  })
+  replaceDocument(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFiles() files: Express.Multer.File[],
+  ) {
+    this.validateUploadedFiles(files);
+    return this.documentsService.replaceDocument(req.user.user_id, id, files);
+  }
+
+  @Delete(':id')
+  @Roles(Role.APPLICANT, Role.SCHOLAR)
+  @ApiOperation({
+    summary: 'Scholar deletes / discards an unverified draft document',
+  })
+  deleteDocument(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    return this.documentsService.deleteDocument(req.user.user_id, id);
+  }
+
 
   @Get('me')
   @Roles(Role.APPLICANT, Role.SCHOLAR)

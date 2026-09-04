@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -35,13 +36,47 @@ export class ApplicationsService {
       throw new NotFoundException('Scholar profile not found.');
     }
 
-    // Update track and course on scholar profile
+    // Verify student_number uniqueness across other profiles
+    if (dto.student_number) {
+      const duplicateStudentNum = await this.prisma.scholarProfile.findFirst({
+        where: {
+          student_number: dto.student_number,
+          profile_id: { not: scholar.profile_id },
+        },
+      });
+      if (duplicateStudentNum) {
+        throw new ConflictException(
+          'Student number is already in use by another applicant.',
+        );
+      }
+    }
+
+    // Verify phone_number uniqueness if provided/updated
+    if (dto.phone_number) {
+      const duplicatePhone = await this.prisma.scholarProfile.findFirst({
+        where: {
+          phone_number: dto.phone_number,
+          profile_id: { not: scholar.profile_id },
+        },
+      });
+      if (duplicatePhone) {
+        throw new ConflictException(
+          'Phone number is already in use by another profile.',
+        );
+      }
+    }
+
+    // Update track, course, student number, and addresses on scholar profile
     await this.prisma.scholarProfile.update({
       where: { profile_id: scholar.profile_id },
       data: {
         scholarship_track: dto.scholarship_track,
         course_of_study: dto.course_of_study,
         school_name: dto.school_name,
+        student_number: dto.student_number,
+        student_address: dto.student_address,
+        school_address: dto.school_address,
+        phone_number: dto.phone_number || scholar.phone_number,
         relative_employee: dto.relative_employee,
       },
     });

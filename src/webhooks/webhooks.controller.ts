@@ -10,6 +10,7 @@ import {
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { Prisma } from '../generated/prisma/client.js';
+import { DocumentForensicsService } from '../documents/document-forensics.service.js';
 
 type ParseurFieldSet = { grades?: unknown[] } & Record<string, unknown>;
 
@@ -29,7 +30,10 @@ type ParseurWebhookPayload = {
 export class WebhooksController {
   private readonly logger = new Logger(WebhooksController.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private documentForensicsService: DocumentForensicsService,
+  ) {}
 
   @Post('parseur')
   @HttpCode(HttpStatus.OK)
@@ -73,6 +77,7 @@ export class WebhooksController {
 
     const doc = await this.prisma.scholarDocument.findUnique({
       where: { document_id: Number(documentId) },
+      include: { scholar_profile: true },
     });
 
     if (!doc) {
@@ -84,11 +89,29 @@ export class WebhooksController {
     const hasGrades = Array.isArray(fields.grades) && fields.grades.length > 0;
     const validationStatus = hasGrades ? 'PASSED_PRECHECK' : 'NEEDS_REUPLOAD';
 
+    // Retrieve any initial metadata forensics stored on the doc during upload
+    const existingExtracted = (doc.extracted_data as Record<string, any>) || {};
+    const initialMetadataForensics = existingExtracted.forensic_metadata;
+
+    // Run full forensic & math reconciliation
+    const forensicEvaluation = this.documentForensicsService.evaluateExtractedDocument(
+      doc.scholar_profile || {},
+      doc.document_type || 'document',
+      fields,
+      initialMetadataForensics,
+    );
+
+    const mergedExtractedData = {
+      ...fields,
+      forensic_analysis: forensicEvaluation,
+      validation_flags: forensicEvaluation.flags,
+    };
+
     await this.prisma.scholarDocument.update({
       where: { document_id: Number(documentId) },
       data: {
         status: validationStatus,
-        extracted_data: fields as unknown as Prisma.InputJsonValue,
+        extracted_data: mergedExtractedData as unknown as Prisma.InputJsonValue,
         ...(parseurDocId ? { parseur_doc_id: parseurDocId } : {}),
         rejection_reason: hasGrades
           ? null
@@ -96,6 +119,11 @@ export class WebhooksController {
       },
     });
 
-    return { status: 'processed', validationStatus };
+    this.logger.log(
+      `Webhook processed for doc ${documentId}. Status: ${validationStatus}, Risk: ${forensicEvaluation.risk_level} (Flags: ${forensicEvaluation.flags.join(', ') || 'none'}).`,
+    );
+
+    return { status: 'processed', validationStatus, forensicEvaluation };
   }
 }
+

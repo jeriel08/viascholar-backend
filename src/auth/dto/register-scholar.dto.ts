@@ -29,10 +29,10 @@ export class RegisterScholarDto {
   last_name: string;
 
   @ApiProperty({
-    description: 'The student number of the scholar',
-    required: false,
+    description: 'The contact mobile phone number of the scholar',
+    example: '09171234567',
   })
   @IsString()
-  @IsOptional()
-  student_number?: string;
+  @IsNotEmpty()
+  phone_number: string;
 }

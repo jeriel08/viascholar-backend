@@ -112,6 +112,10 @@ model ScholarProfile {
   user_id             Int     @unique
   first_name          String  @default("")  @db.VarChar(100)
   last_name           String  @default("")  @db.VarChar(100)
+  phone_number        String  @unique @db.VarChar(30)
+  student_address     String? @db.Text
+  school_address      String? @db.Text
+  student_number      String? @unique @db.VarChar(50)
   relative_employee   String? @db.VarChar(150)
   scholarship_track   String? @db.VarChar(100)
   course_of_study     String? @db.VarChar(150)
@@ -120,7 +124,6 @@ model ScholarProfile {
   bio                 String? @db.Text
   avatar_url          String? @db.VarChar(255)
   banner_url          String? @db.VarChar(255)
-  student_number      String? @db.VarChar(50)
 
   user             User      @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
 
@@ -187,16 +190,22 @@ model GradeReport {
 }
 
 model Contract {
-  contract_id        Int            @id @default(autoincrement())
-  scholar_profile_id Int
-  signed_by_user_id  Int?
-  contract_number    String         @db.VarChar(100)
-  document_url       String?        @db.VarChar(255)
-  status             ContractStatus @default(PENDING)
-  effective_date     DateTime?      @db.Date
-  expiry_date        DateTime?      @db.Date
-  signed_at          DateTime?
-  version            Int            @default(1)
+  contract_id         Int            @id @default(autoincrement())
+  scholar_profile_id  Int
+  signed_by_user_id   Int?
+  contract_number     String         @db.VarChar(100)
+  document_url        String?        @db.VarChar(255)
+  signed_document_url String?        @db.VarChar(255)
+  signature_url       String?        @db.VarChar(255)
+  certificate_id      String?        @unique @db.VarChar(100)
+  document_hash       String?        @db.VarChar(128)
+  signer_ip           String?        @db.VarChar(100)
+  signer_user_agent   String?        @db.Text
+  status              ContractStatus @default(PENDING)
+  effective_date      DateTime?      @db.Date
+  expiry_date         DateTime?      @db.Date
+  signed_at           DateTime?
+  version             Int            @default(1)
 
   scholar_profile ScholarProfile @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
   signed_by_user  User?          @relation("UserSignedContracts", fields: [signed_by_user_id], references: [user_id])

@@ -122,4 +122,43 @@ export class CloudinaryService implements OnModuleInit {
       'pdf',
     ]);
   }
+
+  // Method to handle direct Buffer uploads (e.g. generated signed PDFs, signature PNGs)
+  async uploadBuffer(
+    buffer: Buffer,
+    folder: string,
+    filename: string,
+    resourceType: 'image' | 'raw' | 'auto' = 'auto',
+  ): Promise<UploadApiResponse> {
+    if (!buffer || buffer.length === 0) {
+      throw new BadRequestException('Empty buffer provided for upload.');
+    }
+
+    return new Promise<UploadApiResponse>((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder,
+          public_id: filename,
+          resource_type: resourceType,
+        },
+        (error, result) => {
+          if (error || !result) {
+            return reject(
+              error ||
+                new Error('Cloudinary buffer upload returned empty result.'),
+            );
+          }
+          resolve(result);
+        },
+      );
+
+      try {
+        const stream = streamifier.createReadStream(buffer);
+        stream.pipe(uploadStream);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
 }
+

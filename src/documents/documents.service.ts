@@ -15,7 +15,9 @@ import { QueryGradeReportsDto } from './dto/query-grade-reports.dto.js';
 import { UpdateGradeReportStatusDto } from './dto/update-grade-report-status.dto.js';
 import { MailService } from '../mail/mail.service.js';
 import { ConfigService } from '@nestjs/config';
-import type { Application, Prisma } from '../generated/prisma/client.js';
+import { Application, Prisma } from '../generated/prisma/client.js';
+import { PdfMergerService } from './pdf-merger.service.js';
+import { DocumentForensicsService } from './document-forensics.service.js';
 
 interface ConfirmedGradeData {
   academic_year?: string;
@@ -44,12 +46,14 @@ export class DocumentsService {
     private auditService: AuditService,
     private configService: ConfigService,
     private mailService: MailService,
+    private pdfMergerService: PdfMergerService,
+    private documentForensicsService: DocumentForensicsService,
   ) {}
 
-  // 1. Scholar Uploads TOR / Form 137
+  // 1. Scholar Uploads TOR / Form 137 / Form 138 (Supports single or multi-page/multi-file)
   async uploadDocument(
     userId: number,
-    file: Express.Multer.File,
+    files: Express.Multer.File | Express.Multer.File[],
     documentType: string,
   ) {
     const scholar = await this.prisma.scholarProfile.findUnique({
@@ -60,39 +64,62 @@ export class DocumentsService {
       throw new NotFoundException('Scholar profile not found.');
     }
 
-    // Upload image or PDF to Cloudinary
-    const cloudinaryResult = await this.cloudinaryService.uploadDocument(
-      file,
-      'viascholar/documents',
+    const fileList = Array.isArray(files) ? files : [files];
+    if (fileList.length === 0) {
+      throw new BadRequestException('At least one file must be uploaded.');
+    }
+
+    // Inspect file metadata for digital editing artifacts (Photoshop, Canva, etc.)
+    const metadataForensics =
+      await this.documentForensicsService.inspectFileMetadata(fileList);
+
+    // Merge multiple images/PDFs into a single multi-page PDF if needed
+    const processed = await this.pdfMergerService.processAndMergeFiles(
+      fileList,
+      documentType,
     );
 
-    const fileType = file.mimetype.includes('pdf') ? 'pdf' : 'image';
+    // Upload buffer to Cloudinary
+    const publicId = processed.fileName.replace(/\.[^/.]+$/, '');
+    const cloudinaryResult = await this.cloudinaryService.uploadBuffer(
+      processed.buffer,
+      'viascholar/documents',
+      publicId,
+      'auto',
+    );
 
-    // Create database entry in PENDING state
+    const fileType = processed.isPdf ? 'pdf' : 'image';
+
+    // Create database entry in PENDING state with forensic metadata stored
     const document = await this.prisma.scholarDocument.create({
       data: {
         scholar_profile_id: scholar.profile_id,
         document_type: documentType,
         label: documentType,
-        file_name: file.originalname,
-        file_size:
-          file.size < 1024 * 1024
-            ? `${(file.size / 1024).toFixed(1)} KB`
-            : `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+        file_name: processed.fileName,
+        file_size: processed.fileSize,
         file_url: cloudinaryResult.secure_url,
         file_type: fileType,
         status: 'PENDING',
+        extracted_data: {
+          forensic_metadata: metadataForensics,
+        } as unknown as Prisma.InputJsonValue,
       },
     });
 
     await this.auditService.log(
       userId,
       'DOCUMENT_UPLOADED',
-      `Scholar (User ID: ${userId}) uploaded document (ID: ${document.document_id}, Type: ${documentType}).`,
+      `Scholar (User ID: ${userId}) uploaded document (ID: ${document.document_id}, Type: ${documentType}, Files: ${fileList.length})${metadataForensics.is_flagged ? ` [Forensic Flags: ${metadataForensics.flags.join(', ')}]` : ''}.`,
     );
 
-    // Send the document to Parseur for background OCR processing
-    this.sendToParseur(document.document_id, file).catch((err) => {
+    // Send the document buffer to Parseur for background OCR processing
+    this.sendToParseur(
+      document.document_id,
+      processed.buffer,
+      processed.fileName,
+      processed.mimeType,
+    ).catch((err) => {
       this.logger.error(
         `Parseur dispatch failed for doc ${document.document_id}: ${err.message}`,
       );
@@ -101,8 +128,155 @@ export class DocumentsService {
     return document;
   }
 
+  // 1b. Scholar replaces / re-uploads document files (Draft & unverified states)
+  async replaceDocument(
+    userId: number,
+    documentId: number,
+    files: Express.Multer.File | Express.Multer.File[],
+  ) {
+    const doc = await this.prisma.scholarDocument.findUnique({
+      where: { document_id: documentId },
+      include: { scholar_profile: true },
+    });
+
+    if (!doc) {
+      throw new NotFoundException(`Document ID ${documentId} not found.`);
+    }
+
+    if (doc.scholar_profile.user_id !== userId) {
+      throw new NotFoundException(`Document ID ${documentId} not found.`);
+    }
+
+    if (doc.status === 'VERIFIED') {
+      throw new BadRequestException(
+        'Verified documents cannot be replaced directly. Please contact a coordinator if corrections are required.',
+      );
+    }
+
+    const fileList = Array.isArray(files) ? files : [files];
+    if (fileList.length === 0) {
+      throw new BadRequestException('No files provided for replacement.');
+    }
+
+    // Inspect replacement file metadata for forensic anomalies
+    const metadataForensics =
+      await this.documentForensicsService.inspectFileMetadata(fileList);
+
+    // Merge multiple files if necessary
+    const processed = await this.pdfMergerService.processAndMergeFiles(
+      fileList,
+      doc.document_type || 'document',
+    );
+
+    const publicId = processed.fileName.replace(/\.[^/.]+$/, '');
+    const cloudinaryResult = await this.cloudinaryService.uploadBuffer(
+      processed.buffer,
+      'viascholar/documents',
+      publicId,
+      'auto',
+    );
+
+    const fileType = processed.isPdf ? 'pdf' : 'image';
+
+    const updated = await this.prisma.scholarDocument.update({
+      where: { document_id: documentId },
+      data: {
+        file_name: processed.fileName,
+        file_size: processed.fileSize,
+        file_url: cloudinaryResult.secure_url,
+        file_type: fileType,
+        status: 'PENDING',
+        rejection_reason: null,
+        extracted_data: {
+          forensic_metadata: metadataForensics,
+        } as unknown as Prisma.InputJsonValue,
+        confirmed_data: Prisma.DbNull,
+        verified_at: null,
+        reviewed_by_employee_id: null,
+      },
+    });
+
+    await this.auditService.log(
+      userId,
+      'DOCUMENT_REPLACED',
+      `Scholar (User ID: ${userId}) replaced document (ID: ${documentId}, Type: ${doc.document_type}) with ${fileList.length} file(s)${metadataForensics.is_flagged ? ` [Forensic Flags: ${metadataForensics.flags.join(', ')}]` : ''}.`,
+    );
+
+    // Re-trigger Parseur OCR
+    this.sendToParseur(
+      documentId,
+      processed.buffer,
+      processed.fileName,
+      processed.mimeType,
+    ).catch((err) => {
+      this.logger.error(
+        `Parseur re-dispatch failed for doc ${documentId}: ${err.message}`,
+      );
+    });
+
+    return updated;
+  }
+
+
+  // 1c. Scholar deletes an unverified draft document
+  async deleteDocument(userId: number, documentId: number) {
+    const doc = await this.prisma.scholarDocument.findUnique({
+      where: { document_id: documentId },
+      include: { scholar_profile: true },
+    });
+
+    if (!doc) {
+      throw new NotFoundException(`Document ID ${documentId} not found.`);
+    }
+
+    if (doc.scholar_profile.user_id !== userId) {
+      throw new NotFoundException(`Document ID ${documentId} not found.`);
+    }
+
+    if (doc.status === 'VERIFIED') {
+      throw new BadRequestException(
+        'Verified documents cannot be deleted. Please contact a coordinator if corrections are required.',
+      );
+    }
+
+    const approvedReport = await this.prisma.gradeReport.findFirst({
+      where: { document_id: documentId, status: 'APPROVED' },
+    });
+
+    if (approvedReport) {
+      throw new BadRequestException(
+        'This document is linked to an approved Grade Report and cannot be deleted.',
+      );
+    }
+
+    // Discard any draft or non-approved grade reports associated with this document
+    await this.prisma.gradeReport.deleteMany({
+      where: { document_id: documentId, status: { not: 'APPROVED' } },
+    });
+
+    await this.prisma.scholarDocument.delete({
+      where: { document_id: documentId },
+    });
+
+    await this.auditService.log(
+      userId,
+      'DOCUMENT_DELETED',
+      `Scholar (User ID: ${userId}) deleted document (ID: ${documentId}, Type: ${doc.document_type}).`,
+    );
+
+    return {
+      success: true,
+      message: `Document ID ${documentId} deleted successfully.`,
+    };
+  }
+
   // Helper method: Uploads the document buffer to the Parseur mailbox
-  private async sendToParseur(documentId: number, file: Express.Multer.File) {
+  private async sendToParseur(
+    documentId: number,
+    buffer: Buffer,
+    fileName: string,
+    mimeType: string,
+  ) {
     const apiKey = this.configService.get<string>('PARSEUR_API_KEY');
     const mailboxId = this.configService.get<string>('PARSEUR_MAILBOX_ID');
 
@@ -116,8 +290,8 @@ export class DocumentsService {
     const form = new FormData();
     form.append(
       'file',
-      new Blob([new Uint8Array(file.buffer)], { type: file.mimetype }),
-      file.originalname,
+      new Blob([new Uint8Array(buffer)], { type: mimeType }),
+      fileName,
     );
     form.append('viascholar_document_id', String(documentId));
 
@@ -216,18 +390,45 @@ export class DocumentsService {
       throw new NotFoundException(`Document ID ${documentId} not found.`);
     }
 
+    const extracted = (doc.extracted_data as Record<string, any>) || {};
+    const gradeCount = Array.isArray(extracted.grades)
+      ? extracted.grades.length
+      : 0;
+    const isForm138 =
+      /138|137|report card|high school/i.test(doc.document_type || '') ||
+      /138|137|report card|high school/i.test(doc.label || '');
+
+    const smartWarnings: string[] = [];
+    if (['PENDING', 'PASSED_PRECHECK', 'NEEDS_REUPLOAD'].includes(doc.status)) {
+      if (isForm138 && gradeCount > 0 && gradeCount < 6) {
+        smartWarnings.push(
+          `Only ${gradeCount} subjects were detected. If your Form 138 has multiple quarters/semesters across 2 pages (front & back), please verify both sides were uploaded or use 'Replace Document'.`,
+        );
+      }
+      if (gradeCount > 0 && extracted.general_average == null) {
+        smartWarnings.push(
+          'General Average was not automatically detected on this document. You can manually enter your General Average or let the system compute it from subject grades.',
+        );
+      }
+    }
+
     return {
       document_id: doc.document_id,
       document_type: doc.document_type,
       label: doc.label,
       file_url: doc.file_url,
+      file_name: doc.file_name,
+      file_size: doc.file_size,
       status: doc.status,
       rejection_reason: doc.rejection_reason,
       extracted_data: doc.extracted_data,
       confirmed_data: doc.confirmed_data,
+      smart_warnings: smartWarnings,
+      forensic_analysis: extracted.forensic_analysis || null,
       uploaded_at: doc.uploaded_at,
     };
   }
+
 
   // 3. Scholar confirms/corrects the OCR-extracted fields for review
   async confirmDocument(
@@ -239,6 +440,7 @@ export class DocumentsService {
       where: { document_id: documentId },
       include: { scholar_profile: true },
     });
+
 
     if (!doc) {
       throw new NotFoundException(`Document ID ${documentId} not found.`);
@@ -269,12 +471,15 @@ export class DocumentsService {
           units: i.units != null ? Number(i.units) : 1,
           grade: Number(i.grade),
         }))
-      : (extracted.grades as any[])?.map((i) => ({
-          subject_code: i.subject_code || i.subject_name || 'N/A',
-          subject_name: i.subject_name || i.subject_code || 'N/A',
-          units: i.units != null ? Number(i.units) : 1,
-          grade: Number(i.grade),
-        })) || [];
+      : (extracted.grades as any[])
+          ?.filter((i) => i.grade != null && !isNaN(Number(i.grade)))
+          .map((i) => ({
+            subject_code: i.subject_code || i.subject_name || 'N/A',
+            subject_name: i.subject_name || i.subject_code || 'N/A',
+            units: i.units != null ? Number(i.units) : 1,
+            grade: Number(i.grade),
+          })) || [];
+
 
     const confirmedData: ConfirmedGradeData = {
       academic_year: dto.academic_year || extracted.academic_year || undefined,
@@ -425,12 +630,15 @@ export class DocumentsService {
       ? dto.grade_items
       : confirmed?.grade_items?.length
         ? confirmed.grade_items
-        : (extracted.grades as any[])?.map((i) => ({
-            subject_code: i.subject_code || i.subject_name || 'N/A',
-            subject_name: i.subject_name || i.subject_code || 'N/A',
-            units: i.units != null ? Number(i.units) : 1,
-            grade: Number(i.grade),
-          })) || [];
+        : (extracted.grades as any[])
+            ?.filter((i) => i.grade != null && !isNaN(Number(i.grade)))
+            .map((i) => ({
+              subject_code: i.subject_code || i.subject_name || 'N/A',
+              subject_name: i.subject_name || i.subject_code || 'N/A',
+              units: i.units != null ? Number(i.units) : 1,
+              grade: Number(i.grade),
+            })) || [];
+
 
     if (gradeItems.length === 0) {
       throw new BadRequestException(
@@ -540,13 +748,16 @@ export class DocumentsService {
       'AY';
 
     let normalizedSemester = '1st Semester';
-    if (isForm138 && !/semester|sem/i.test(academicYear)) {
+    if (extracted.semester && typeof extracted.semester === 'string') {
+      normalizedSemester = extracted.semester;
+    } else if (isForm138 && !/semester|sem/i.test(academicYear)) {
       normalizedSemester = 'Annual';
     } else if (/2nd/i.test(academicYear)) {
       normalizedSemester = '2nd Semester';
     } else if (/summer|midyear/i.test(academicYear)) {
       normalizedSemester = 'Summer';
     }
+
 
     // Evaluate GWA against retention threshold with scale awareness
     const globalSettings = await this.settingsService.getSettings();
@@ -648,6 +859,7 @@ export class DocumentsService {
   async syncFromParseur(actorUserId: number, documentId: number) {
     const doc = await this.prisma.scholarDocument.findUnique({
       where: { document_id: documentId },
+      include: { scholar_profile: true },
     });
 
     if (!doc) {
@@ -716,11 +928,29 @@ export class DocumentsService {
     const hasGrades = Array.isArray(fields.grades) && fields.grades.length > 0;
     const validationStatus = hasGrades ? 'PASSED_PRECHECK' : 'NEEDS_REUPLOAD';
 
+    // Retrieve initial metadata forensics
+    const existingExtracted = (doc.extracted_data as Record<string, any>) || {};
+    const initialMetadataForensics = existingExtracted.forensic_metadata;
+
+    const forensicEvaluation =
+      this.documentForensicsService.evaluateExtractedDocument(
+        doc.scholar_profile || {},
+        doc.document_type || 'document',
+        fields,
+        initialMetadataForensics,
+      );
+
+    const mergedExtractedData = {
+      ...fields,
+      forensic_analysis: forensicEvaluation,
+      validation_flags: forensicEvaluation.flags,
+    };
+
     const updated = await this.prisma.scholarDocument.update({
       where: { document_id: documentId },
       data: {
         status: validationStatus,
-        extracted_data: fields as unknown as Prisma.InputJsonValue,
+        extracted_data: mergedExtractedData as unknown as Prisma.InputJsonValue,
         rejection_reason: hasGrades
           ? null
           : 'Unreadable document or missing grade records.',
@@ -730,15 +960,17 @@ export class DocumentsService {
     await this.auditService.log(
       actorUserId,
       'DOCUMENT_SYNCED',
-      `Staff synced Parseur results for document ID ${documentId}. Status: ${validationStatus}, grade items: ${hasGrades ? fields.grades?.length : 0}.`,
+      `Staff synced Parseur results for document ID ${documentId}. Status: ${validationStatus}, Risk: ${forensicEvaluation.risk_level}, grade items: ${hasGrades ? fields.grades?.length : 0}.`,
     );
 
     return {
       synced: true,
       status: updated.status,
       extracted_data: updated.extracted_data,
+      forensic_analysis: forensicEvaluation,
     };
   }
+
 
   // 9. Scholar views all their semestral grade reports (Grade Monitoring)
   async getMyGradeReports(userId: number) {

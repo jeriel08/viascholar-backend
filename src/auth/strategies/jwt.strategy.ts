@@ -34,12 +34,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       ((result.scholar_profile ?? result.employee ?? {}) as {
         first_name?: string;
         last_name?: string;
+        bio?: string;
+        avatar_url?: string;
+        banner_url?: string;
       }) || {};
 
     return {
       ...result,
       first_name: profile.first_name || '',
       last_name: profile.last_name || '',
+      bio: profile.bio ?? null,
+      avatar_url: profile.avatar_url ?? null,
+      banner_url: profile.banner_url ?? null,
     };
   }
 }

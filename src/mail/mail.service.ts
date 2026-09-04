@@ -481,6 +481,42 @@ export class MailService {
     );
   }
 
+  // 11b. Contract Change Requested - Staff Notification
+  async sendContractChangeRequestToStaff(
+    staffEmails: string[],
+    data: {
+      studentName: string;
+      studentEmail: string;
+      contractNumber: string;
+      reason: string;
+    },
+  ) {
+    const html = renderBaseEmail({
+      title: 'Contract Revision Requested by Student',
+      badge: { text: 'Revision Requested', variant: 'warning' },
+      greeting: 'Hello ViaScholar Staff,',
+      bodyHtml: `
+        <p>Student <strong>${data.studentName}</strong> (${data.studentEmail}) has reviewed pending contract <strong>#${data.contractNumber}</strong> and requested revisions prior to signing.</p>
+        <div class="details-box">
+          <div class="detail-row"><span class="detail-label">Contract Number:</span><span class="detail-value">#${data.contractNumber}</span></div>
+          <div class="detail-row"><span class="detail-label">Student:</span><span class="detail-value">${data.studentName} (${data.studentEmail})</span></div>
+          <div class="detail-row"><span class="detail-label">Requested Corrections:</span><span class="detail-value">${data.reason}</span></div>
+        </div>
+        <p>Please review the student's profile and contract details in the staff dashboard to make the necessary adjustments and re-issue the agreement.</p>
+      `,
+      cta: {
+        text: 'Manage Contracts in Dashboard',
+        url: `${this.frontendUrl}/dashboard/contracts`,
+      },
+    });
+
+    await this.sendEmail(
+      staffEmails,
+      `[Revision Requested] Contract #${data.contractNumber} - ${data.studentName}`,
+      html,
+    );
+  }
+
   // 12. Document Action Required (Student)
   async sendDocumentActionRequired(
     studentEmail: string,

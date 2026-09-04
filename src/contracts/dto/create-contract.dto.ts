@@ -37,11 +37,4 @@ export class CreateContractDto {
   @IsDateString()
   @IsOptional()
   expiry_date?: string;
-
-  @ApiPropertyOptional({
-    description: 'URL of the contract document (e.g., Cloudinary file)',
-  })
-  @IsString()
-  @IsOptional()
-  document_url?: string;
 }
