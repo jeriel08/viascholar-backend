@@ -22,6 +22,7 @@ import {
   ApiBody,
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service.js';
+import { ProfileService } from './profile.service.js';
 import { LoginDto } from './dto/login.dto.js';
 import { RegisterScholarDto } from './dto/register-scholar.dto.js';
 import { Role } from '../generated/prisma/browser.js';
@@ -31,10 +32,20 @@ import { CreateStaffDto } from './dto/create-staff.dto.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
 import { FileInterceptor } from '@nestjs/platform-express';
 
+interface AuthenticatedRequest {
+  user: {
+    user_id: number;
+    [key: string]: unknown;
+  };
+}
+
 @ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly profileService: ProfileService,
+  ) {}
 
   @Post('register')
   @ApiOperation({ summary: 'Public registration for prospective scholars' })
@@ -113,7 +124,7 @@ export class AuthController {
     status: 401,
     description: 'Unauthorized. Missing or invalid JWT token.',
   })
-  getProfile(@Request() req) {
+  getProfile(@Request() req: AuthenticatedRequest) {
     return req.user;
   }
 
@@ -135,8 +146,11 @@ export class AuthController {
     status: 401,
     description: 'Unauthorized. Missing or invalid JWT token.',
   })
-  updateProfile(@Request() req, @Body() dto: UpdateProfileDto) {
-    return this.authService.updateProfile(req.user.user_id, dto);
+  updateProfile(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: UpdateProfileDto,
+  ) {
+    return this.profileService.updateProfile(req.user.user_id, dto);
   }
 
   @Post('me/avatar')
@@ -154,7 +168,7 @@ export class AuthController {
     },
   })
   async uploadAvatar(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @UploadedFile(
       new ParseFilePipe({
         validators: [
@@ -165,7 +179,7 @@ export class AuthController {
     )
     file: Express.Multer.File,
   ) {
-    return this.authService.uploadAvatar(req.user.user_id, file);
+    return this.profileService.uploadAvatar(req.user.user_id, file);
   }
 
   @Post('me/banner')
@@ -183,7 +197,7 @@ export class AuthController {
     },
   })
   async uploadBanner(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @UploadedFile(
       new ParseFilePipe({
         validators: [
@@ -194,6 +208,6 @@ export class AuthController {
     )
     file: Express.Multer.File,
   ) {
-    return this.authService.uploadBanner(req.user.user_id, file);
+    return this.profileService.uploadBanner(req.user.user_id, file);
   }
 }

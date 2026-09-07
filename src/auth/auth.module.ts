@@ -3,6 +3,7 @@ import { PassportModule } from '@nestjs/passport';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
+import { ProfileService } from './profile.service.js';
 import { JwtStrategy } from './strategies/jwt.strategy.js';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module.js';
 
@@ -18,7 +19,7 @@ import { CloudinaryModule } from '../cloudinary/cloudinary.module.js';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
-  exports: [JwtStrategy, PassportModule],
+  providers: [AuthService, ProfileService, JwtStrategy],
+  exports: [AuthService, ProfileService, JwtStrategy, PassportModule],
 })
 export class AuthModule {}
