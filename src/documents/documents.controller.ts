@@ -26,7 +26,10 @@ import {
   ApiBody,
 } from '@nestjs/swagger';
 import { RolesGuard } from '../auth/decorators/roles.guard.js';
-import { DocumentsService } from './documents.service.js';
+import { DocumentsStorageService } from './documents-storage.service.js';
+import { DocumentOcrService } from './document-ocr.service.js';
+import { DocumentEvaluationService } from './document-evaluation.service.js';
+import { GradeReportsService } from './grade-reports.service.js';
 import { Roles } from '../auth/decorators/roles.decorator.js';
 import { Role } from '../generated/prisma/enums.js';
 import { VerifyDocumentDto } from './dto/verify-document.dto.js';
@@ -35,12 +38,25 @@ import { RequestChangesDto } from './dto/request-changes.dto.js';
 import { QueryGradeReportsDto } from './dto/query-grade-reports.dto.js';
 import { UpdateGradeReportStatusDto } from './dto/update-grade-report-status.dto.js';
 
+interface AuthenticatedRequest {
+  user: {
+    user_id: number;
+    role: string;
+    [key: string]: unknown;
+  };
+}
+
 @ApiTags('Scholar Documents & Grade Verification')
 @ApiBearerAuth()
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Controller('documents')
 export class DocumentsController {
-  constructor(private readonly documentsService: DocumentsService) {}
+  constructor(
+    private readonly storageService: DocumentsStorageService,
+    private readonly ocrService: DocumentOcrService,
+    private readonly evaluationService: DocumentEvaluationService,
+    private readonly gradeReportsService: GradeReportsService,
+  ) {}
 
   private validateUploadedFiles(files: Express.Multer.File[]) {
     if (!files || files.length === 0) {
@@ -93,12 +109,12 @@ export class DocumentsController {
     },
   })
   uploadDocument(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @UploadedFiles() files: Express.Multer.File[],
     @Body('document_type') documentType: string,
   ) {
     this.validateUploadedFiles(files);
-    return this.documentsService.uploadDocument(
+    return this.storageService.uploadDocument(
       req.user.user_id,
       files,
       documentType || 'TOR',
@@ -131,12 +147,12 @@ export class DocumentsController {
     },
   })
   replaceDocument(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @UploadedFiles() files: Express.Multer.File[],
   ) {
     this.validateUploadedFiles(files);
-    return this.documentsService.replaceDocument(req.user.user_id, id, files);
+    return this.storageService.replaceDocument(req.user.user_id, id, files);
   }
 
   @Delete(':id')
@@ -144,8 +160,11 @@ export class DocumentsController {
   @ApiOperation({
     summary: 'Scholar deletes / discards an unverified draft document',
   })
-  deleteDocument(@Request() req, @Param('id', ParseIntPipe) id: number) {
-    return this.documentsService.deleteDocument(req.user.user_id, id);
+  deleteDocument(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.storageService.deleteDocument(req.user.user_id, id);
   }
 
   @Get('me')
@@ -153,8 +172,8 @@ export class DocumentsController {
   @ApiOperation({
     summary: 'List own documents with OCR data and coordinator remarks',
   })
-  getMyDocuments(@Request() req) {
-    return this.documentsService.getMyDocuments(req.user.user_id);
+  getMyDocuments(@Request() req: AuthenticatedRequest) {
+    return this.storageService.getMyDocuments(req.user.user_id);
   }
 
   @Get('grade-reports/me')
@@ -163,8 +182,8 @@ export class DocumentsController {
     summary:
       'Scholar views all their semestral grade reports (Grade Monitoring)',
   })
-  getMyGradeReports(@Request() req) {
-    return this.documentsService.getMyGradeReports(req.user.user_id);
+  getMyGradeReports(@Request() req: AuthenticatedRequest) {
+    return this.gradeReportsService.getMyGradeReports(req.user.user_id);
   }
 
   @Get('grade-reports')
@@ -174,7 +193,7 @@ export class DocumentsController {
       'Staff views all semestral grade reports with filters (Grade Monitoring)',
   })
   getAllGradeReports(@Query() query: QueryGradeReportsDto) {
-    return this.documentsService.getAllGradeReports(query);
+    return this.gradeReportsService.getAllGradeReports(query);
   }
 
   @Patch('grade-reports/:id/status')
@@ -183,11 +202,11 @@ export class DocumentsController {
     summary: 'Staff overrides or updates the review status of a grade report',
   })
   updateGradeReportStatus(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateGradeReportStatusDto,
   ) {
-    return this.documentsService.updateGradeReportStatus(
+    return this.gradeReportsService.updateGradeReportStatus(
       req.user.user_id,
       id,
       dto,
@@ -205,8 +224,11 @@ export class DocumentsController {
   @ApiOperation({
     summary: 'Retrieve the Parseur OCR-extracted data of a specific document',
   })
-  getExtractedData(@Request() req, @Param('id', ParseIntPipe) id: number) {
-    return this.documentsService.getExtractedData(
+  getExtractedData(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.ocrService.getExtractedData(
       req.user.user_id,
       id,
       req.user.role,
@@ -220,11 +242,11 @@ export class DocumentsController {
       'Confirm or correct the OCR-extracted fields and submit for review',
   })
   confirmDocument(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ConfirmDocumentDto,
   ) {
-    return this.documentsService.confirmDocument(req.user.user_id, id, dto);
+    return this.evaluationService.confirmDocument(req.user.user_id, id, dto);
   }
 
   @Get('pending')
@@ -233,14 +255,14 @@ export class DocumentsController {
     summary: 'List pending documents for Coordinator verification',
   })
   getPendingDocuments() {
-    return this.documentsService.getPendingDocuments();
+    return this.storageService.getPendingDocuments();
   }
 
   @Get(':id')
   @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({ summary: 'View full detail of a document submission' })
   getDocumentDetail(@Param('id', ParseIntPipe) id: number) {
-    return this.documentsService.getDocumentDetail(id);
+    return this.storageService.getDocumentDetail(id);
   }
 
   @Post(':id/sync-parseur')
@@ -249,8 +271,11 @@ export class DocumentsController {
     summary:
       'Re-fetch OCR results from Parseur and backfill the extracted data',
   })
-  syncFromParseur(@Request() req, @Param('id', ParseIntPipe) id: number) {
-    return this.documentsService.syncFromParseur(req.user.user_id, id);
+  syncFromParseur(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.ocrService.syncFromParseur(req.user.user_id, id);
   }
 
   @Patch(':id/request-changes')
@@ -259,11 +284,11 @@ export class DocumentsController {
     summary: 'Flag a document as unclear/inconsistent and request re-upload',
   })
   requestChanges(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: RequestChangesDto,
   ) {
-    return this.documentsService.requestChanges(
+    return this.evaluationService.requestChanges(
       req.user.user_id,
       id,
       dto.reason,
@@ -277,10 +302,10 @@ export class DocumentsController {
       'Coordinator confirms extracted grades and triggers eligibility check',
   })
   verifyAndEvaluate(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: VerifyDocumentDto,
   ) {
-    return this.documentsService.verifyAndEvaluate(req.user.user_id, id, dto);
+    return this.evaluationService.verifyAndEvaluate(req.user.user_id, id, dto);
   }
 }
