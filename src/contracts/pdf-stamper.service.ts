@@ -68,7 +68,9 @@ export class PdfStamperService {
       try {
         return await PDFDocument.load(customBuffer);
       } catch {
-        this.logger.warn('Failed to parse custom PDF buffer. Trying asset template.');
+        this.logger.warn(
+          'Failed to parse custom PDF buffer. Trying asset template.',
+        );
       }
     }
 
@@ -237,10 +239,9 @@ export class PdfStamperService {
     const pages = pdfDoc.getPages();
     const page = pages[0];
 
-    const formattedDate = (params.effectiveDate || new Date()).toLocaleDateString(
-      'en-US',
-      { dateStyle: 'long' },
-    );
+    const formattedDate = (
+      params.effectiveDate || new Date()
+    ).toLocaleDateString('en-US', { dateStyle: 'long' });
 
     // 1. Fill Header Metadata Fields
     this.fillHeaderMetadata(page, fontBold, fontReg, params, formattedDate);
@@ -292,10 +293,9 @@ export class PdfStamperService {
     const page = pages[0]; // Primary contract page
     const { width, height } = page.getSize();
 
-    const formattedDate = (params.effectiveDate || params.signedAt).toLocaleDateString(
-      'en-US',
-      { dateStyle: 'long' },
-    );
+    const formattedDate = (
+      params.effectiveDate || params.signedAt
+    ).toLocaleDateString('en-US', { dateStyle: 'long' });
 
     // 1. Fill Header Metadata Fields
     this.fillHeaderMetadata(page, fontBold, fontReg, params, formattedDate);

@@ -13,5 +13,3 @@ import { DocumentForensicsService } from './document-forensics.service.js';
   exports: [DocumentsService, PdfMergerService, DocumentForensicsService],
 })
 export class DocumentsModule {}
-
-

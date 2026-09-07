@@ -94,12 +94,13 @@ export class WebhooksController {
     const initialMetadataForensics = existingExtracted.forensic_metadata;
 
     // Run full forensic & math reconciliation
-    const forensicEvaluation = this.documentForensicsService.evaluateExtractedDocument(
-      doc.scholar_profile || {},
-      doc.document_type || 'document',
-      fields,
-      initialMetadataForensics,
-    );
+    const forensicEvaluation =
+      this.documentForensicsService.evaluateExtractedDocument(
+        doc.scholar_profile || {},
+        doc.document_type || 'document',
+        fields,
+        initialMetadataForensics,
+      );
 
     const mergedExtractedData = {
       ...fields,
@@ -126,4 +127,3 @@ export class WebhooksController {
     return { status: 'processed', validationStatus, forensicEvaluation };
   }
 }
-

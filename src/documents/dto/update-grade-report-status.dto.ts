@@ -13,7 +13,8 @@ export class UpdateGradeReportStatusDto {
   status: GradeReportStatus;
 
   @ApiPropertyOptional({
-    example: 'Student submitted medical certificate for incomplete mark; approved for disbursement.',
+    example:
+      'Student submitted medical certificate for incomplete mark; approved for disbursement.',
     description: 'Remarks or justification for the status override',
   })
   @IsString()

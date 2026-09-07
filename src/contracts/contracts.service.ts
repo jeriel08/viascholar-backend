@@ -396,7 +396,8 @@ export class ContractsService {
         `${contract.scholar_profile.first_name} ${contract.scholar_profile.last_name}`.trim(),
       student_number: contract.scholar_profile.student_number || 'N/A',
       school_name: contract.scholar_profile.school_name || 'N/A',
-      scholarship_track: contract.scholar_profile.scholarship_track || 'General',
+      scholarship_track:
+        contract.scholar_profile.scholarship_track || 'General',
       effective_date: contract.effective_date,
       signed_at: contract.signed_at,
       document_hash: contract.document_hash,

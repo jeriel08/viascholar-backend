@@ -11,7 +11,8 @@ export class RequestContractChangesDto {
   @IsString()
   @IsNotEmpty()
   @MinLength(10, {
-    message: 'Reason must be at least 10 characters describing the changes needed.',
+    message:
+      'Reason must be at least 10 characters describing the changes needed.',
   })
   reason: string;
 }

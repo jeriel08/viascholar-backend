@@ -148,7 +148,6 @@ export class DocumentsController {
     return this.documentsService.deleteDocument(req.user.user_id, id);
   }
 
-
   @Get('me')
   @Roles(Role.APPLICANT, Role.SCHOLAR)
   @ApiOperation({
@@ -161,7 +160,8 @@ export class DocumentsController {
   @Get('grade-reports/me')
   @Roles(Role.SCHOLAR, Role.APPLICANT)
   @ApiOperation({
-    summary: 'Scholar views all their semestral grade reports (Grade Monitoring)',
+    summary:
+      'Scholar views all their semestral grade reports (Grade Monitoring)',
   })
   getMyGradeReports(@Request() req) {
     return this.documentsService.getMyGradeReports(req.user.user_id);

@@ -12,7 +12,8 @@ import { GradeItemDto } from './grade-item.dto.js';
 export class ConfirmDocumentDto {
   @ApiPropertyOptional({
     example: '2017-2018',
-    description: 'Academic year or period (e.g. 2017-2018, AY 2025-2026 1st Sem)',
+    description:
+      'Academic year or period (e.g. 2017-2018, AY 2025-2026 1st Sem)',
   })
   @IsString()
   @IsOptional()
@@ -38,4 +39,3 @@ export class ConfirmDocumentDto {
   @Type(() => GradeItemDto)
   grade_items?: GradeItemDto[];
 }
-

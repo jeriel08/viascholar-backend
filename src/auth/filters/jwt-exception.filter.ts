@@ -37,11 +37,12 @@ export class JwtExceptionFilter implements ExceptionFilter {
     const status = exception.getStatus();
     const exceptionResponse = exception.getResponse();
 
-    return response.status(status).json(
-      typeof exceptionResponse === 'string'
-        ? { statusCode: status, message: exceptionResponse }
-        : exceptionResponse,
-    );
+    return response
+      .status(status)
+      .json(
+        typeof exceptionResponse === 'string'
+          ? { statusCode: status, message: exceptionResponse }
+          : exceptionResponse,
+      );
   }
 }
-

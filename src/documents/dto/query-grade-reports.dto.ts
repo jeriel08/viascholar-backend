@@ -5,7 +5,8 @@ import { GradeReportStatus } from '../../generated/prisma/enums.js';
 export class QueryGradeReportsDto {
   @ApiPropertyOptional({
     enum: GradeReportStatus,
-    description: 'Filter by grade report status (PENDING, APPROVED, FLAGGED, REJECTED)',
+    description:
+      'Filter by grade report status (PENDING, APPROVED, FLAGGED, REJECTED)',
   })
   @IsEnum(GradeReportStatus)
   @IsOptional()

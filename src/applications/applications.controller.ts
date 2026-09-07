@@ -17,25 +17,42 @@ import { Roles } from '../auth/decorators/roles.decorator.js';
 import { Role } from '../generated/prisma/enums.js';
 import { CreateApplicationDto } from './dto/create-application.dto.js';
 import { ApplicationsService } from './applications.service.js';
+import { ApplicationInterviewsService } from './application-interviews.service.js';
+import { ApplicationStageService } from './application-stage.service.js';
 import { QueryApplicationsDto } from './dto/query-applications.dto.js';
 import { UpdateApplicationStageDto } from './dto/update-stage.dto.js';
 import { ScheduleInterviewDto } from './dto/schedule-interview.dto.js';
 import { RequestRescheduleDto } from './dto/request-reschedule.dto.js';
 import { RescheduleInterviewDto } from './dto/reschedule-interview.dto.js';
 
+interface AuthenticatedRequest {
+  user: {
+    user_id: number;
+    role: string;
+    [key: string]: unknown;
+  };
+}
+
 @ApiTags('Scholarship Applications')
 @ApiBearerAuth()
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Controller('applications')
 export class ApplicationsController {
-  constructor(private readonly applicationsService: ApplicationsService) {}
+  constructor(
+    private readonly applicationsService: ApplicationsService,
+    private readonly interviewsService: ApplicationInterviewsService,
+    private readonly stageService: ApplicationStageService,
+  ) {}
 
   @Post()
   @Roles(Role.APPLICANT, Role.SCHOLAR)
   @ApiOperation({
     summary: 'Submit or update scholarship application track (Scholar only)',
   })
-  submitApplication(@Request() req, @Body() dto: CreateApplicationDto) {
+  submitApplication(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: CreateApplicationDto,
+  ) {
     return this.applicationsService.submitApplication(req.user.user_id, dto);
   }
 
@@ -44,7 +61,7 @@ export class ApplicationsController {
   @ApiOperation({
     summary: 'Get current scholar application status and stage timeline',
   })
-  getMyApplication(@Request() req) {
+  getMyApplication(@Request() req: AuthenticatedRequest) {
     return this.applicationsService.getMyApplication(req.user.user_id);
   }
 
@@ -53,8 +70,11 @@ export class ApplicationsController {
   @ApiOperation({
     summary: 'Request interview rescheduling with a reason (Student only)',
   })
-  requestReschedule(@Request() req, @Body() dto: RequestRescheduleDto) {
-    return this.applicationsService.requestReschedule(req.user.user_id, dto);
+  requestReschedule(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: RequestRescheduleDto,
+  ) {
+    return this.interviewsService.requestReschedule(req.user.user_id, dto);
   }
 
   @Get()
@@ -73,15 +93,11 @@ export class ApplicationsController {
       'Schedule interview with automated Google Meet & Calendar invite (Staff only)',
   })
   scheduleInterview(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ScheduleInterviewDto,
   ) {
-    return this.applicationsService.scheduleInterview(
-      req.user.user_id,
-      id,
-      dto,
-    );
+    return this.interviewsService.scheduleInterview(req.user.user_id, id, dto);
   }
 
   @Patch(':id/reschedule-interview')
@@ -91,11 +107,11 @@ export class ApplicationsController {
       'Reschedule existing interview and update calendar event (Staff only)',
   })
   rescheduleInterview(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: RescheduleInterviewDto,
   ) {
-    return this.applicationsService.rescheduleInterview(
+    return this.interviewsService.rescheduleInterview(
       req.user.user_id,
       id,
       dto,
@@ -108,11 +124,11 @@ export class ApplicationsController {
     summary: 'Update application evaluation stage or status (Staff only)',
   })
   updateStage(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateApplicationStageDto,
   ) {
-    return this.applicationsService.updateStage(
+    return this.stageService.updateStage(
       req.user.user_id,
       id,
       dto,
@@ -120,4 +136,3 @@ export class ApplicationsController {
     );
   }
 }
-

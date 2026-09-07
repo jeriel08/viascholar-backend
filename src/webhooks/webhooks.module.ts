@@ -7,4 +7,3 @@ import { DocumentsModule } from '../documents/documents.module.js';
   controllers: [WebhooksController],
 })
 export class WebhooksModule {}
-

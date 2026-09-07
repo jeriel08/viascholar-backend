@@ -215,13 +215,19 @@ export class SettingsService implements OnModuleInit {
     if (highest < failing) {
       // 5-point scale (e.g. 1.0 highest, 3.0 passing at 75%)
       // 90% translates to ~1.80 on a 5-point scale
-      const normalizedPercent = Math.max(75, Math.min(100, globalThresholdPercent));
+      const normalizedPercent = Math.max(
+        75,
+        Math.min(100, globalThresholdPercent),
+      );
       const thresholdGwa =
         passing - ((normalizedPercent - 75) / 25) * (passing - highest);
       return gwa <= Number(thresholdGwa.toFixed(2));
     } else {
       // Standard scale
-      const normalizedPercent = Math.max(75, Math.min(100, globalThresholdPercent));
+      const normalizedPercent = Math.max(
+        75,
+        Math.min(100, globalThresholdPercent),
+      );
       const thresholdGwa =
         passing + ((normalizedPercent - 75) / 25) * (highest - passing);
       return gwa >= Number(thresholdGwa.toFixed(2));

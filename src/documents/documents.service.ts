@@ -217,7 +217,6 @@ export class DocumentsService {
     return updated;
   }
 
-
   // 1c. Scholar deletes an unverified draft document
   async deleteDocument(userId: number, documentId: number) {
     const doc = await this.prisma.scholarDocument.findUnique({
@@ -429,7 +428,6 @@ export class DocumentsService {
     };
   }
 
-
   // 3. Scholar confirms/corrects the OCR-extracted fields for review
   async confirmDocument(
     userId: number,
@@ -440,7 +438,6 @@ export class DocumentsService {
       where: { document_id: documentId },
       include: { scholar_profile: true },
     });
-
 
     if (!doc) {
       throw new NotFoundException(`Document ID ${documentId} not found.`);
@@ -479,7 +476,6 @@ export class DocumentsService {
             units: i.units != null ? Number(i.units) : 1,
             grade: Number(i.grade),
           })) || [];
-
 
     const confirmedData: ConfirmedGradeData = {
       academic_year: dto.academic_year || extracted.academic_year || undefined,
@@ -639,7 +635,6 @@ export class DocumentsService {
               grade: Number(i.grade),
             })) || [];
 
-
     if (gradeItems.length === 0) {
       throw new BadRequestException(
         'No grade items provided and no student-confirmed data available for this document.',
@@ -757,7 +752,6 @@ export class DocumentsService {
     } else if (/summer|midyear/i.test(academicYear)) {
       normalizedSemester = 'Summer';
     }
-
 
     // Evaluate GWA against retention threshold with scale awareness
     const globalSettings = await this.settingsService.getSettings();
@@ -970,7 +964,6 @@ export class DocumentsService {
       forensic_analysis: forensicEvaluation,
     };
   }
-
 
   // 9. Scholar views all their semestral grade reports (Grade Monitoring)
   async getMyGradeReports(userId: number) {

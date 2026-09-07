@@ -140,7 +140,10 @@ export class PdfMergerService {
       if (err instanceof BadRequestException) {
         throw err;
       }
-      this.logger.error(`Failed to merge files into PDF: ${err.message}`, err.stack);
+      this.logger.error(
+        `Failed to merge files into PDF: ${err.message}`,
+        err.stack,
+      );
       throw new BadRequestException(
         `Failed to combine uploaded files into a unified document: ${err.message}`,
       );

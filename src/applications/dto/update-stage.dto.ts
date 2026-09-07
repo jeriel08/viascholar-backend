@@ -66,4 +66,3 @@ export class UpdateApplicationStageDto {
   @IsOptional()
   rejection_reason?: string;
 }
-

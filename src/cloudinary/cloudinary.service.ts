@@ -43,29 +43,31 @@ export class CloudinaryService implements OnModuleInit {
           await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
 
-        const result = await new Promise<UploadApiResponse>((resolve, reject) => {
-          const uploadStream = cloudinary.uploader.upload_stream(
-            {
-              folder: folder,
-              allowed_formats: allowedFormats,
-            },
-            (error, result) => {
-              if (error || !result) {
-                return reject(
-                  error || new Error('Cloudinary returned empty result.'),
-                );
-              }
-              resolve(result);
-            },
-          );
+        const result = await new Promise<UploadApiResponse>(
+          (resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+              {
+                folder: folder,
+                allowed_formats: allowedFormats,
+              },
+              (error, result) => {
+                if (error || !result) {
+                  return reject(
+                    error || new Error('Cloudinary returned empty result.'),
+                  );
+                }
+                resolve(result);
+              },
+            );
 
-          try {
-            const stream = streamifier.createReadStream(file.buffer);
-            stream.pipe(uploadStream);
-          } catch (err) {
-            reject(err);
-          }
-        });
+            try {
+              const stream = streamifier.createReadStream(file.buffer);
+              stream.pipe(uploadStream);
+            } catch (err) {
+              reject(err);
+            }
+          },
+        );
 
         return result;
       } catch (error: any) {
@@ -89,7 +91,8 @@ export class CloudinaryService implements OnModuleInit {
 
     this.logger.error('Cloudinary Upload Error after retries:', lastError);
     throw new InternalServerErrorException(
-      lastError?.message || 'Cloudinary upload failed or returned empty result.',
+      lastError?.message ||
+        'Cloudinary upload failed or returned empty result.',
     );
   }
 
@@ -161,4 +164,3 @@ export class CloudinaryService implements OnModuleInit {
     });
   }
 }
-

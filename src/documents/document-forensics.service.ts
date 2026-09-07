@@ -89,12 +89,15 @@ export class DocumentForensicsService {
           const creationDate = pdfDoc.getCreationDate();
           const modDate = pdfDoc.getModificationDate();
 
-          const combinedText = `${producer} ${creator} ${title} ${author}`.toLowerCase();
+          const combinedText =
+            `${producer} ${creator} ${title} ${author}`.toLowerCase();
 
           for (const tool of this.suspiciousTools) {
             if (combinedText.includes(tool)) {
               detectedSoftware.add(tool);
-              flags.push(`SUSPICIOUS_SOFTWARE_${tool.toUpperCase().replace(/\s+/g, '_')}`);
+              flags.push(
+                `SUSPICIOUS_SOFTWARE_${tool.toUpperCase().replace(/\s+/g, '_')}`,
+              );
             }
           }
 
@@ -115,7 +118,9 @@ export class DocumentForensicsService {
             creator: creator || undefined,
             title: title || undefined,
             author: author || undefined,
-            creation_date: creationDate ? creationDate.toISOString() : undefined,
+            creation_date: creationDate
+              ? creationDate.toISOString()
+              : undefined,
             modification_date: modDate ? modDate.toISOString() : undefined,
             has_modification_gap: hasModificationGap,
           };
@@ -125,11 +130,19 @@ export class DocumentForensicsService {
       }
 
       // Binary scan for rasterized images or embedded XMP packets (Photoshop, Canva, GIMP tags)
-      const asciiChunk = buffer.subarray(0, Math.min(buffer.length, 65536)).toString('binary');
-      const utf8Chunk = buffer.subarray(0, Math.min(buffer.length, 65536)).toString('utf-8', 0, Math.min(buffer.length, 65536));
+      const asciiChunk = buffer
+        .subarray(0, Math.min(buffer.length, 65536))
+        .toString('binary');
+      const utf8Chunk = buffer
+        .subarray(0, Math.min(buffer.length, 65536))
+        .toString('utf-8', 0, Math.min(buffer.length, 65536));
       const content = `${asciiChunk} ${utf8Chunk}`.toLowerCase();
 
-      if (content.includes('photoshop 3.0') || content.includes('adobe photoshop') || content.includes('8bps')) {
+      if (
+        content.includes('photoshop 3.0') ||
+        content.includes('adobe photoshop') ||
+        content.includes('8bps')
+      ) {
         detectedSoftware.add('photoshop');
         imageSignatures.push('Adobe Photoshop signature in image header');
         flags.push('SUSPICIOUS_SOFTWARE_PHOTOSHOP');
@@ -161,7 +174,8 @@ export class DocumentForensicsService {
       is_flagged: uniqueFlags.length > 0,
       detected_software: uniqueSoftware,
       pdf_metadata: pdfMetadataResult,
-      image_signatures: imageSignatures.length > 0 ? imageSignatures : undefined,
+      image_signatures:
+        imageSignatures.length > 0 ? imageSignatures : undefined,
       flags: uniqueFlags,
     };
   }
@@ -191,10 +205,13 @@ export class DocumentForensicsService {
       (g) => g.grade != null && !isNaN(Number(g.grade)) && Number(g.grade) > 0,
     );
 
-
     const isForm138 =
-      /138|137|report card|high school|shs|senior high/i.test(documentType || '') ||
-      /138|137|report card|high school|shs|senior high/i.test(extractedData.label || '');
+      /138|137|report card|high school|shs|senior high/i.test(
+        documentType || '',
+      ) ||
+      /138|137|report card|high school|shs|senior high/i.test(
+        extractedData.label || '',
+      );
 
     // 1. Math Reconciliation & Semester-Aware Verification
     let mathResult: ForensicEvaluationResult['math_reconciliation'];
@@ -216,18 +233,28 @@ export class DocumentForensicsService {
       extractedData.sem2_average ??
       extractedData.second_sem_gwa;
 
-    let sem1 = sem1Raw != null && !isNaN(Number(sem1Raw)) ? Number(sem1Raw) : null;
-    let sem2 = sem2Raw != null && !isNaN(Number(sem2Raw)) ? Number(sem2Raw) : null;
+    let sem1 =
+      sem1Raw != null && !isNaN(Number(sem1Raw)) ? Number(sem1Raw) : null;
+    let sem2 =
+      sem2Raw != null && !isNaN(Number(sem2Raw)) ? Number(sem2Raw) : null;
 
     // Fallback: If not explicitly extracted, calculate sem1 and sem2 averages from semester-tagged subjects
     if (sem1 == null || sem2 == null) {
-      const sem1Items = grades.filter((g) => /1st|first/i.test(g.semester || ''));
-      const sem2Items = grades.filter((g) => /2nd|second/i.test(g.semester || ''));
+      const sem1Items = grades.filter((g) =>
+        /1st|first/i.test(g.semester || ''),
+      );
+      const sem2Items = grades.filter((g) =>
+        /2nd|second/i.test(g.semester || ''),
+      );
       if (sem1Items.length > 0 && sem1 == null) {
-        sem1 = sem1Items.reduce((acc, i) => acc + Number(i.grade), 0) / sem1Items.length;
+        sem1 =
+          sem1Items.reduce((acc, i) => acc + Number(i.grade), 0) /
+          sem1Items.length;
       }
       if (sem2Items.length > 0 && sem2 == null) {
-        sem2 = sem2Items.reduce((acc, i) => acc + Number(i.grade), 0) / sem2Items.length;
+        sem2 =
+          sem2Items.reduce((acc, i) => acc + Number(i.grade), 0) /
+          sem2Items.length;
       }
     }
 
@@ -240,7 +267,8 @@ export class DocumentForensicsService {
           const hasMapeh = grades.some((i) =>
             /^mapeh$/i.test(i.subject_code || i.subject_name || ''),
           );
-          const mapehSubSubjects = /^(music|arts|physical education|pe|health)$/i;
+          const mapehSubSubjects =
+            /^(music|arts|physical education|pe|health)$/i;
 
           const coreGrades = hasMapeh
             ? grades.filter(
@@ -271,8 +299,10 @@ export class DocumentForensicsService {
         computedGwa = (sem1 + sem2) / 2;
       }
 
-
-      if (reportedGwa != null && (computedGwa > 0 || (sem1 != null && sem2 != null))) {
+      if (
+        reportedGwa != null &&
+        (computedGwa > 0 || (sem1 != null && sem2 != null))
+      ) {
         let diff = Math.abs(reportedGwa - computedGwa);
 
         // Check if reported GWA matches the mean of the 2 semestral averages (with DepEd rounding)
@@ -385,7 +415,8 @@ export class DocumentForensicsService {
     }
 
     // Friendly human-readable summary for Coordinators
-    let summary = 'Document passed forensic baseline check with zero tampering indicators.';
+    let summary =
+      'Document passed forensic baseline check with zero tampering indicators.';
     const detectedSoft = initialMetadataForensics?.detected_software || [];
 
     if (detectedSoft.length > 0) {
@@ -410,4 +441,3 @@ export class DocumentForensicsService {
     };
   }
 }
-
