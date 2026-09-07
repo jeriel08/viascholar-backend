@@ -10,9 +10,15 @@ import {
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { Prisma } from '../generated/prisma/client.js';
-import { DocumentForensicsService } from '../documents/document-forensics.service.js';
+import { DocumentReconciliationService } from '../documents/document-reconciliation.service.js';
+import { ForensicMetadataResult } from '../documents/file-forensics.service.js';
 
 type ParseurFieldSet = { grades?: unknown[] } & Record<string, unknown>;
+
+interface ExtractedDocWithForensics {
+  forensic_metadata?: ForensicMetadataResult;
+  [key: string]: unknown;
+}
 
 type ParseurWebhookPayload = {
   custom_fields?: Record<string, unknown>;
@@ -32,7 +38,7 @@ export class WebhooksController {
 
   constructor(
     private prisma: PrismaService,
-    private documentForensicsService: DocumentForensicsService,
+    private documentReconciliationService: DocumentReconciliationService,
   ) {}
 
   @Post('parseur')
@@ -90,12 +96,13 @@ export class WebhooksController {
     const validationStatus = hasGrades ? 'PASSED_PRECHECK' : 'NEEDS_REUPLOAD';
 
     // Retrieve any initial metadata forensics stored on the doc during upload
-    const existingExtracted = (doc.extracted_data as Record<string, any>) || {};
+    const existingExtracted = (doc.extracted_data ??
+      {}) as ExtractedDocWithForensics;
     const initialMetadataForensics = existingExtracted.forensic_metadata;
 
     // Run full forensic & math reconciliation
     const forensicEvaluation =
-      this.documentForensicsService.evaluateExtractedDocument(
+      this.documentReconciliationService.evaluateExtractedDocument(
         doc.scholar_profile || {},
         doc.document_type || 'document',
         fields,

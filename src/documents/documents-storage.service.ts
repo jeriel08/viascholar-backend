@@ -8,7 +8,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { CloudinaryService } from '../cloudinary/cloudinary.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { PdfMergerService } from './pdf-merger.service.js';
-import { DocumentForensicsService } from './document-forensics.service.js';
+import { FileForensicsService } from './file-forensics.service.js';
 import { DocumentOcrService } from './document-ocr.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 
@@ -21,7 +21,7 @@ export class DocumentsStorageService {
     private cloudinaryService: CloudinaryService,
     private auditService: AuditService,
     private pdfMergerService: PdfMergerService,
-    private documentForensicsService: DocumentForensicsService,
+    private fileForensicsService: FileForensicsService,
     private documentOcrService: DocumentOcrService,
   ) {}
 
@@ -46,7 +46,7 @@ export class DocumentsStorageService {
 
     // Inspect file metadata for digital editing artifacts (Photoshop, Canva, etc.)
     const metadataForensics =
-      await this.documentForensicsService.inspectFileMetadata(fileList);
+      await this.fileForensicsService.inspectFileMetadata(fileList);
 
     // Merge multiple images/PDFs into a single multi-page PDF if needed
     const processed = await this.pdfMergerService.processAndMergeFiles(
@@ -137,7 +137,7 @@ export class DocumentsStorageService {
 
     // Inspect replacement file metadata for forensic anomalies
     const metadataForensics =
-      await this.documentForensicsService.inspectFileMetadata(fileList);
+      await this.fileForensicsService.inspectFileMetadata(fileList);
 
     // Merge multiple files if necessary
     const processed = await this.pdfMergerService.processAndMergeFiles(

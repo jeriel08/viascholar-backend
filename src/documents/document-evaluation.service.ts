@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { SettingsService } from '../settings/settings.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { MailService } from '../mail/mail.service.js';
+import { GradeCalculatorService } from './grade-calculator.service.js';
 import { ConfirmDocumentDto } from './dto/confirm-document.dto.js';
 import { VerifyDocumentDto } from './dto/verify-document.dto.js';
 import { Application, Prisma } from '../generated/prisma/client.js';
@@ -44,6 +45,7 @@ export class DocumentEvaluationService {
     private settingsService: SettingsService,
     private auditService: AuditService,
     private mailService: MailService,
+    private gradeCalculatorService: GradeCalculatorService,
   ) {}
 
   // Scholar confirms/corrects the OCR-extracted fields for review
@@ -229,9 +231,10 @@ export class DocumentEvaluationService {
     const academicYear =
       typeof rawAcademicYear === 'string' ? rawAcademicYear : '';
 
-    const isForm138 =
-      /138|137|report card|high school/i.test(doc.document_type || '') ||
-      /138|137|report card|high school/i.test(doc.label || '');
+    const isForm138 = this.gradeCalculatorService.isForm138(
+      doc.document_type || '',
+      doc.label || '',
+    );
 
     // Fetch school grading configuration if not Form 138
     const schoolName =
@@ -252,88 +255,22 @@ export class DocumentEvaluationService {
             ? Number(extracted.general_average)
             : undefined;
 
-    let computedGwa = 0;
-    let totalUnits = 0;
-    let weightedSum = 0;
-    let hasFailedGrade = false;
-
-    if (explicitGeneralAvg != null && !isNaN(explicitGeneralAvg)) {
-      computedGwa = explicitGeneralAvg;
-      for (const item of gradeItems) {
-        const grade = Number(item.grade);
-        if (schoolConfig) {
-          const evaluation = this.settingsService.evaluateStudentGrade(
-            grade,
-            schoolConfig,
-          );
-          if (!evaluation.isPassing) {
-            hasFailedGrade = true;
-          }
-        } else if (isForm138 && grade < 75.0) {
-          // Standard high school passing mark is 75.0
-          hasFailedGrade = true;
-        }
-      }
-    } else if (isForm138) {
-      // High School Form 138 calculation: Deduplicate MAPEH components if parent MAPEH is present
-      const hasMapeh = gradeItems.some((i) =>
-        /^mapeh$/i.test(String(i.subject_code || i.subject_name || '')),
-      );
-      const mapehSubSubjects = /^(music|arts|physical education|pe|health)$/i;
-
-      const coreItems = hasMapeh
-        ? gradeItems.filter(
-            (i) =>
-              !mapehSubSubjects.test(String(i.subject_name || '')) &&
-              !mapehSubSubjects.test(String(i.subject_code || '')),
-          )
-        : gradeItems;
-
-      let sum = 0;
-      for (const item of coreItems) {
-        const grade = Number(item.grade);
-        sum += grade;
-        if (grade < 75.0) {
-          hasFailedGrade = true;
-        }
-      }
-      computedGwa = coreItems.length > 0 ? sum / coreItems.length : 0;
-    } else {
-      // College TOR / Certificate of Grades: Weighted by credit units
-      for (const item of gradeItems) {
-        const units = item.units != null ? Number(item.units) : 1;
-        const grade = Number(item.grade);
-        totalUnits += units;
-        weightedSum += grade * units;
-
-        if (schoolConfig) {
-          const evaluation = this.settingsService.evaluateStudentGrade(
-            grade,
-            schoolConfig,
-          );
-          if (!evaluation.isPassing) {
-            hasFailedGrade = true;
-          }
-        }
-      }
-      computedGwa = totalUnits > 0 ? weightedSum / totalUnits : 0;
-    }
+    const { computedGwa, hasFailedGrade } =
+      this.gradeCalculatorService.computeGwa({
+        gradeItems,
+        isForm138,
+        explicitGeneralAvg,
+        schoolConfig,
+      });
 
     const normalizedAcademicYear =
-      academicYear.match(/\d{4}\s*-\s*\d{4}/)?.[0]?.replace(/\s+/g, '') ??
-      academicYear.slice(0, 15) ??
-      'AY';
+      this.gradeCalculatorService.normalizeAcademicYear(academicYear);
 
-    let normalizedSemester = '1st Semester';
-    if (typeof extracted.semester === 'string') {
-      normalizedSemester = extracted.semester;
-    } else if (isForm138 && !/semester|sem/i.test(academicYear)) {
-      normalizedSemester = 'Annual';
-    } else if (/2nd/i.test(academicYear)) {
-      normalizedSemester = '2nd Semester';
-    } else if (/summer|midyear/i.test(academicYear)) {
-      normalizedSemester = 'Summer';
-    }
+    const normalizedSemester = this.gradeCalculatorService.normalizeSemester(
+      extracted.semester,
+      academicYear,
+      isForm138,
+    );
 
     // Evaluate GWA against retention threshold with scale awareness
     const globalSettings = await this.settingsService.getSettings();

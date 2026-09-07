@@ -7,10 +7,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
-import {
-  DocumentForensicsService,
-  ForensicMetadataResult,
-} from './document-forensics.service.js';
+import { ForensicMetadataResult } from './file-forensics.service.js';
+import { DocumentReconciliationService } from './document-reconciliation.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 
 interface ParseurFieldSet {
@@ -35,7 +33,7 @@ export class DocumentOcrService {
     private prisma: PrismaService,
     private configService: ConfigService,
     private auditService: AuditService,
-    private documentForensicsService: DocumentForensicsService,
+    private documentReconciliationService: DocumentReconciliationService,
   ) {}
 
   // Uploads the document buffer to the Parseur mailbox
@@ -247,7 +245,7 @@ export class DocumentOcrService {
     const initialMetadataForensics = existingExtracted.forensic_metadata;
 
     const forensicEvaluation =
-      this.documentForensicsService.evaluateExtractedDocument(
+      this.documentReconciliationService.evaluateExtractedDocument(
         doc.scholar_profile || {},
         doc.document_type || 'document',
         fields,

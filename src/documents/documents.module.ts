@@ -7,7 +7,9 @@ import { DocumentOcrService } from './document-ocr.service.js';
 import { DocumentEvaluationService } from './document-evaluation.service.js';
 import { GradeReportsService } from './grade-reports.service.js';
 import { PdfMergerService } from './pdf-merger.service.js';
-import { DocumentForensicsService } from './document-forensics.service.js';
+import { GradeCalculatorService } from './grade-calculator.service.js';
+import { FileForensicsService } from './file-forensics.service.js';
+import { DocumentReconciliationService } from './document-reconciliation.service.js';
 
 @Module({
   imports: [CloudinaryModule, SettingsModule],
@@ -18,7 +20,9 @@ import { DocumentForensicsService } from './document-forensics.service.js';
     DocumentEvaluationService,
     GradeReportsService,
     PdfMergerService,
-    DocumentForensicsService,
+    GradeCalculatorService,
+    FileForensicsService,
+    DocumentReconciliationService,
   ],
   exports: [
     DocumentsStorageService,
@@ -26,7 +30,9 @@ import { DocumentForensicsService } from './document-forensics.service.js';
     DocumentEvaluationService,
     GradeReportsService,
     PdfMergerService,
-    DocumentForensicsService,
+    GradeCalculatorService,
+    FileForensicsService,
+    DocumentReconciliationService,
   ],
 })
 export class DocumentsModule {}
