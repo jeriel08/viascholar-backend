@@ -76,9 +76,13 @@ model User {
 
   employee         Employee?
   scholar_profile  ScholarProfile?
-  signed_contracts Contract[]      @relation("UserSignedContracts")
-  messages_sent    Message[]       @relation("UserSentMessages")
-  auditLogs        AuditLog[]
+  signed_contracts          Contract[]      @relation("UserSignedContracts")
+  messages_sent             Message[]       @relation("UserSentMessages")
+  scholar_conversations     Conversation[]  @relation("ScholarConversations")
+  coordinator_conversations Conversation[]  @relation("CoordinatorConversations")
+  forum_posts               ForumPost[]     @relation("UserForumPosts")
+  forum_comments            ForumComment[]  @relation("UserForumComments")
+  auditLogs                 AuditLog[]
 
   @@map("users")
   systemSettings SystemSetting[] @relation("SettingsUpdatedBy")
@@ -279,13 +283,22 @@ model GradeItem {
 // ==========================================
 
 model Conversation {
-  conversation_id Int       @id @default(autoincrement())
-  subject         String?   @db.VarChar(255)
-  created_at      DateTime  @default(now())
-  updated_at      DateTime  @updatedAt
+  conversation_id      Int       @id @default(autoincrement())
+  scholar_user_id      Int
+  coordinator_user_id  Int
+  subject              String?   @db.VarChar(255)
+  last_message_at      DateTime?
+  last_message_preview String?   @db.Text
+  created_at           DateTime  @default(now())
+  updated_at           DateTime  @updatedAt
 
-  messages Message[]
+  scholar     User      @relation("ScholarConversations", fields: [scholar_user_id], references: [user_id], onDelete: Cascade)
+  coordinator User      @relation("CoordinatorConversations", fields: [coordinator_user_id], references: [user_id], onDelete: Cascade)
+  messages    Message[]
 
+  @@unique([scholar_user_id, coordinator_user_id])
+  @@index([scholar_user_id])
+  @@index([coordinator_user_id])
   @@map("conversations")
 }
 
@@ -294,13 +307,49 @@ model Message {
   conversation_id Int
   sender_user_id  Int
   message_text    String    @db.Text
+  is_read         Boolean   @default(false)
   sent_at         DateTime  @default(now())
   read_at         DateTime?
 
   conversation Conversation @relation(fields: [conversation_id], references: [conversation_id], onDelete: Cascade)
   sender_user  User         @relation("UserSentMessages", fields: [sender_user_id], references: [user_id])
 
+  @@index([conversation_id])
   @@map("messages")
+}
+
+model ForumPost {
+  post_id        Int            @id @default(autoincrement())
+  author_user_id Int
+  title          String         @db.VarChar(255)
+  content        String         @db.Text
+  category       String         @default("GENERAL") @db.VarChar(50) // "ACADEMIC", "STIPENDS", "GENERAL", "ANNOUNCEMENT"
+  is_pinned      Boolean        @default(false)
+  views_count    Int            @default(0)
+  created_at     DateTime       @default(now())
+  updated_at     DateTime       @updatedAt
+
+  author   User           @relation("UserForumPosts", fields: [author_user_id], references: [user_id], onDelete: Cascade)
+  comments ForumComment[]
+
+  @@index([category])
+  @@index([created_at])
+  @@map("forum_posts")
+}
+
+model ForumComment {
+  comment_id     Int       @id @default(autoincrement())
+  post_id        Int
+  author_user_id Int
+  content        String    @db.Text
+  created_at     DateTime  @default(now())
+  updated_at     DateTime  @updatedAt
+
+  post   ForumPost @relation(fields: [post_id], references: [post_id], onDelete: Cascade)
+  author User      @relation("UserForumComments", fields: [author_user_id], references: [user_id], onDelete: Cascade)
+
+  @@index([post_id])
+  @@map("forum_comments")
 }
 
 model Meeting {

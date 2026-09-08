@@ -12,6 +12,7 @@ import { PdfStamperService } from './pdf-stamper.service.js';
 import { ContractStatus, Role } from '../generated/prisma/enums.js';
 import { CreateContractDto } from './dto/create-contract.dto.js';
 import { RequestContractChangesDto } from './dto/request-contract-changes.dto.js';
+import { EventsGateway } from '../events/events.gateway.js';
 
 export interface SignContractOptions {
   signatureBuffer?: Buffer;
@@ -31,6 +32,7 @@ export class ContractsService {
     private cloudinaryService: CloudinaryService,
     private pdfStamperService: PdfStamperService,
     private configService: ConfigService,
+    private eventsGateway: EventsGateway,
   ) {
     this.frontendUrl =
       this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000';
@@ -114,6 +116,23 @@ export class ContractsService {
         studentName,
         contractNumber: dto.contract_number,
       });
+    }
+
+    const contractPayload = {
+      contractId: contract.contract_id,
+      contractNumber: contract.contract_number,
+      scholarProfileId: contract.scholar_profile_id,
+      studentName,
+      status: contract.status,
+      issuedAt: new Date().toISOString(),
+    };
+    this.eventsGateway.emitToStaff('contract:created', contractPayload);
+    if (scholar.user_id) {
+      this.eventsGateway.emitToUser(
+        scholar.user_id,
+        'contract:created',
+        contractPayload,
+      );
     }
 
     return contract;
@@ -204,6 +223,15 @@ export class ContractsService {
         reason: dto.reason,
       });
     }
+
+    this.eventsGateway.emitToStaff('contract:changes_requested', {
+      contractId: contract.contract_id,
+      contractNumber: contract.contract_number,
+      scholarProfileId: contract.scholar_profile_id,
+      studentName,
+      reason: dto.reason,
+      requestedAt: new Date().toISOString(),
+    });
 
     return {
       message:
@@ -368,6 +396,33 @@ export class ContractsService {
         });
       }
     });
+
+    const signedPayload = {
+      contractId: contract.contract_id,
+      contractNumber: contract.contract_number,
+      scholarProfileId: contract.scholar_profile_id,
+      studentName,
+      certificateId: stampResult.certificateId,
+      status: 'SIGNED',
+      signedAt,
+    };
+    this.eventsGateway.emitToStaff('contract:signed', signedPayload);
+    this.eventsGateway.emitToUser(userId, 'contract:signed', signedPayload);
+
+    if (promoted) {
+      const promotionPayload = {
+        userId,
+        oldRole: 'APPLICANT',
+        newRole: 'SCHOLAR',
+        promotedAt: signedAt.toISOString(),
+      };
+      this.eventsGateway.emitToStaff('user:role_promoted', promotionPayload);
+      this.eventsGateway.emitToUser(
+        userId,
+        'user:role_promoted',
+        promotionPayload,
+      );
+    }
 
     return updated;
   }

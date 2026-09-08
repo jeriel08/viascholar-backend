@@ -15,6 +15,8 @@ import { DocumentsModule } from './documents/documents.module.js';
 import { ContractsModule } from './contracts/contracts.module.js';
 import { MailModule } from './mail/mail.module.js';
 import { EventsModule } from './events/events.module.js';
+import { ChatModule } from './chat/chat.module.js';
+import { ForumModule } from './forum/forum.module.js';
 
 @Module({
   imports: [
@@ -39,6 +41,8 @@ import { EventsModule } from './events/events.module.js';
     ContractsModule,
     MailModule,
     EventsModule,
+    ChatModule,
+    ForumModule,
   ],
   providers: [
     {

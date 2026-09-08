@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { EventsGateway } from './events.gateway.js';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import type { Socket, Server } from 'socket.io';
 
 describe('EventsGateway', () => {
   let gateway: EventsGateway;
@@ -47,7 +48,7 @@ describe('EventsGateway', () => {
       join: jest.fn(),
     };
 
-    await gateway.handleConnection(mockSocket as any);
+    await gateway.handleConnection(mockSocket as unknown as Socket);
     expect(mockSocket.disconnect).toHaveBeenCalledWith(true);
   });
 
@@ -65,18 +66,18 @@ describe('EventsGateway', () => {
         auth: {},
         query: {},
       },
-      data: {},
+      data: {} as Record<string, unknown>,
       disconnect: jest.fn(),
       join: jest.fn().mockResolvedValue(undefined),
     };
 
-    await gateway.handleConnection(mockSocket as any);
+    await gateway.handleConnection(mockSocket as unknown as Socket);
 
     expect(mockSocket.disconnect).not.toHaveBeenCalled();
     expect(mockSocket.join).toHaveBeenCalledWith('user_42');
     expect(mockSocket.join).toHaveBeenCalledWith('staff');
     expect(mockSocket.join).toHaveBeenCalledWith('coordinators');
-    expect((mockSocket.data as any).user).toEqual({
+    expect(mockSocket.data['user']).toEqual({
       userId: 42,
       email: 'coordinator@example.com',
       role: 'COORDINATOR',
@@ -98,14 +99,14 @@ describe('EventsGateway', () => {
       join: jest.fn(),
     };
 
-    await gateway.handleConnection(mockSocket as any);
+    await gateway.handleConnection(mockSocket as unknown as Socket);
     expect(mockSocket.disconnect).toHaveBeenCalledWith(true);
   });
 
   it('should emit to staff room', () => {
     const mockEmit = jest.fn();
     const mockTo = jest.fn().mockReturnValue({ emit: mockEmit });
-    gateway.server = { to: mockTo } as any;
+    gateway.server = { to: mockTo, emit: jest.fn() } as unknown as Server;
 
     gateway.emitToStaff('application:submitted', { id: 1 });
     expect(mockTo).toHaveBeenCalledWith('staff');
@@ -115,7 +116,7 @@ describe('EventsGateway', () => {
   it('should emit to user room', () => {
     const mockEmit = jest.fn();
     const mockTo = jest.fn().mockReturnValue({ emit: mockEmit });
-    gateway.server = { to: mockTo } as any;
+    gateway.server = { to: mockTo, emit: jest.fn() } as unknown as Server;
 
     gateway.emitToUser(99, 'application:stage_updated', { status: 'APPROVED' });
     expect(mockTo).toHaveBeenCalledWith('user_99');

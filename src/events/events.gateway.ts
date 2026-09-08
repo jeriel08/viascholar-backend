@@ -123,6 +123,65 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return { event: 'pong', data: 'pong' };
   }
 
+  @SubscribeMessage('chat:join_conversation')
+  async handleJoinConversation(
+    client: Socket,
+    payload: { conversationId: number },
+  ) {
+    if (payload?.conversationId) {
+      await client.join(`conversation_${payload.conversationId}`);
+      return { status: 'joined', conversationId: payload.conversationId };
+    }
+  }
+
+  @SubscribeMessage('chat:leave_conversation')
+  async handleLeaveConversation(
+    client: Socket,
+    payload: { conversationId: number },
+  ) {
+    if (payload?.conversationId) {
+      await client.leave(`conversation_${payload.conversationId}`);
+      return { status: 'left', conversationId: payload.conversationId };
+    }
+  }
+
+  @SubscribeMessage('chat:typing')
+  handleTyping(
+    client: Socket,
+    payload: { conversationId: number; isTyping: boolean },
+  ) {
+    if (payload?.conversationId) {
+      const user = (client.data as SocketClientData)?.user;
+      client.to(`conversation_${payload.conversationId}`).emit('chat:typing', {
+        conversationId: payload.conversationId,
+        userId: user?.userId,
+        isTyping: payload.isTyping,
+      });
+    }
+  }
+
+  @SubscribeMessage('forum:join_post')
+  async handleJoinForumPost(client: Socket, payload: { postId: number }) {
+    if (payload?.postId) {
+      await client.join(`forum_post_${payload.postId}`);
+      return { status: 'joined', postId: payload.postId };
+    }
+  }
+
+  @SubscribeMessage('forum:leave_post')
+  async handleLeaveForumPost(client: Socket, payload: { postId: number }) {
+    if (payload?.postId) {
+      await client.leave(`forum_post_${payload.postId}`);
+      return { status: 'left', postId: payload.postId };
+    }
+  }
+
+  emitToRoom(room: string, event: string, data: unknown) {
+    if (this.server) {
+      this.server.to(room).emit(event, data);
+    }
+  }
+
   emitToStaff(event: string, data: unknown) {
     if (this.server) {
       this.server.to('staff').emit(event, data);

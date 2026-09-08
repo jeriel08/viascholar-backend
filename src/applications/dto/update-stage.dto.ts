@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsString,
   IsDateString,
+  IsBoolean,
 } from 'class-validator';
 import { ApplicationStatus } from '../../generated/prisma/enums.js';
 
@@ -65,4 +66,13 @@ export class UpdateApplicationStageDto {
   @IsString()
   @IsOptional()
   rejection_reason?: string;
+
+  @ApiPropertyOptional({
+    example: true,
+    description:
+      'Explicit confirmation flag to proceed if no meeting has occurred yet',
+  })
+  @IsBoolean()
+  @IsOptional()
+  confirm_without_meeting?: boolean;
 }

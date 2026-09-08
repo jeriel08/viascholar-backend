@@ -62,6 +62,35 @@ export class ApplicationStageService {
       throw new NotFoundException(`Application ID ${applicationId} not found.`);
     }
 
+    // Check if an interview has already taken place
+    const hasCompletedInterview = Boolean(
+      application.interview_at &&
+        new Date(application.interview_at) <= new Date(),
+    );
+
+    const isCoordinatorAccepting =
+      callerRole === 'COORDINATOR' &&
+      (dto.stage.toLowerCase().includes('accept') ||
+        dto.stage.toLowerCase().includes('grantor') ||
+        dto.stage.toLowerCase().includes('recommend') ||
+        dto.stage.toLowerCase().includes('passed'));
+
+    const isGrantorApproving = dto.status === 'APPROVED';
+
+    if (
+      (isCoordinatorAccepting || isGrantorApproving) &&
+      !hasCompletedInterview &&
+      !dto.confirm_without_meeting
+    ) {
+      throw new BadRequestException({
+        code: 'MEETING_CONFIRMATION_REQUIRED',
+        message: isGrantorApproving
+          ? 'No completed interview has been recorded for this applicant. Do you wish to proceed with approval without an interview?'
+          : 'An interview has not yet been conducted with this applicant. Do you wish to accept/recommend this applicant without an interview?',
+        interview_at: application.interview_at,
+      });
+    }
+
     const updated = await this.prisma.application.update({
       where: { application_id: applicationId },
       data: {

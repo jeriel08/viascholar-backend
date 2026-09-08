@@ -11,6 +11,7 @@ import { GradeCalculatorService } from './grade-calculator.service.js';
 import { ConfirmDocumentDto } from './dto/confirm-document.dto.js';
 import { VerifyDocumentDto } from './dto/verify-document.dto.js';
 import { Application, Prisma } from '../generated/prisma/client.js';
+import { EventsGateway } from '../events/events.gateway.js';
 
 interface ConfirmedGradeData {
   academic_year?: string;
@@ -46,6 +47,7 @@ export class DocumentEvaluationService {
     private auditService: AuditService,
     private mailService: MailService,
     private gradeCalculatorService: GradeCalculatorService,
+    private eventsGateway: EventsGateway,
   ) {}
 
   // Scholar confirms/corrects the OCR-extracted fields for review
@@ -119,6 +121,17 @@ export class DocumentEvaluationService {
       `Scholar confirmed document ID ${documentId} (${gradeItems.length} grade items, GA: ${generalAverage ?? 'N/A'}).`,
     );
 
+    this.eventsGateway.emitToStaff('document:confirmed_by_applicant', {
+      documentId,
+      scholarProfileId: doc.scholar_profile_id,
+      studentName:
+        `${doc.scholar_profile.first_name} ${doc.scholar_profile.last_name}`.trim(),
+      documentType: doc.document_type,
+      generalAverage,
+      gradeItemsCount: gradeItems.length,
+      confirmedAt: new Date().toISOString(),
+    });
+
     return updated;
   }
 
@@ -168,6 +181,23 @@ export class DocumentEvaluationService {
         documentType: doc.document_type,
         reason,
       });
+    }
+
+    const changesPayload = {
+      documentId,
+      scholarProfileId: doc.scholar_profile_id,
+      studentName,
+      documentType: doc.document_type,
+      reason,
+      requestedAt: new Date().toISOString(),
+    };
+    this.eventsGateway.emitToStaff('document:changes_requested', changesPayload);
+    if (doc.scholar_profile?.user_id) {
+      this.eventsGateway.emitToUser(
+        doc.scholar_profile.user_id,
+        'document:changes_requested',
+        changesPayload,
+      );
     }
 
     return updated;
@@ -359,6 +389,42 @@ export class DocumentEvaluationService {
           ? `; Application ID ${updatedApplication.application_id} moved to '${updatedApplication.stage}'`
           : ''),
     );
+
+    const verifyPayload = {
+      documentId,
+      scholarProfileId: doc.scholar_profile_id,
+      reportId: report.report_id,
+      gwa: computedGwa,
+      isEligible,
+      evaluationFlag: evalFlag,
+      verifiedAt: new Date().toISOString(),
+    };
+    this.eventsGateway.emitToStaff('document:verified', verifyPayload);
+    if (doc.scholar_profile?.user_id) {
+      this.eventsGateway.emitToUser(
+        doc.scholar_profile.user_id,
+        'document:verified',
+        verifyPayload,
+      );
+    }
+
+    if (updatedApplication) {
+      const stagePayload = {
+        applicationId: updatedApplication.application_id,
+        scholarProfileId: updatedApplication.scholar_profile_id,
+        stage: updatedApplication.stage,
+        status: updatedApplication.status,
+        updatedAt: new Date().toISOString(),
+      };
+      this.eventsGateway.emitToStaff('application:stage_updated', stagePayload);
+      if (doc.scholar_profile?.user_id) {
+        this.eventsGateway.emitToUser(
+          doc.scholar_profile.user_id,
+          'application:stage_updated',
+          stagePayload,
+        );
+      }
+    }
 
     return {
       report,
