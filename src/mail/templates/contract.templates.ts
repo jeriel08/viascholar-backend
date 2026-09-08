@@ -14,7 +14,7 @@ export function buildContractReadyToSignHtml(
     `,
     cta: {
       text: 'Review & Sign Contract',
-      url: `${frontendUrl}/applicant/contract`,
+      url: `${frontendUrl}/ApplicantsContract`,
     },
   });
 }
@@ -33,7 +33,7 @@ export function buildContractSignedStudentHtml(
     `,
     cta: {
       text: 'Access Scholar Portal',
-      url: `${frontendUrl}/scholar/dashboard`,
+      url: `${frontendUrl}/scholardashboard`,
     },
   });
 }
@@ -51,8 +51,8 @@ export function buildContractSignedStaffHtml(
       <p>The student has been officially promoted to active Scholar status.</p>
     `,
     cta: {
-      text: 'View Contracts in Dashboard',
-      url: `${frontendUrl}/dashboard/contracts`,
+      text: 'View Applicants in Dashboard',
+      url: `${frontendUrl}/grantApplicants`,
     },
   });
 }
@@ -80,8 +80,8 @@ export function buildContractChangeRequestToStaffHtml(
       <p>Please review the student's profile and contract details in the staff dashboard to make the necessary adjustments and re-issue the agreement.</p>
     `,
     cta: {
-      text: 'Manage Contracts in Dashboard',
-      url: `${frontendUrl}/dashboard/contracts`,
+      text: 'Review Applicant in Dashboard',
+      url: `${frontendUrl}/grantApplicants`,
     },
   });
 }

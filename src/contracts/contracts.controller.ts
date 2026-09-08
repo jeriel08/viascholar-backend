@@ -38,7 +38,7 @@ export class ContractsController {
   @Post()
   @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @Roles(Role.ADMIN, Role.GRANTOR)
   @ApiOperation({
     summary: 'Create a pending contract for an approved scholar (Staff only)',
   })
