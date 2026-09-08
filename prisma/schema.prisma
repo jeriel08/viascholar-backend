@@ -287,6 +287,8 @@ model Conversation {
   scholar_user_id      Int
   coordinator_user_id  Int
   subject              String?   @db.VarChar(255)
+  status               String    @default("ACTIVE") @db.VarChar(50) // "ACTIVE", "PENDING_REQUEST", "ACCEPTED", "REJECTED"
+  request_note         String?   @db.Text
   last_message_at      DateTime?
   last_message_preview String?   @db.Text
   created_at           DateTime  @default(now())

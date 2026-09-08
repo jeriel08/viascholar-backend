@@ -124,24 +124,28 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('chat:join_conversation')
+  @SubscribeMessage('chat:join_room')
   async handleJoinConversation(
     client: Socket,
     payload: { conversationId: number },
   ) {
-    if (payload?.conversationId) {
-      await client.join(`conversation_${payload.conversationId}`);
-      return { status: 'joined', conversationId: payload.conversationId };
+    const convoId = Number(payload?.conversationId);
+    if (convoId) {
+      await client.join(`conversation_${convoId}`);
+      return { status: 'joined', conversationId: convoId };
     }
   }
 
   @SubscribeMessage('chat:leave_conversation')
+  @SubscribeMessage('chat:leave_room')
   async handleLeaveConversation(
     client: Socket,
     payload: { conversationId: number },
   ) {
-    if (payload?.conversationId) {
-      await client.leave(`conversation_${payload.conversationId}`);
-      return { status: 'left', conversationId: payload.conversationId };
+    const convoId = Number(payload?.conversationId);
+    if (convoId) {
+      await client.leave(`conversation_${convoId}`);
+      return { status: 'left', conversationId: convoId };
     }
   }
 
@@ -150,12 +154,13 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client: Socket,
     payload: { conversationId: number; isTyping: boolean },
   ) {
-    if (payload?.conversationId) {
+    const convoId = Number(payload?.conversationId);
+    if (convoId) {
       const user = (client.data as SocketClientData)?.user;
-      client.to(`conversation_${payload.conversationId}`).emit('chat:typing', {
-        conversationId: payload.conversationId,
+      client.to(`conversation_${convoId}`).emit('chat:typing', {
+        conversationId: convoId,
         userId: user?.userId,
-        isTyping: payload.isTyping,
+        isTyping: Boolean(payload.isTyping),
       });
     }
   }

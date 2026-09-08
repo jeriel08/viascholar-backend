@@ -161,10 +161,11 @@ export class ForumService {
       throw new NotFoundException(`Forum post ID ${postId} not found.`);
     }
 
-    // Increment view count in background
-    void this.prisma.forumPost.update({
+    // Increment view count
+    const updatedPost = await this.prisma.forumPost.update({
       where: { post_id: postId },
       data: { views_count: { increment: 1 } },
+      select: { views_count: true },
     });
 
     const authorProfile = post.author.scholar_profile || post.author.employee;
@@ -200,7 +201,7 @@ export class ForumService {
       content: post.content,
       category: post.category,
       is_pinned: post.is_pinned,
-      views_count: post.views_count + 1,
+      views_count: updatedPost.views_count,
       author: {
         user_id: post.author.user_id,
         name: authorName,

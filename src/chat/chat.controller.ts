@@ -16,6 +16,8 @@ import { ChatService } from './chat.service.js';
 import { CreateConversationDto } from './dto/create-conversation.dto.js';
 import { SendMessageDto } from './dto/send-message.dto.js';
 import { QueryMessagesDto } from './dto/query-messages.dto.js';
+import { RequestGrantorDto } from './dto/request-grantor.dto.js';
+import { RespondRequestDto } from './dto/respond-request.dto.js';
 
 interface AuthenticatedRequest {
   user: {
@@ -85,5 +87,44 @@ export class ChatController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.chatService.markAsRead(req.user.user_id, id);
+  }
+
+  @Get('coordinators')
+  @ApiOperation({
+    summary: 'Get all available coordinators for the scholar directory',
+  })
+  getCoordinators(@Request() req: AuthenticatedRequest) {
+    return this.chatService.getCoordinators(req.user.user_id);
+  }
+
+  @Get('grantors')
+  @ApiOperation({
+    summary: 'Get all grantors with scholar message request status',
+  })
+  getGrantors(@Request() req: AuthenticatedRequest) {
+    return this.chatService.getGrantors(req.user.user_id);
+  }
+
+  @Post('request-grantor')
+  @ApiOperation({
+    summary: 'Submit a message request to a grantor',
+  })
+  requestGrantorAccess(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: RequestGrantorDto,
+  ) {
+    return this.chatService.requestGrantorAccess(req.user.user_id, dto);
+  }
+
+  @Patch('conversations/:id/respond')
+  @ApiOperation({
+    summary: 'Grantor responds to a scholar message request (ACCEPT or REJECT)',
+  })
+  respondToRequest(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RespondRequestDto,
+  ) {
+    return this.chatService.respondToRequest(req.user.user_id, id, dto);
   }
 }
