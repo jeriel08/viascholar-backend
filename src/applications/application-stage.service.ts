@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { MailService } from '../mail/mail.service.js';
 import { UpdateApplicationStageDto } from './dto/update-stage.dto.js';
+import { EventsGateway } from '../events/events.gateway.js';
 
 @Injectable()
 export class ApplicationStageService {
@@ -15,6 +16,7 @@ export class ApplicationStageService {
     private prisma: PrismaService,
     private auditService: AuditService,
     private mailService: MailService,
+    private eventsGateway: EventsGateway,
   ) {}
 
   // Staff updates application stage (Review, Schedule Interview, Approve, Reject)
@@ -111,6 +113,29 @@ export class ApplicationStageService {
           notes: dto.provider_notes,
         });
       }
+    }
+
+    // Real-time broadcast to staff and the applicant
+    const stageEventPayload = {
+      applicationId,
+      scholarProfileId: application.scholar_profile_id,
+      studentName,
+      stage: dto.stage,
+      status: dto.status,
+      providerNotes: dto.provider_notes,
+      rejectionReason: dto.rejection_reason,
+      updatedAt: new Date().toISOString(),
+    };
+    this.eventsGateway.emitToStaff(
+      'application:stage_updated',
+      stageEventPayload,
+    );
+    if (application.scholar_profile?.user_id) {
+      this.eventsGateway.emitToUser(
+        application.scholar_profile.user_id,
+        'application:stage_updated',
+        stageEventPayload,
+      );
     }
 
     return updated;

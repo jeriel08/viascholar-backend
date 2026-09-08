@@ -9,6 +9,7 @@ import { AuditService } from '../audit/audit.service.js';
 import { MailService } from '../mail/mail.service.js';
 import { CreateApplicationDto } from './dto/create-application.dto.js';
 import { QueryApplicationsDto } from './dto/query-applications.dto.js';
+import { EventsGateway } from '../events/events.gateway.js';
 
 @Injectable()
 export class ApplicationsService {
@@ -16,6 +17,7 @@ export class ApplicationsService {
     private prisma: PrismaService,
     private auditService: AuditService,
     private mailService: MailService,
+    private eventsGateway: EventsGateway,
   ) {}
 
   // 1. Scholar submits or updates their application details
@@ -118,6 +120,20 @@ export class ApplicationsService {
           applicationId: application.application_id,
         });
       }
+    });
+
+    // Real-time broadcast to all coordinators and staff
+    this.eventsGateway.emitToStaff('application:submitted', {
+      applicationId: application.application_id,
+      scholarProfileId: scholar.profile_id,
+      studentName,
+      studentNumber: dto.student_number || scholar.student_number || null,
+      track: dto.scholarship_track,
+      course: dto.course_of_study,
+      school: dto.school_name,
+      stage: application.stage,
+      status: application.status,
+      submittedAt: new Date().toISOString(),
     });
 
     return application;
@@ -228,8 +244,7 @@ export class ApplicationsService {
       return {
         ...a,
         general_average: gpa ?? null,
-        general_average_source: (gpa !== undefined ? 'verified' : null) as
-          'verified' | null,
+        general_average_source: gpa !== undefined ? 'verified' : null,
       };
     });
   }

@@ -13,6 +13,7 @@ import {
   FileTypeValidator,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { Throttle } from '@nestjs/throttler';
 import {
   ApiTags,
   ApiOperation,
@@ -47,6 +48,7 @@ export class AuthController {
     private readonly profileService: ProfileService,
   ) {}
 
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post('register')
   @ApiOperation({ summary: 'Public registration for prospective scholars' })
   @ApiResponse({
@@ -65,6 +67,7 @@ export class AuthController {
     return this.authService.registerScholar(dto);
   }
 
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post('login')
   @ApiOperation({
     summary: 'Login for all user roles (Admin, Employee, Scholar)',
@@ -153,6 +156,7 @@ export class AuthController {
     return this.profileService.updateProfile(req.user.user_id, dto);
   }
 
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('me/avatar')
   @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'))
@@ -182,6 +186,7 @@ export class AuthController {
     return this.profileService.uploadAvatar(req.user.user_id, file);
   }
 
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('me/banner')
   @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'))

@@ -11,6 +11,7 @@ import { ScheduleInterviewDto } from './dto/schedule-interview.dto.js';
 import { RequestRescheduleDto } from './dto/request-reschedule.dto.js';
 import { RescheduleInterviewDto } from './dto/reschedule-interview.dto.js';
 import { CancelInterviewDto } from './dto/cancel-interview.dto.js';
+import { EventsGateway } from '../events/events.gateway.js';
 
 // meetings.meeting_date is a DATE column — strip the time portion in UTC.
 function toDateOnly(d: Date): Date {
@@ -26,6 +27,7 @@ export class ApplicationInterviewsService {
     private auditService: AuditService,
     private googleCalendarService: GoogleCalendarService,
     private mailService: MailService,
+    private eventsGateway: EventsGateway,
   ) {}
 
   // 1. Staff schedules interview with automated Google Meet & Calendar creation
@@ -142,6 +144,23 @@ export class ApplicationInterviewsService {
       });
     }
 
+    const scheduledPayload = {
+      applicationId,
+      scholarProfileId: application.scholar_profile_id,
+      studentName,
+      interviewAt: startTime.toISOString(),
+      meetingLink: calendarResult.meetingUrl,
+      notes: dto.provider_notes,
+    };
+    this.eventsGateway.emitToStaff('interview:scheduled', scheduledPayload);
+    if (application.scholar_profile?.user_id) {
+      this.eventsGateway.emitToUser(
+        application.scholar_profile.user_id,
+        'interview:scheduled',
+        scheduledPayload,
+      );
+    }
+
     return updated;
   }
 
@@ -205,6 +224,14 @@ export class ApplicationInterviewsService {
           },
         );
       }
+    });
+
+    this.eventsGateway.emitToStaff('interview:reschedule_requested', {
+      applicationId: application.application_id,
+      scholarProfileId: scholar.profile_id,
+      studentName,
+      reason: formattedReason,
+      requestedAt: new Date().toISOString(),
     });
 
     return updated;
@@ -322,6 +349,23 @@ export class ApplicationInterviewsService {
       });
     }
 
+    const rescheduledPayload = {
+      applicationId,
+      scholarProfileId: application.scholar_profile_id,
+      studentName,
+      newInterviewAt: newStartTime.toISOString(),
+      meetingLink: meetingUrl || undefined,
+      notes: dto.reschedule_notes,
+    };
+    this.eventsGateway.emitToStaff('interview:rescheduled', rescheduledPayload);
+    if (application.scholar_profile?.user_id) {
+      this.eventsGateway.emitToUser(
+        application.scholar_profile.user_id,
+        'interview:rescheduled',
+        rescheduledPayload,
+      );
+    }
+
     return updated;
   }
 
@@ -419,6 +463,22 @@ export class ApplicationInterviewsService {
         scheduledAt,
         reason: dto.reason,
       });
+    }
+
+    const cancelledPayload = {
+      applicationId,
+      scholarProfileId: application.scholar_profile_id,
+      studentName,
+      scheduledAt: scheduledAt.toISOString(),
+      reason: dto.reason,
+    };
+    this.eventsGateway.emitToStaff('interview:cancelled', cancelledPayload);
+    if (application.scholar_profile?.user_id) {
+      this.eventsGateway.emitToUser(
+        application.scholar_profile.user_id,
+        'interview:cancelled',
+        cancelledPayload,
+      );
     }
 
     return updated;

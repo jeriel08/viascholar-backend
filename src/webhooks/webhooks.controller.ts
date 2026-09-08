@@ -8,6 +8,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { SkipThrottle } from '@nestjs/throttler';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { DocumentReconciliationService } from '../documents/document-reconciliation.service.js';
@@ -32,6 +33,7 @@ type ParseurWebhookPayload = {
 };
 
 @ApiTags('Webhooks')
+@SkipThrottle()
 @Controller('webhooks')
 export class WebhooksController {
   private readonly logger = new Logger(WebhooksController.name);

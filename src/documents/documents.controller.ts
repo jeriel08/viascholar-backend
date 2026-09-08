@@ -18,6 +18,7 @@ import {
 } from '@nestjs/common';
 import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import { AuthGuard } from '@nestjs/passport';
+import { Throttle } from '@nestjs/throttler';
 import {
   ApiTags,
   ApiOperation,
@@ -82,6 +83,7 @@ export class DocumentsController {
     }
   }
 
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('upload')
   @Roles(Role.APPLICANT, Role.SCHOLAR)
   @UseInterceptors(AnyFilesInterceptor())
