@@ -77,6 +77,46 @@ export function buildInterviewRescheduleRequestedStaffHtml(
   });
 }
 
+export function buildInterviewCancelledHtml(
+  data: {
+    studentName: string;
+    scheduledAt?: Date;
+    reason?: string;
+  },
+  frontendUrl: string,
+): string {
+  const formattedDate = data.scheduledAt?.toLocaleString('en-US', {
+    dateStyle: 'full',
+    timeStyle: 'short',
+  });
+
+  return renderBaseEmail({
+    title: 'Interview Cancelled',
+    badge: { text: 'Cancelled', variant: 'danger' },
+    greeting: `Dear ${data.studentName},`,
+    bodyHtml: `
+      <p>Your scholarship interview has been cancelled and will be rescheduled soon.</p>
+      <div class="details-box">
+        ${
+          formattedDate
+            ? `<div class="detail-row"><span class="detail-label">Was Scheduled:</span><span class="detail-value">${formattedDate}</span></div>`
+            : ''
+        }
+        ${
+          data.reason
+            ? `<div class="detail-row"><span class="detail-label">Reason:</span><span class="detail-value">${data.reason}</span></div>`
+            : ''
+        }
+      </div>
+      <p>Please wait for a new interview invitation from the ViaScholar staff.</p>
+    `,
+    cta: {
+      text: 'View Application Status',
+      url: `${frontendUrl}/applicant/status`,
+    },
+  });
+}
+
 export function buildInterviewRescheduledHtml(
   data: {
     studentName: string;

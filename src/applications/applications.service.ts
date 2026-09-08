@@ -169,12 +169,99 @@ export class ApplicationsService {
       where.scholar_profile = { is: scholarProfileWhere };
     }
 
-    return this.prisma.application.findMany({
+    const applications = await this.prisma.application.findMany({
       where,
       orderBy: { submitted_at: 'desc' },
       include: {
         scholar_profile: true,
         reviewed_by_employee: true,
+      },
+    });
+
+    // Attach each applicant's General Average. The coordinator reviews
+    // against the student's own confirmed document data
+    // (confirmed_data.general_average, latest document first), falling back
+    // to the latest verified grade report GPA when nothing is confirmed yet.
+    const profileIds = [
+      ...new Set(applications.map((a) => a.scholar_profile_id)),
+    ];
+    const [latestReports, documents] = await Promise.all([
+      this.prisma.gradeReport.findMany({
+        where: { scholar_profile_id: { in: profileIds } },
+        orderBy: { submitted_at: 'desc' },
+        select: { scholar_profile_id: true, gpa: true },
+      }),
+      this.prisma.scholarDocument.findMany({
+        where: { scholar_profile_id: { in: profileIds } },
+        orderBy: { uploaded_at: 'desc' },
+        select: { scholar_profile_id: true, confirmed_data: true },
+      }),
+    ]);
+    const gpaByProfile = new Map<number, number>();
+    for (const report of latestReports) {
+      if (!gpaByProfile.has(report.scholar_profile_id)) {
+        gpaByProfile.set(report.scholar_profile_id, Number(report.gpa));
+      }
+    }
+    const confirmedByProfile = new Map<number, number>();
+    for (const doc of documents) {
+      if (confirmedByProfile.has(doc.scholar_profile_id)) continue;
+      const raw = (doc.confirmed_data as { general_average?: unknown } | null)
+        ?.general_average;
+      const value =
+        typeof raw === 'number' || typeof raw === 'string' ? Number(raw) : NaN;
+      if (Number.isFinite(value) && value > 0) {
+        confirmedByProfile.set(doc.scholar_profile_id, value);
+      }
+    }
+
+    return applications.map((a) => {
+      const confirmed = confirmedByProfile.get(a.scholar_profile_id);
+      if (confirmed !== undefined) {
+        return {
+          ...a,
+          general_average: confirmed,
+          general_average_source: 'confirmed' as const,
+        };
+      }
+      const gpa = gpaByProfile.get(a.scholar_profile_id);
+      return {
+        ...a,
+        general_average: gpa ?? null,
+        general_average_source: (gpa !== undefined ? 'verified' : null) as
+          'verified' | null,
+      };
+    });
+  }
+
+  // 4. Staff views every document an applicant has uploaded (for coordinator
+  // document confirmation). Same field shape as GET /documents/me so the
+  // coordinator preview can reuse it (file, OCR data, confirmed data).
+  async getApplicationDocuments(applicationId: number) {
+    const application = await this.prisma.application.findUnique({
+      where: { application_id: applicationId },
+    });
+
+    if (!application) {
+      throw new NotFoundException(`Application ID ${applicationId} not found.`);
+    }
+
+    return this.prisma.scholarDocument.findMany({
+      where: { scholar_profile_id: application.scholar_profile_id },
+      orderBy: { uploaded_at: 'desc' },
+      select: {
+        document_id: true,
+        document_type: true,
+        label: true,
+        file_name: true,
+        file_url: true,
+        file_type: true,
+        status: true,
+        rejection_reason: true,
+        extracted_data: true,
+        confirmed_data: true,
+        uploaded_at: true,
+        verified_at: true,
       },
     });
   }

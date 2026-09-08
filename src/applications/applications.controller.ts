@@ -24,6 +24,7 @@ import { UpdateApplicationStageDto } from './dto/update-stage.dto.js';
 import { ScheduleInterviewDto } from './dto/schedule-interview.dto.js';
 import { RequestRescheduleDto } from './dto/request-reschedule.dto.js';
 import { RescheduleInterviewDto } from './dto/reschedule-interview.dto.js';
+import { CancelInterviewDto } from './dto/cancel-interview.dto.js';
 
 interface AuthenticatedRequest {
   user: {
@@ -86,6 +87,16 @@ export class ApplicationsController {
     return this.applicationsService.findAll(query);
   }
 
+  @Get(':id/documents')
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @ApiOperation({
+    summary:
+      'List every document an applicant has uploaded (Coordinator document review)',
+  })
+  getApplicationDocuments(@Param('id', ParseIntPipe) id: number) {
+    return this.applicationsService.getApplicationDocuments(id);
+  }
+
   @Post(':id/schedule-interview')
   @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({
@@ -116,6 +127,20 @@ export class ApplicationsController {
       id,
       dto,
     );
+  }
+
+  @Post(':id/cancel-interview')
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @ApiOperation({
+    summary:
+      'Cancel a scheduled interview, drop the calendar event, and return the application to review (Staff only)',
+  })
+  cancelInterview(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CancelInterviewDto,
+  ) {
+    return this.interviewsService.cancelInterview(req.user.user_id, id, dto);
   }
 
   @Patch(':id/stage')

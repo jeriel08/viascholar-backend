@@ -13,6 +13,7 @@ import {
   buildInterviewScheduledHtml,
   buildInterviewRescheduleRequestedStaffHtml,
   buildInterviewRescheduledHtml,
+  buildInterviewCancelledHtml,
 } from './templates/interview.templates.js';
 import {
   buildContractReadyToSignHtml,
@@ -197,6 +198,23 @@ export class MailService {
     await this.sendEmail(
       studentEmail,
       'Interview Rescheduled: ViaScholar Scholarship Program',
+      html,
+    );
+  }
+
+  // 5b. Interview Cancelled (Student)
+  async sendInterviewCancelled(
+    studentEmail: string,
+    data: {
+      studentName: string;
+      scheduledAt?: Date;
+      reason?: string;
+    },
+  ) {
+    const html = buildInterviewCancelledHtml(data, this.frontendUrl);
+    await this.sendEmail(
+      studentEmail,
+      'Interview Cancelled: ViaScholar Scholarship Program',
       html,
     );
   }

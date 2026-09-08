@@ -161,6 +161,7 @@ model Application {
 
   scholar_profile      ScholarProfile @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
   reviewed_by_employee Employee?       @relation("EmployeeReviewedApplications", fields: [reviewed_by_employee_id], references: [employee_id])
+  meeting              Meeting?
 
   @@map("applications")
 }
@@ -306,17 +307,26 @@ model Meeting {
   meeting_id         Int       @id @default(autoincrement())
   scholar_profile_id Int?
   employee_id        Int?
+  application_id     Int?      @unique
   title              String    @db.VarChar(150)
   meeting_date       DateTime  @db.Date
   meeting_time       String?   @db.VarChar(50)
+  scheduled_at       DateTime?
+  duration_minutes   Int?      @default(45)
+  meeting_link       String?   @db.VarChar(255)
+  calendar_event_id  String?   @db.VarChar(255)
   invitee_role       String?   @db.VarChar(100)
   status             String?   @db.VarChar(100)
   notes              String?   @db.Text
   created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
 
   scholar_profile ScholarProfile? @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
   employee        Employee?       @relation(fields: [employee_id], references: [employee_id])
+  application     Application?    @relation(fields: [application_id], references: [application_id], onDelete: Cascade)
 
+  @@index([scheduled_at])
+  @@index([status])
   @@map("meetings")
 }
 
