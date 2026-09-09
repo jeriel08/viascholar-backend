@@ -74,10 +74,12 @@ export class GoogleCalendarService {
             (ep: any) => ep.entryPointType === 'video',
           )?.uri;
 
-        return {
-          meetingUrl: meetingUrl || 'https://meet.google.com/new',
-          eventId: event.data.id,
-        };
+        if (meetingUrl) {
+          return {
+            meetingUrl,
+            eventId: event.data.id,
+          };
+        }
       } catch (error: any) {
         this.logger.error(
           `Failed to create Google Calendar event: ${error?.message || error}`,
@@ -86,12 +88,11 @@ export class GoogleCalendarService {
       }
     }
 
-    // Graceful fallback URL generator when Google Calendar credentials are not configured or offline
-    const randomPart1 = Math.random().toString(36).substring(2, 5);
-    const randomPart2 = Math.random().toString(36).substring(2, 6);
-    const randomPart3 = Math.random().toString(36).substring(2, 5);
+    // Graceful fallback URL generator (Jitsi Meet) when Google Calendar API fails or OAuth token is invalid
+    const roomSlug = params.title.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').substring(0, 30);
+    const uniqueSuffix = randomUUID().substring(0, 8);
     return {
-      meetingUrl: `https://meet.google.com/${randomPart1}-${randomPart2}-${randomPart3}`,
+      meetingUrl: `https://meet.jit.si/viascholar-${roomSlug}-${uniqueSuffix}`,
     };
   }
 
