@@ -73,6 +73,10 @@ export class ApplicationsService {
         school_address: dto.school_address,
         phone_number: dto.phone_number || scholar.phone_number,
         relative_employee: dto.relative_employee,
+        current_year_level:
+          dto.current_year_level !== undefined
+            ? dto.current_year_level
+            : scholar.current_year_level,
       },
     });
 
@@ -131,6 +135,8 @@ export class ApplicationsService {
       track: dto.scholarship_track,
       course: dto.course_of_study,
       school: dto.school_name,
+      currentYearLevel:
+        dto.current_year_level ?? scholar.current_year_level ?? null,
       stage: application.stage,
       status: application.status,
       submittedAt: new Date().toISOString(),
@@ -145,7 +151,10 @@ export class ApplicationsService {
       where: { user_id: userId },
       include: {
         applications: {
-          include: { reviewed_by_employee: true },
+          include: {
+            reviewed_by_employee: true,
+            scholar_profile: true,
+          },
         },
         documents: true,
       },

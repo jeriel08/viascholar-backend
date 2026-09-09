@@ -1,9 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { EventsGateway } from '../events/events.gateway.js';
 
 @Injectable()
 export class AuditService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private eventsGateway: EventsGateway,
+  ) {}
 
   /**
    * Log an administrative or system action
@@ -13,13 +17,32 @@ export class AuditService {
    */
   async log(userId: number | null, action: string, details?: string) {
     try {
-      return await this.prisma.auditLog.create({
+      const entry = await this.prisma.auditLog.create({
         data: {
           user_id: userId,
           action,
           details,
         },
+        include: {
+          user: {
+            select: {
+              user_id: true,
+              email: true,
+              role: true,
+              scholar_profile: {
+                select: { first_name: true, last_name: true },
+              },
+              employee: {
+                select: { first_name: true, last_name: true },
+              },
+            },
+          },
+        },
       });
+
+      this.eventsGateway.emitToAdmin('audit:new_log', entry);
+
+      return entry;
     } catch (error) {
       console.error('Failed to create audit log entry:', error);
     }
@@ -34,7 +57,17 @@ export class AuditService {
         orderBy: { created_at: 'desc' },
         include: {
           user: {
-            select: { user_id: true, email: true, role: true },
+            select: {
+              user_id: true,
+              email: true,
+              role: true,
+              scholar_profile: {
+                select: { first_name: true, last_name: true },
+              },
+              employee: {
+                select: { first_name: true, last_name: true },
+              },
+            },
           },
         },
       }),

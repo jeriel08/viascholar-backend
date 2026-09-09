@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
+import { EventsGateway } from '../events/events.gateway.js';
 import { QueryUsersDto } from './dto/query-users.dto.js';
 import { UpdateUserStatusDto } from './dto/update-user-status.dto.js';
 import { ResetPasswordDto } from './dto/reset-password.dto.js';
@@ -11,6 +12,7 @@ export class UsersService {
   constructor(
     private prisma: PrismaService,
     private auditService: AuditService,
+    private eventsGateway: EventsGateway,
   ) {}
 
   // Get all users (Filtered by Role or Name search)
@@ -120,6 +122,16 @@ export class UsersService {
       `Admin (ID: ${adminUserId}) updated User status (ID: ${targetUserId}) to ${dto.is_active ? 'ACTIVE' : 'INACTIVE'}`,
     );
 
+    this.eventsGateway.emitToAdmin('user:status_updated', {
+      userId: targetUserId,
+      isActive: dto.is_active,
+      user: updatedUser,
+    });
+    this.eventsGateway.emitToUser(targetUserId, 'user:status_updated', {
+      userId: targetUserId,
+      isActive: dto.is_active,
+    });
+
     return updatedUser;
   }
 
@@ -149,6 +161,13 @@ export class UsersService {
       'USER_PASSWORD_RESET',
       `Admin (ID: ${adminUserId}) reset password for User (ID: ${targetUserId})`,
     );
+
+    this.eventsGateway.emitToAdmin('user:password_reset', {
+      userId: targetUserId,
+    });
+    this.eventsGateway.emitToUser(targetUserId, 'user:password_reset', {
+      userId: targetUserId,
+    });
 
     return {
       message: `Password for user ID ${targetUserId} reset successfully.`,

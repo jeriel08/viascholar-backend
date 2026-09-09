@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
+import { EventsGateway } from '../events/events.gateway.js';
 import { CreateSchoolGradingDto } from './dto/create-school-grading.dto.js';
 import { UpdateSettingsDto } from './dto/update-settings.dto.js';
 import { UpdateSchoolGradingDto } from './dto/update-school-grading.dto.js';
@@ -15,6 +16,7 @@ export class SettingsService implements OnModuleInit {
   constructor(
     private prisma: PrismaService,
     private auditService: AuditService,
+    private eventsGateway: EventsGateway,
   ) {}
 
   // Automatically initialize default settings (90.00 threshold) on startup
@@ -57,6 +59,9 @@ export class SettingsService implements OnModuleInit {
       `Updated global grade retention threshold to ${dto.grade_threshold}%`,
     );
 
+    this.eventsGateway.emitToStaff('settings:updated', updated);
+    this.eventsGateway.emitToAll('settings:updated', updated);
+
     return updated;
   }
 
@@ -81,6 +86,8 @@ export class SettingsService implements OnModuleInit {
       'SCHOOL_GRADING_CREATED',
       `Configured grading system for school: ${dto.school_name}`,
     );
+
+    this.eventsGateway.emitToStaff('school_grading:created', school);
 
     return school;
   }
@@ -111,6 +118,12 @@ export class SettingsService implements OnModuleInit {
       'SCHOOL_GRADING_DELETED',
       `Deleted grading system for school: ${school.school_name}`,
     );
+
+    this.eventsGateway.emitToStaff('school_grading:deleted', {
+      school_id: schoolId,
+      schoolId,
+      schoolName: school.school_name,
+    });
 
     return {
       message: `School grading system '${school.school_name}' removed.`,
@@ -143,6 +156,8 @@ export class SettingsService implements OnModuleInit {
       'SCHOOL_GRADING_UPDATED',
       `Updated grading system for school: ${school.school_name}`,
     );
+
+    this.eventsGateway.emitToStaff('school_grading:updated', updated);
 
     return updated;
   }

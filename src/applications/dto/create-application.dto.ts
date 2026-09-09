@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, Max, Min } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateApplicationDto {
   @ApiProperty({
@@ -49,6 +50,17 @@ export class CreateApplicationDto {
   @IsString()
   @IsNotEmpty()
   school_address: string;
+
+  @ApiPropertyOptional({
+    example: 1,
+    description: 'Current academic year level of the student (1 to 5: College, 6: Masteral, 7: Doctoral)',
+  })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  @IsOptional()
+  current_year_level?: number;
 
   @ApiPropertyOptional({
     example: '09171234567',

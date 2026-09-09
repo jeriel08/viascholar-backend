@@ -12,6 +12,7 @@ import { LoginDto } from './dto/login.dto.js';
 import { Role } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
+import { EventsGateway } from '../events/events.gateway.js';
 
 @Injectable()
 export class AuthService {
@@ -19,6 +20,7 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private auditService: AuditService,
+    private eventsGateway: EventsGateway,
   ) {}
 
   // 1. Public Scholar Signup
@@ -119,6 +121,14 @@ export class AuthService {
       'STAFF_CREATED',
       `Staff account created (User ID: ${user.user_id}, Email: ${user.email}, Role: ${user.role})`,
     );
+
+    this.eventsGateway.emitToAdmin('staff:created', {
+      id: user.user_id,
+      user_id: user.user_id,
+      email: user.email,
+      role: user.role,
+      employee: user.employee,
+    });
 
     return {
       message: 'Staff account successfully created.',

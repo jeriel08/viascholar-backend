@@ -102,6 +102,11 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         await client.join('coordinators');
       }
 
+      // Join admin room if administrator
+      if (user.role === 'ADMIN') {
+        await client.join('admin');
+      }
+
       this.logger.log(
         `[Socket] Connected: ${client.id} (User: ${user.userId}, Role: ${user.role})`,
       );
@@ -184,6 +189,12 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   emitToRoom(room: string, event: string, data: unknown) {
     if (this.server) {
       this.server.to(room).emit(event, data);
+    }
+  }
+
+  emitToAdmin(event: string, data: unknown) {
+    if (this.server) {
+      this.server.to('admin').emit(event, data);
     }
   }
 
