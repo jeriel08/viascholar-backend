@@ -33,9 +33,12 @@ interface SocketHandshakeAuth {
 @Injectable()
 @WebSocketGateway({
   cors: {
-    origin: ['http://localhost:3000', process.env.FRONTEND_URL].filter(
-      Boolean,
-    ) as string[],
+    origin: (
+      origin: string | undefined,
+      callback: (err: Error | null, allow?: boolean) => void,
+    ) => {
+      callback(null, true);
+    },
     credentials: true,
   },
 })

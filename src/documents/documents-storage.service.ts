@@ -124,9 +124,9 @@ export class DocumentsStorageService {
       throw new NotFoundException(`Document ID ${documentId} not found.`);
     }
 
-    if (doc.status === 'VERIFIED') {
+    if (doc.status === 'VERIFIED' || doc.status === 'STUDENT_CONFIRMED') {
       throw new BadRequestException(
-        'Verified documents cannot be replaced directly. Please contact a coordinator if corrections are required.',
+        'Confirmed or verified documents cannot be replaced directly. Please contact a coordinator if corrections are required.',
       );
     }
 
@@ -211,9 +211,9 @@ export class DocumentsStorageService {
       throw new NotFoundException(`Document ID ${documentId} not found.`);
     }
 
-    if (doc.status === 'VERIFIED') {
+    if (doc.status === 'VERIFIED' || doc.status === 'STUDENT_CONFIRMED') {
       throw new BadRequestException(
-        'Verified documents cannot be deleted. Please contact a coordinator if corrections are required.',
+        'Confirmed or verified documents cannot be deleted. Please contact a coordinator if corrections are required.',
       );
     }
 

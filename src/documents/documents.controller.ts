@@ -268,7 +268,7 @@ export class DocumentsController {
   }
 
   @Post(':id/sync-parseur')
-  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR, Role.APPLICANT, Role.SCHOLAR)
   @ApiOperation({
     summary:
       'Re-fetch OCR results from Parseur and backfill the extracted data',

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -9,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { ForensicMetadataResult } from './file-forensics.service.js';
 import { DocumentReconciliationService } from './document-reconciliation.service.js';
+import { EventsGateway } from '../events/events.gateway.js';
 import { Prisma } from '../generated/prisma/client.js';
 
 interface ParseurFieldSet {
@@ -34,6 +36,7 @@ export class DocumentOcrService {
     private configService: ConfigService,
     private auditService: AuditService,
     private documentReconciliationService: DocumentReconciliationService,
+    private eventsGateway: EventsGateway,
   ) {}
 
   // Uploads the document buffer to the Parseur mailbox
@@ -177,6 +180,20 @@ export class DocumentOcrService {
       throw new NotFoundException(`Document ID ${documentId} not found.`);
     }
 
+    const user = await this.prisma.user.findUnique({
+      where: { user_id: actorUserId },
+      select: { role: true },
+    });
+    const isOwner = doc.scholar_profile?.user_id === actorUserId;
+    const isStaff = ['ADMIN', 'GRANTOR', 'COORDINATOR'].includes(
+      user?.role || '',
+    );
+    if (!isOwner && !isStaff) {
+      throw new ForbiddenException(
+        'You do not have permission to sync this document.',
+      );
+    }
+
     if (!doc.parseur_doc_id) {
       throw new BadRequestException(
         `Document ID ${documentId} was never dispatched to Parseur.`,
@@ -274,6 +291,28 @@ export class DocumentOcrService {
       'DOCUMENT_SYNCED',
       `Staff synced Parseur results for document ID ${documentId}. Status: ${validationStatus}, Risk: ${forensicEvaluation.risk_level}, grade items: ${hasGrades ? fields.grades?.length : 0}.`,
     );
+
+    if (doc.scholar_profile?.user_id) {
+      this.eventsGateway.emitToUser(
+        doc.scholar_profile.user_id,
+        'document:ocr_completed',
+        {
+          documentId: doc.document_id,
+          scholarProfileId: doc.scholar_profile_id,
+          status: validationStatus,
+          documentType: doc.document_type,
+          hasGrades,
+        },
+      );
+    }
+
+    this.eventsGateway.emitToStaff('document:ocr_completed', {
+      documentId: doc.document_id,
+      scholarProfileId: doc.scholar_profile_id,
+      status: validationStatus,
+      documentType: doc.document_type,
+      hasGrades,
+    });
 
     return {
       synced: true,

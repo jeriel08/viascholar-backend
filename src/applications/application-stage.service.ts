@@ -62,6 +62,28 @@ export class ApplicationStageService {
       throw new NotFoundException(`Application ID ${applicationId} not found.`);
     }
 
+    // Check if moving to Interview without confirmed submitted documents
+    const isMovingToInterview = dto.stage.toLowerCase().includes('interview');
+    if (isMovingToInterview) {
+      const docs = await this.prisma.scholarDocument.findMany({
+        where: { scholar_profile_id: application.scholar_profile_id },
+        select: { document_id: true, status: true },
+      });
+      if (docs.length === 0) {
+        throw new BadRequestException(
+          'Cannot pass applicant to interview because no documents have been submitted.',
+        );
+      }
+      const hasConfirmed = docs.some(
+        (d) => d.status === 'STUDENT_CONFIRMED' || d.status === 'VERIFIED',
+      );
+      if (!hasConfirmed) {
+        throw new BadRequestException(
+          'Cannot pass applicant to interview: Submitted document(s) have not been confirmed by the applicant yet.',
+        );
+      }
+    }
+
     // Check if an interview has already taken place
     const hasCompletedInterview = Boolean(
       application.interview_at &&

@@ -131,6 +131,17 @@ export class AuthController {
     return req.user;
   }
 
+  @Post('refresh-token')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'))
+  @ApiOperation({
+    summary: 'Re-issue a fresh JWT token with the latest user role and profile',
+  })
+  refreshToken(@Request() req: AuthenticatedRequest) {
+    return this.authService.refreshToken(req.user.user_id);
+  }
+
+
   @Patch('me')
   @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'))

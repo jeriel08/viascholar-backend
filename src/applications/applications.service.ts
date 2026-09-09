@@ -198,7 +198,13 @@ export class ApplicationsService {
       where,
       orderBy: { submitted_at: 'desc' },
       include: {
-        scholar_profile: true,
+        scholar_profile: {
+          include: {
+            _count: {
+              select: { documents: true },
+            },
+          },
+        },
         reviewed_by_employee: true,
       },
     });

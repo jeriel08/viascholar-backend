@@ -414,6 +414,7 @@ export class ContractsService {
         userId,
         oldRole: 'APPLICANT',
         newRole: 'SCHOLAR',
+        studentName,
         promotedAt: signedAt.toISOString(),
       };
       this.eventsGateway.emitToStaff('user:role_promoted', promotionPayload);
@@ -423,6 +424,7 @@ export class ContractsService {
         promotionPayload,
       );
     }
+
 
     return updated;
   }

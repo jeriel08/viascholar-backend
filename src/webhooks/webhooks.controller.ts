@@ -13,6 +13,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { DocumentReconciliationService } from '../documents/document-reconciliation.service.js';
 import { ForensicMetadataResult } from '../documents/file-forensics.service.js';
+import { EventsGateway } from '../events/events.gateway.js';
 
 type ParseurFieldSet = { grades?: unknown[] } & Record<string, unknown>;
 
@@ -41,6 +42,7 @@ export class WebhooksController {
   constructor(
     private prisma: PrismaService,
     private documentReconciliationService: DocumentReconciliationService,
+    private eventsGateway: EventsGateway,
   ) {}
 
   @Post('parseur')
@@ -132,6 +134,28 @@ export class WebhooksController {
     this.logger.log(
       `Webhook processed for doc ${documentId}. Status: ${validationStatus}, Risk: ${forensicEvaluation.risk_level} (Flags: ${forensicEvaluation.flags.join(', ') || 'none'}).`,
     );
+
+    if (doc.scholar_profile?.user_id) {
+      this.eventsGateway.emitToUser(
+        doc.scholar_profile.user_id,
+        'document:ocr_completed',
+        {
+          documentId: doc.document_id,
+          scholarProfileId: doc.scholar_profile_id,
+          status: validationStatus,
+          documentType: doc.document_type,
+          hasGrades,
+        },
+      );
+    }
+
+    this.eventsGateway.emitToStaff('document:ocr_completed', {
+      documentId: doc.document_id,
+      scholarProfileId: doc.scholar_profile_id,
+      status: validationStatus,
+      documentType: doc.document_type,
+      hasGrades,
+    });
 
     return { status: 'processed', validationStatus, forensicEvaluation };
   }

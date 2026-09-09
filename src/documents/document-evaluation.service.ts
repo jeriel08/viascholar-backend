@@ -229,6 +229,12 @@ export class DocumentEvaluationService {
       throw new NotFoundException(`Document ID ${documentId} not found.`);
     }
 
+    if (doc.status !== 'STUDENT_CONFIRMED') {
+      throw new BadRequestException(
+        `Cannot verify document: The applicant must review and confirm this document first (current status: ${doc.status}).`,
+      );
+    }
+
     // Manual entry wins; otherwise fall back to student-confirmed or extracted data
     const confirmed = doc.confirmed_data as ConfirmedGradeData | null;
     const extracted = (doc.extracted_data ?? {}) as ExtractedDocData;

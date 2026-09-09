@@ -189,6 +189,33 @@ export class AuthService {
     );
   }
 
+  // 4. Refresh / Re-issue token with fresh role and profile
+  async refreshToken(userId: number) {
+    const user = await this.prisma.user.findUnique({
+      where: { user_id: userId },
+      include: { scholar_profile: true, employee: true },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found.');
+    }
+
+    if (!user.is_active) {
+      throw new UnauthorizedException(
+        'Account is disabled. Please contact the administrator.',
+      );
+    }
+
+    return this.generateToken(
+      user.user_id,
+      user.email,
+      user.role,
+      user.scholar_profile,
+      user.employee,
+      user.created_at,
+    );
+  }
+
   private async generateToken(
     userId: number,
     email: string,

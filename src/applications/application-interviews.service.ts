@@ -60,6 +60,24 @@ export class ApplicationInterviewsService {
       throw new NotFoundException(`Application ID ${applicationId} not found.`);
     }
 
+    const docs = await this.prisma.scholarDocument.findMany({
+      where: { scholar_profile_id: application.scholar_profile_id },
+      select: { document_id: true, status: true },
+    });
+    if (docs.length === 0) {
+      throw new BadRequestException(
+        'Cannot schedule interview because the applicant has not submitted any documents.',
+      );
+    }
+    const hasConfirmed = docs.some(
+      (d) => d.status === 'STUDENT_CONFIRMED' || d.status === 'VERIFIED',
+    );
+    if (!hasConfirmed) {
+      throw new BadRequestException(
+        'Cannot schedule interview because submitted document(s) have not been confirmed by the applicant yet.',
+      );
+    }
+
     const startTime = new Date(dto.interview_at);
     if (isNaN(startTime.getTime())) {
       throw new BadRequestException('Invalid interview date/time provided.');
