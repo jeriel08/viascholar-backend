@@ -18,6 +18,7 @@ import { EventsModule } from './events/events.module.js';
 import { ChatModule } from './chat/chat.module.js';
 import { ForumModule } from './forum/forum.module.js';
 import { AcademicBaselineModule } from './academic-baseline/academic-baseline.module.js';
+import { AppController } from './app.controller.js';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { AcademicBaselineModule } from './academic-baseline/academic-baseline.mo
     ChatModule,
     ForumModule,
   ],
+  controllers: [AppController],
   providers: [
     {
       provide: APP_GUARD,

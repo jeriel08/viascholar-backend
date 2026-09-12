@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
-import { ProspectusOcrService } from './prospectus-ocr.service';
-import { OpenRouterVisionExtractorService } from '../documents/extractors/openrouter-vision-extractor.service';
+import { ProspectusOcrService } from './prospectus-ocr.service.js';
+import { OpenRouterVisionExtractorService } from '../documents/extractors/openrouter-vision-extractor.service.js';
 
 describe('ProspectusOcrService', () => {
   let service: ProspectusOcrService;

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
-import { AcademicBaselineController } from './academic-baseline.controller';
-import { AcademicBaselineService } from './academic-baseline.service';
+import { AcademicBaselineController } from './academic-baseline.controller.js';
+import { AcademicBaselineService } from './academic-baseline.service.js';
 
 describe('AcademicBaselineController', () => {
   let controller: AcademicBaselineController;

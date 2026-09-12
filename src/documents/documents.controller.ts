@@ -83,6 +83,16 @@ export class DocumentsController {
     }
   }
 
+  @Get('allowed-types')
+  @Roles(Role.APPLICANT, Role.SCHOLAR)
+  @ApiOperation({
+    summary:
+      'Get allowed document types based on scholar current year level',
+  })
+  getAllowedDocumentTypes(@Request() req: AuthenticatedRequest) {
+    return this.storageService.getAllowedDocumentTypes(req.user.user_id);
+  }
+
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('upload')
   @Roles(Role.APPLICANT, Role.SCHOLAR)

@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
-import { AcademicBaselineService } from './academic-baseline.service';
-import { PrismaService } from '../prisma/prisma.service';
-import { AuditService } from '../audit/audit.service';
-import { CloudinaryService } from '../cloudinary/cloudinary.service';
-import { SettingsService } from '../settings/settings.service';
-import { EventsGateway } from '../events/events.gateway';
-import { ProspectusOcrService } from './prospectus-ocr.service';
+import { AcademicBaselineService } from './academic-baseline.service.js';
+import { PrismaService } from '../prisma/prisma.service.js';
+import { AuditService } from '../audit/audit.service.js';
+import { CloudinaryService } from '../cloudinary/cloudinary.service.js';
+import { SettingsService } from '../settings/settings.service.js';
+import { EventsGateway } from '../events/events.gateway.js';
+import { ProspectusOcrService } from './prospectus-ocr.service.js';
 
 describe('AcademicBaselineService', () => {
   let service: AcademicBaselineService;
@@ -38,10 +38,6 @@ describe('AcademicBaselineService', () => {
       },
       schoolGradingSystem: {
         findUnique: jest.fn(),
-        create: jest.fn(),
-      },
-      employee: {
-        findUnique: jest.fn(),
       },
     };
 
@@ -53,7 +49,7 @@ describe('AcademicBaselineService', () => {
         { provide: CloudinaryService, useValue: { uploadBuffer: jest.fn() } },
         { provide: SettingsService, useValue: { evaluateStudentGrade: jest.fn() } },
         { provide: EventsGateway, useValue: { emitToUser: jest.fn(), emitToStaff: jest.fn() } },
-        { provide: ProspectusOcrService, useValue: { normalizeSubjectCode: jest.fn((c) => c.replace(/\s+/g, '').toUpperCase()) } },
+        { provide: ProspectusOcrService, useValue: { normalizeSubjectCode: jest.fn((c: string) => c.replace(/\s+/g, '').toUpperCase()) } },
       ],
     }).compile();
 
