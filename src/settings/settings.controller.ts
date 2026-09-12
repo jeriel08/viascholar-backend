@@ -47,10 +47,21 @@ export class SettingsController {
   }
 
   @Post('schools')
-  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
-  @ApiOperation({ summary: 'Add a new school grading system configuration' })
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR, Role.SCHOLAR, Role.APPLICANT)
+  @ApiOperation({ summary: 'Add or propose a school grading system configuration' })
   createSchoolGrading(@Request() req, @Body() dto: CreateSchoolGradingDto) {
-    return this.settingsService.createSchoolGrading(req.user.user_id, dto);
+    return this.settingsService.createSchoolGrading(
+      req.user.user_id,
+      dto,
+      req.user.role,
+    );
+  }
+
+  @Patch('schools/:id/verify')
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @ApiOperation({ summary: 'Coordinator/Staff verifies a student-proposed school grading scale' })
+  verifySchoolGrading(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    return this.settingsService.verifySchoolGrading(req.user.user_id, id);
   }
 
   @Delete('schools/:id')

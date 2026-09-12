@@ -84,8 +84,10 @@ model User {
   forum_comments            ForumComment[]  @relation("UserForumComments")
   auditLogs                 AuditLog[]
 
-  @@map("users")
+  submitted_schools         SchoolGradingSystem[] @relation("SchoolGradingSubmittedBy")
   systemSettings SystemSetting[] @relation("SettingsUpdatedBy")
+
+  @@map("users")
 }
 
 model Employee {
@@ -102,34 +104,39 @@ model Employee {
 
   user User @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
 
-  reviewed_applications  Application[]     @relation("EmployeeReviewedApplications")
-  reviewed_grade_reports GradeReport[]     @relation("EmployeeReviewedGradeReports")
-  approved_disbursements Disbursement[]    @relation("EmployeeApprovedDisbursements")
-  reviewed_documents     ScholarDocument[] @relation("EmployeeReviewedDocuments")
+  reviewed_applications  Application[]        @relation("EmployeeReviewedApplications")
+  reviewed_grade_reports GradeReport[]        @relation("EmployeeReviewedGradeReports")
+  approved_disbursements Disbursement[]       @relation("EmployeeApprovedDisbursements")
+  reviewed_documents     ScholarDocument[]    @relation("EmployeeReviewedDocuments")
+  verified_schools       SchoolGradingSystem[] @relation("SchoolGradingVerifiedBy")
+  frozen_prospectuses    ScholarProspectus[]  @relation("EmployeeFrozenProspectus")
   meetings               Meeting[]
 
   @@map("employees")
 }
 
 model ScholarProfile {
-  profile_id          Int     @id @default(autoincrement())
-  user_id             Int     @unique
-  first_name          String  @default("")  @db.VarChar(100)
-  last_name           String  @default("")  @db.VarChar(100)
-  phone_number        String  @unique @db.VarChar(30)
-  student_address     String? @db.Text
-  school_address      String? @db.Text
-  student_number      String? @unique @db.VarChar(50)
-  relative_employee   String? @db.VarChar(150)
-  scholarship_track   String? @db.VarChar(100)
-  course_of_study     String? @db.VarChar(150)
-  school_name         String? @db.VarChar(150)
-  current_year_level  Int?    @db.SmallInt
-  bio                 String? @db.Text
-  avatar_url          String? @db.VarChar(255)
-  banner_url          String? @db.VarChar(255)
+  profile_id               Int     @id @default(autoincrement())
+  user_id                  Int     @unique
+  first_name               String  @default("")  @db.VarChar(100)
+  last_name                String  @default("")  @db.VarChar(100)
+  phone_number             String  @unique @db.VarChar(30)
+  student_address          String? @db.Text
+  school_address           String? @db.Text
+  student_number           String? @unique @db.VarChar(50)
+  relative_employee        String? @db.VarChar(150)
+  scholarship_track        String? @db.VarChar(100)
+  course_of_study          String? @db.VarChar(150)
+  school_name              String? @db.VarChar(150)
+  school_id                Int?
+  academic_baseline_status String  @default("PENDING_SCHOOL_SELECTION") @db.VarChar(50)
+  current_year_level       Int?    @db.SmallInt
+  bio                      String? @db.Text
+  avatar_url               String? @db.VarChar(255)
+  banner_url               String? @db.VarChar(255)
 
-  user             User      @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+  user                  User                 @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+  school_grading_system SchoolGradingSystem? @relation(fields: [school_id], references: [school_id], onDelete: SetNull)
 
   applications  Application[]
   grade_reports GradeReport[]
@@ -137,6 +144,7 @@ model ScholarProfile {
   disbursements Disbursement[]
   documents     ScholarDocument[]
   meetings      Meeting[]
+  prospectus    ScholarProspectus?
 
   @@map("scholar_profiles")
 }
@@ -260,6 +268,8 @@ model ScholarDocument {
   scholar_profile      ScholarProfile @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
   reviewed_by_employee Employee?       @relation("EmployeeReviewedDocuments", fields: [reviewed_by_employee_id], references: [employee_id])
   grade_reports        GradeReport[]
+  prospectus_documents ScholarProspectus[]
+  credited_subjects    ProspectusSubject[]
 
   @@map("scholar_documents")
 }
@@ -405,16 +415,73 @@ model SystemSetting {
 }
 
 model SchoolGradingSystem {
-  school_id     Int      @id @default(autoincrement())
-  school_name   String   @unique @db.VarChar(150)
-  grading_scale String   @db.VarChar(50) // e.g. "PERCENTAGE_100", "NUMERIC_5_POINT", "NUMERIC_4_POINT"
-  passing_grade Decimal  @db.Decimal(5, 2) // e.g. 75.00 or 3.00
-  highest_grade Decimal  @db.Decimal(5, 2) // e.g. 100.00 or 1.00
-  failing_grade  Decimal  @db.Decimal(5, 2) // e.g. 50.00 or 5.00
-  special_codes Json?    @db.JsonB
-  notes         String?  @db.Text
-  created_at    DateTime @default(now())
-  updated_at    DateTime @updatedAt
+  school_id               Int              @id @default(autoincrement())
+  school_name             String           @unique @db.VarChar(150)
+  grading_scale           String           @db.VarChar(50) // e.g. "PERCENTAGE_100", "NUMERIC_5_POINT", "NUMERIC_4_POINT"
+  passing_grade           Decimal          @db.Decimal(5, 2) // e.g. 75.00, 3.00, 2.00
+  highest_grade           Decimal          @db.Decimal(5, 2) // e.g. 100.00, 1.00, 4.00
+  failing_grade           Decimal          @db.Decimal(5, 2) // e.g. 50.00, 5.00, 1.00
+  min_grade               Decimal?         @db.Decimal(5, 2)
+  max_grade               Decimal?         @db.Decimal(5, 2)
+  is_verified             Boolean          @default(true)
+  submitted_by_user_id    Int?
+  verified_by_employee_id Int?
+  special_codes           Json?            @db.JsonB
+  notes                   String?          @db.Text
+  created_at              DateTime         @default(now())
+  updated_at              DateTime         @updatedAt
+
+  submitted_by_user       User?            @relation("SchoolGradingSubmittedBy", fields: [submitted_by_user_id], references: [user_id], onDelete: SetNull)
+  verified_by_employee    Employee?        @relation("SchoolGradingVerifiedBy", fields: [verified_by_employee_id], references: [employee_id], onDelete: SetNull)
+  scholar_profiles        ScholarProfile[]
 
   @@map("school_grading_systems")
+}
+
+model ScholarProspectus {
+  prospectus_id         Int                @id @default(autoincrement())
+  scholar_profile_id    Int                @unique
+  document_id           Int?
+  curriculum_year       String             @db.VarChar(50) // e.g. "2023-2024"
+  course_code           String?            @db.VarChar(50) // e.g. "BSIT"
+  course_name           String             @db.VarChar(150) // e.g. "Bachelor of Science in Information Technology"
+  total_units           Decimal?           @db.Decimal(5, 1)
+  is_frozen             Boolean            @default(false)
+  frozen_at             DateTime?
+  frozen_by_employee_id Int?
+  status                String             @default("DRAFT") @db.VarChar(50) // "DRAFT", "PENDING_REVIEW", "FROZEN"
+  created_at            DateTime           @default(now())
+  updated_at            DateTime           @updatedAt
+
+  scholar_profile       ScholarProfile     @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
+  document              ScholarDocument?   @relation(fields: [document_id], references: [document_id], onDelete: SetNull)
+  frozen_by_employee    Employee?          @relation("EmployeeFrozenProspectus", fields: [frozen_by_employee_id], references: [employee_id])
+  subjects              ProspectusSubject[]
+
+  @@map("scholar_prospectus")
+}
+
+model ProspectusSubject {
+  subject_id             Int               @id @default(autoincrement())
+  prospectus_id          Int
+  subject_code           String            @db.VarChar(50)  // e.g. "IT 101", "CCE 102"
+  descriptive_title      String            @db.VarChar(200) // e.g. "Introduction to Computing"
+  units                  Decimal           @db.Decimal(3, 1) // e.g. 3.0
+  year_level             Int               @db.SmallInt     // 1, 2, 3, 4
+  semester               String            @db.VarChar(50)  // "1st Semester", "2nd Semester", "Summer"
+  prerequisites          Json?             @db.JsonB        // e.g. ["CCE 101"]
+  status                 String            @default("UNTAKEN") @db.VarChar(50) // "UNTAKEN", "CREDITED", "ENROLLED", "PASSED", "FAILED"
+  grade                  Decimal?          @db.Decimal(5, 2)
+  historical_document_id Int?
+  credited_term          String?           @db.VarChar(50)  // e.g. "1st Year - 1st Sem"
+  remarks                String?           @db.Text
+  created_at             DateTime          @default(now())
+  updated_at             DateTime          @updatedAt
+
+  prospectus             ScholarProspectus @relation(fields: [prospectus_id], references: [prospectus_id], onDelete: Cascade)
+  historical_document    ScholarDocument?  @relation(fields: [historical_document_id], references: [document_id], onDelete: SetNull)
+
+  @@index([prospectus_id])
+  @@index([subject_code])
+  @@map("prospectus_subjects")
 }

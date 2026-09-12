@@ -43,6 +43,29 @@ export class CreateSchoolGradingDto {
   failing_grade: number;
 
   @ApiPropertyOptional({
+    example: 1.0,
+    description: 'Minimum grade on transcript (e.g., 1.0 or 50.0)',
+  })
+  @IsNumber()
+  @IsOptional()
+  min_grade?: number;
+
+  @ApiPropertyOptional({
+    example: 5.0,
+    description: 'Maximum grade on transcript (e.g., 5.0 or 100.0)',
+  })
+  @IsNumber()
+  @IsOptional()
+  max_grade?: number;
+
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Whether this grading scale is verified by staff',
+  })
+  @IsOptional()
+  is_verified?: boolean;
+
+  @ApiPropertyOptional({
     example: {
       '1.0': 'FAILED',
       '7.1': 'NOT_FULLY_PAID',

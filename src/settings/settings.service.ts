@@ -65,8 +65,12 @@ export class SettingsService implements OnModuleInit {
     return updated;
   }
 
-  // 3. Create School Grading Scale
-  async createSchoolGrading(userId: number, dto: CreateSchoolGradingDto) {
+  // 3. Create School Grading Scale (Staff creates verified, Scholar creates unverified pending coordinator review)
+  async createSchoolGrading(
+    userId: number,
+    dto: CreateSchoolGradingDto,
+    userRole?: string,
+  ) {
     const existing = await this.prisma.schoolGradingSystem.findUnique({
       where: { school_name: dto.school_name },
     });
@@ -77,14 +81,40 @@ export class SettingsService implements OnModuleInit {
       );
     }
 
+    const isStudent = userRole === 'APPLICANT' || userRole === 'SCHOLAR';
+    const isVerified = isStudent ? (dto.is_verified ?? false) : (dto.is_verified ?? true);
+
+    let verifiedByEmployeeId: number | undefined = undefined;
+    if (!isStudent) {
+      const emp = await this.prisma.employee.findUnique({
+        where: { user_id: userId },
+      });
+      if (emp) {
+        verifiedByEmployeeId = emp.employee_id;
+      }
+    }
+
     const school = await this.prisma.schoolGradingSystem.create({
-      data: { ...dto },
+      data: {
+        school_name: dto.school_name,
+        grading_scale: dto.grading_scale,
+        passing_grade: dto.passing_grade,
+        highest_grade: dto.highest_grade,
+        failing_grade: dto.failing_grade,
+        min_grade: dto.min_grade,
+        max_grade: dto.max_grade,
+        special_codes: dto.special_codes,
+        notes: dto.notes,
+        is_verified: isVerified,
+        submitted_by_user_id: userId,
+        verified_by_employee_id: verifiedByEmployeeId,
+      },
     });
 
     await this.auditService.log(
       userId,
-      'SCHOOL_GRADING_CREATED',
-      `Configured grading system for school: ${dto.school_name}`,
+      isVerified ? 'SCHOOL_GRADING_CREATED' : 'SCHOOL_GRADING_SUBMITTED_BY_STUDENT',
+      `${isVerified ? 'Configured' : 'Proposed'} grading system for school: ${dto.school_name}`,
     );
 
     this.eventsGateway.emitToStaff('school_grading:created', school);
@@ -92,11 +122,57 @@ export class SettingsService implements OnModuleInit {
     return school;
   }
 
-  // 4. Get All School Grading Scales
-  async getSchoolGradings() {
+  // 4. Get All School Grading Scales (Optional query for verifiedOnly)
+  async getSchoolGradings(verifiedOnly?: boolean) {
     return this.prisma.schoolGradingSystem.findMany({
+      where: verifiedOnly ? { is_verified: true } : undefined,
       orderBy: { school_name: 'asc' },
+      include: {
+        submitted_by_user: {
+          select: { user_id: true, email: true, role: true },
+        },
+        verified_by_employee: {
+          select: { employee_id: true, first_name: true, last_name: true },
+        },
+      },
     });
+  }
+
+  // 4b. Coordinator / Staff Verifies School Grading Scale
+  async verifySchoolGrading(userId: number, schoolId: number) {
+    const school = await this.prisma.schoolGradingSystem.findUnique({
+      where: { school_id: schoolId },
+    });
+
+    if (!school) {
+      throw new NotFoundException(`School with ID ${schoolId} not found.`);
+    }
+
+    const employee = await this.prisma.employee.findUnique({
+      where: { user_id: userId },
+    });
+
+    const updated = await this.prisma.schoolGradingSystem.update({
+      where: { school_id: schoolId },
+      data: {
+        is_verified: true,
+        verified_by_employee_id: employee?.employee_id,
+      },
+      include: {
+        verified_by_employee: true,
+      },
+    });
+
+    await this.auditService.log(
+      userId,
+      'SCHOOL_GRADING_VERIFIED',
+      `Coordinator verified grading scale for school: ${school.school_name}`,
+    );
+
+    this.eventsGateway.emitToStaff('school_grading:verified', updated);
+    this.eventsGateway.emitToAll('school_grading:verified', updated);
+
+    return updated;
   }
 
   // 5. Delete School Grading Configuration

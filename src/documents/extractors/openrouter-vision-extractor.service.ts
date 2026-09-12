@@ -62,21 +62,9 @@ export class OpenRouterVisionExtractorService implements IDocumentExtractor {
     return images;
   }
 
-  async extractData(
+  private async prepareImageContentItems(
     input: InputDocumentFile | InputDocumentFile[],
-    documentType: string,
-  ): Promise<ExtractedResult> {
-    const apiKey = this.configService.get<string>('OPENROUTER_API_KEY');
-    const model =
-      this.configService.get<string>('OPENROUTER_MODEL') ||
-      'inclusionai/ling-3.0-flash-vl:free';
-
-    if (!apiKey) {
-      throw new Error(
-        'OPENROUTER_API_KEY is not configured in environment variables.',
-      );
-    }
-
+  ): Promise<{ imageContentItems: Array<{ type: string; image_url: { url: string } }>; firstFileName: string }> {
     const files = Array.isArray(input) ? input : [input];
     const imageContentItems: Array<{
       type: string;
@@ -89,14 +77,13 @@ export class OpenRouterVisionExtractorService implements IDocumentExtractor {
       const isPdf = mime.includes('pdf') || name.endsWith('.pdf');
 
       if (isPdf) {
-        // PDF File: Extract embedded JPEG/PNG image streams directly using pdf-lib
         const extractedPdfImages = await this.extractImagesFromPdf(f.buffer);
 
         if (extractedPdfImages.length > 0) {
           this.logger.log(
             `Extracted ${extractedPdfImages.length} embedded image stream(s) directly from PDF '${f.fileName || 'document.pdf'}'.`,
           );
-          for (const img of extractedPdfImages.slice(0, 5)) {
+          for (const img of extractedPdfImages.slice(0, 8)) {
             imageContentItems.push({
               type: 'image_url',
               image_url: {
@@ -105,7 +92,6 @@ export class OpenRouterVisionExtractorService implements IDocumentExtractor {
             });
           }
         } else {
-          // Fallback rendering via pdf-to-img
           try {
             this.logger.log(
               `Rendering PDF '${f.fileName || 'document.pdf'}' pages via pdf-to-img...`,
@@ -113,7 +99,7 @@ export class OpenRouterVisionExtractorService implements IDocumentExtractor {
             const pdfDoc = await pdf(f.buffer, { scale: 2 });
             let pageCount = 0;
             for await (const pageBuffer of pdfDoc) {
-              if (pageCount >= 5) break;
+              if (pageCount >= 8) break;
               imageContentItems.push({
                 type: 'image_url',
                 image_url: {
@@ -129,7 +115,6 @@ export class OpenRouterVisionExtractorService implements IDocumentExtractor {
           }
         }
       } else {
-        // Raw Uploaded Image File (JPG / PNG / WEBP)
         const effectiveMime = mime || 'image/jpeg';
         imageContentItems.push({
           type: 'image_url',
@@ -141,6 +126,26 @@ export class OpenRouterVisionExtractorService implements IDocumentExtractor {
     }
 
     const firstFileName = files[0]?.fileName || 'document';
+    return { imageContentItems, firstFileName };
+  }
+
+  async extractData(
+    input: InputDocumentFile | InputDocumentFile[],
+    documentType: string,
+  ): Promise<ExtractedResult> {
+    const apiKey = this.configService.get<string>('OPENROUTER_API_KEY');
+    const model =
+      this.configService.get<string>('OPENROUTER_MODEL') ||
+      'inclusionai/ling-3.0-flash-vl:free';
+
+    if (!apiKey) {
+      throw new Error(
+        'OPENROUTER_API_KEY is not configured in environment variables.',
+      );
+    }
+
+    const { imageContentItems, firstFileName } = await this.prepareImageContentItems(input);
+
     this.logger.log(
       `Dispatching ${imageContentItems.length} raw image page(s) ('${firstFileName}') (${documentType}) to OpenRouter Vision LLM model '${model}'...`,
     );
@@ -234,13 +239,11 @@ STRICT INSTRUCTIONS:
       `OpenRouter Vision LLM responded in ${elapsedMs}ms for '${firstFileName}'.`,
     );
 
-    // Clean potential markdown fencing or conversational text
     let cleanedJsonString = content
       .replace(/^```(?:json)?\s*/gi, '')
       .replace(/\s*```$/gi, '')
       .trim();
 
-    // Extract the first JSON object block if wrapped in text
     const jsonMatch = cleanedJsonString.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       cleanedJsonString = jsonMatch[0];
@@ -255,6 +258,154 @@ STRICT INSTRUCTIONS:
       );
       throw new Error(
         `OpenRouter response could not be parsed as valid JSON: ${parseError.message}`,
+      );
+    }
+  }
+
+  async extractProspectusData(
+    input: InputDocumentFile | InputDocumentFile[],
+  ): Promise<{
+    course_name?: string;
+    course_code?: string;
+    curriculum_year?: string;
+    total_units?: number;
+    subjects: Array<{
+      subject_code: string;
+      descriptive_title: string;
+      units: number;
+      year_level: number;
+      semester: string;
+      prerequisites?: string[];
+    }>;
+  }> {
+    const apiKey = this.configService.get<string>('OPENROUTER_API_KEY');
+    const model =
+      this.configService.get<string>('OPENROUTER_MODEL') ||
+      'inclusionai/ling-3.0-flash-vl:free';
+
+    if (!apiKey) {
+      throw new Error(
+        'OPENROUTER_API_KEY is not configured in environment variables.',
+      );
+    }
+
+    const { imageContentItems, firstFileName } = await this.prepareImageContentItems(input);
+
+    this.logger.log(
+      `Dispatching ${imageContentItems.length} prospectus page(s) ('${firstFileName}') to OpenRouter Vision LLM model '${model}'...`,
+    );
+
+    const systemPrompt = `You are an expert academic curriculum OCR and structured extraction AI specializing in Philippine college and university curriculum evaluation sheets, program checklists, and prospectuses.
+Your task is to analyze the attached prospectus / curriculum checklist document and extract all curriculum metadata and subjects organized by Year Level and Semester.
+
+Strict JSON schema:
+{
+  "course_name": string (e.g. "Bachelor of Science in Information Technology", "BS Computer Science"),
+  "course_code": string (e.g. "BSIT", "BSCS", "BSIS") or null,
+  "curriculum_year": string (e.g. "2023-2024", "2024-2025", "Effective SY 2021-2022") or null,
+  "total_units": number (total units across all years) or null,
+  "subjects": [
+    {
+      "subject_code": string (e.g. "IT 101", "CCE 102", "GE 2", "NSTP 1"),
+      "descriptive_title": string (e.g. "Introduction to Computing", "Computer Programming 1"),
+      "units": number (e.g. 3.0, 2.0, 1.0, 6.0),
+      "year_level": number (1 for First Year, 2 for Second Year, 3 for Third Year, 4 for Fourth Year),
+      "semester": string ("1st Semester", "2nd Semester", or "Summer"),
+      "prerequisites": array of strings (e.g. ["CCE 101"] or empty array [])
+    }
+  ]
+}
+
+STRICT INSTRUCTIONS:
+1. Extract ALL subjects in the curriculum from 1st Year to 4th Year (or all listed year levels).
+2. For each subject, ensure "subject_code" is clean (e.g. "CCE 102").
+3. Ensure "year_level" is an integer (1, 2, 3, or 4).
+4. Ensure "semester" is one of "1st Semester", "2nd Semester", or "Summer".
+5. Ensure "units" is a valid number. If lab and lec units are listed separately, sum them (e.g., 2 lec + 1 lab = 3.0).
+6. Return ONLY valid, raw JSON. Do not include markdown code block formatting, commentary, or extra text.`;
+
+    const requestBody = {
+      model,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: systemPrompt,
+            },
+            ...imageContentItems,
+          ],
+        },
+      ],
+      temperature: 0.1,
+    };
+
+    const startTime = Date.now();
+    const response = await fetch(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://viascholar.edu',
+          'X-Title': 'ViaScholar Prospectus OCR',
+        },
+        body: JSON.stringify(requestBody),
+      },
+    );
+
+    const elapsedMs = Date.now() - startTime;
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      this.logger.error(
+        `OpenRouter API returned status ${response.status} after ${elapsedMs}ms: ${errorText}`,
+      );
+      throw new Error(
+        `OpenRouter API extraction failed (${response.status}): ${errorText}`,
+      );
+    }
+
+    const responseData = (await response.json()) as {
+      choices?: Array<{
+        message?: {
+          content?: string;
+        };
+      }>;
+    };
+
+    const content = responseData.choices?.[0]?.message?.content;
+    if (!content) {
+      throw new Error('OpenRouter API returned empty message content.');
+    }
+
+    let cleanedJsonString = content
+      .replace(/^```(?:json)?\s*/gi, '')
+      .replace(/\s*```$/gi, '')
+      .trim();
+
+    const jsonMatch = cleanedJsonString.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      cleanedJsonString = jsonMatch[0];
+    }
+
+    try {
+      const parsedData = JSON.parse(cleanedJsonString);
+      return {
+        course_name: parsedData.course_name,
+        course_code: parsedData.course_code,
+        curriculum_year: parsedData.curriculum_year,
+        total_units: parsedData.total_units,
+        subjects: Array.isArray(parsedData.subjects) ? parsedData.subjects : [],
+      };
+    } catch (parseError: any) {
+      this.logger.error(
+        `Failed to parse Prospectus OCR JSON output: ${parseError.message}. Raw: ${cleanedJsonString.slice(0, 300)}`,
+      );
+      throw new Error(
+        `Prospectus OCR response could not be parsed as valid JSON: ${parseError.message}`,
       );
     }
   }
