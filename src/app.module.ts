@@ -17,6 +17,7 @@ import { MailModule } from './mail/mail.module.js';
 import { EventsModule } from './events/events.module.js';
 import { ChatModule } from './chat/chat.module.js';
 import { ForumModule } from './forum/forum.module.js';
+import { AppController } from './app.controller.js';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { ForumModule } from './forum/forum.module.js';
     ChatModule,
     ForumModule,
   ],
+  controllers: [AppController],
   providers: [
     {
       provide: APP_GUARD,

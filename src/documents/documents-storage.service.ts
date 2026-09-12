@@ -25,6 +25,16 @@ export class DocumentsStorageService {
     private documentOcrService: DocumentOcrService,
   ) {}
 
+  private isHighSchoolDocument(documentType: string): boolean {
+    return /138|137|form\s*9|report\s*card|high\s*school|shs|senior\s*high/i.test(
+      documentType,
+    );
+  }
+
+  private getScholarYearLevel(scholarYearLevel?: number | null): number {
+    return scholarYearLevel && scholarYearLevel > 0 ? scholarYearLevel : 1;
+  }
+
   // 1. Scholar Uploads TOR / Form 137 / Form 138 (Supports single or multi-page/multi-file)
   async uploadDocument(
     userId: number,
@@ -37,6 +47,13 @@ export class DocumentsStorageService {
 
     if (!scholar) {
       throw new NotFoundException('Scholar profile not found.');
+    }
+
+    const yearLevel = this.getScholarYearLevel(scholar.current_year_level);
+    if (yearLevel >= 2 && this.isHighSchoolDocument(documentType)) {
+      throw new BadRequestException(
+        `Scholars in Year Level ${yearLevel} (2nd to 4th year) are required to upload a Transcript of Records (TOR) or Certificate of Grades (COG). Form 138 / Form 9 / High School report cards are only permitted for 1st year students.`,
+      );
     }
 
     const fileList = Array.isArray(files) ? files : [files];
@@ -129,6 +146,19 @@ export class DocumentsStorageService {
     if (doc.status === 'VERIFIED' || doc.status === 'STUDENT_CONFIRMED') {
       throw new BadRequestException(
         'Confirmed or verified documents cannot be replaced directly. Please contact a coordinator if corrections are required.',
+      );
+    }
+
+    const yearLevel = this.getScholarYearLevel(
+      doc.scholar_profile.current_year_level,
+    );
+    if (
+      yearLevel >= 2 &&
+      doc.document_type &&
+      this.isHighSchoolDocument(doc.document_type)
+    ) {
+      throw new BadRequestException(
+        `Scholars in Year Level ${yearLevel} (2nd to 4th year) are required to upload a Transcript of Records (TOR) or Certificate of Grades (COG). Form 138 / Form 9 / High School report cards are only permitted for 1st year students.`,
       );
     }
 
@@ -320,5 +350,47 @@ export class DocumentsStorageService {
         },
       },
     });
+  }
+
+  // Get allowed document upload types based on scholar year level
+  async getAllowedDocumentTypes(userId: number) {
+    const scholar = await this.prisma.scholarProfile.findUnique({
+      where: { user_id: userId },
+    });
+
+    if (!scholar) {
+      throw new NotFoundException('Scholar profile not found.');
+    }
+
+    const yearLevel = this.getScholarYearLevel(scholar.current_year_level);
+
+    const isYear2Plus = yearLevel >= 2;
+
+    const allowedTypes = isYear2Plus
+      ? ['TOR', 'COG', 'Transcript of Records', 'Certificate of Grades']
+      : [
+          'Form 138',
+          'Form 137',
+          'Form 9',
+          'High School Report Card',
+          'TOR',
+          'COG',
+          'Transcript of Records',
+          'Certificate of Grades',
+        ];
+
+    const prohibitedTypes = isYear2Plus
+      ? ['Form 138', 'Form 137', 'Form 9', 'High School Report Card']
+      : [];
+
+    return {
+      current_year_level: yearLevel,
+      is_year_2_plus: isYear2Plus,
+      allowed_types: allowedTypes,
+      prohibited_types: prohibitedTypes,
+      message: isYear2Plus
+        ? 'As a 2nd-4th year scholar, you must submit a Transcript of Records (TOR) or Certificate of Grades (COG).'
+        : 'As a 1st year student, you may submit Form 138 / Form 9 / High School Report Card or TOR.',
+    };
   }
 }
