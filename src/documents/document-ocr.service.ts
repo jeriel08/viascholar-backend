@@ -13,6 +13,9 @@ import { DocumentReconciliationService } from './document-reconciliation.service
 import { EventsGateway } from '../events/events.gateway.js';
 import { Prisma } from '../generated/prisma/client.js';
 
+import { OpenRouterVisionExtractorService } from './extractors/openrouter-vision-extractor.service.js';
+import { ParseurExtractorService } from './extractors/parseur-extractor.service.js';
+
 interface ParseurFieldSet {
   grades?: unknown[];
   [key: string]: unknown;
@@ -37,7 +40,138 @@ export class DocumentOcrService {
     private auditService: AuditService,
     private documentReconciliationService: DocumentReconciliationService,
     private eventsGateway: EventsGateway,
+    private openRouterVisionExtractor: OpenRouterVisionExtractorService,
+    private parseurExtractor: ParseurExtractorService,
   ) {}
+
+  /**
+   * Main entry point for document OCR parsing. Routes to active provider based on OCR_PROVIDER env ('openrouter' | 'parseur').
+   */
+  async processDocumentExtraction(
+    documentId: number,
+    buffer: Buffer,
+    fileName: string,
+    mimeType: string,
+    documentType: string = 'document',
+    rawFiles?: Express.Multer.File[],
+  ) {
+    const provider = (
+      this.configService.get<string>('OCR_PROVIDER') || 'openrouter'
+    ).toLowerCase();
+
+    this.logger.log(
+      `Processing OCR for Document ID ${documentId} using provider '${provider}'...`,
+    );
+
+    if (provider === 'parseur') {
+      return this.sendToParseur(documentId, buffer, fileName, mimeType);
+    }
+
+    // Default Strategy: OpenRouter Vision LLM
+    try {
+      const doc = await this.prisma.scholarDocument.findUnique({
+        where: { document_id: documentId },
+        include: { scholar_profile: true },
+      });
+
+      if (!doc) {
+        throw new NotFoundException(`Document ID ${documentId} not found.`);
+      }
+
+      const inputFiles =
+        rawFiles && rawFiles.length > 0
+          ? rawFiles.map((f) => ({
+              buffer: f.buffer,
+              mimeType: f.mimetype,
+              fileName: f.originalname,
+              fileUrl: doc.file_url,
+            }))
+          : [{ buffer, mimeType, fileName, fileUrl: doc.file_url }];
+
+      const extractedData =
+        await this.openRouterVisionExtractor.extractData(
+          inputFiles,
+          documentType,
+        );
+
+      const existingExtracted = (doc.extracted_data ??
+        {}) as ExtractedDocumentData;
+      const initialMetadataForensics = existingExtracted.forensic_metadata;
+
+      const hasGrades =
+        Array.isArray(extractedData.grades) && extractedData.grades.length > 0;
+      const validationStatus = hasGrades
+        ? 'PASSED_PRECHECK'
+        : 'NEEDS_REUPLOAD';
+
+      const forensicEvaluation =
+        this.documentReconciliationService.evaluateExtractedDocument(
+          doc.scholar_profile || {},
+          doc.document_type || documentType,
+          extractedData as Record<string, unknown>,
+          initialMetadataForensics,
+        );
+
+      const mergedExtractedData = {
+        ...extractedData,
+        forensic_analysis: forensicEvaluation,
+        validation_flags: forensicEvaluation.flags,
+      };
+
+      const updated = await this.prisma.scholarDocument.update({
+        where: { document_id: documentId },
+        data: {
+          status: validationStatus,
+          extracted_data: mergedExtractedData as unknown as Prisma.InputJsonValue,
+          rejection_reason: hasGrades
+            ? null
+            : 'Unreadable document or missing grade records.',
+        },
+      });
+
+      await this.auditService.log(
+        doc.scholar_profile?.user_id || 0,
+        'DOCUMENT_OCR_PROCESSED',
+        `OpenRouter Vision OCR finished for document ID ${documentId}. Status: ${validationStatus}, Risk: ${forensicEvaluation.risk_level}, grade items: ${hasGrades ? extractedData.grades?.length : 0}.`,
+      );
+
+      if (doc.scholar_profile?.user_id) {
+        this.eventsGateway.emitToUser(
+          doc.scholar_profile.user_id,
+          'document:ocr_completed',
+          {
+            documentId: doc.document_id,
+            scholarProfileId: doc.scholar_profile_id,
+            status: validationStatus,
+            documentType: doc.document_type,
+            hasGrades,
+          },
+        );
+      }
+
+      this.eventsGateway.emitToStaff('document:ocr_completed', {
+        documentId: doc.document_id,
+        scholarProfileId: doc.scholar_profile_id,
+        status: validationStatus,
+        documentType: doc.document_type,
+        hasGrades,
+      });
+
+      return {
+        processed: true,
+        provider: 'openrouter',
+        status: updated.status,
+        extracted_data: updated.extracted_data,
+        forensic_analysis: forensicEvaluation,
+      };
+    } catch (err: any) {
+      this.logger.error(
+        `OpenRouter Vision OCR extraction failed for document ID ${documentId}: ${err.message}`,
+        err.stack,
+      );
+      throw err;
+    }
+  }
 
   // Uploads the document buffer to the Parseur mailbox
   async sendToParseur(

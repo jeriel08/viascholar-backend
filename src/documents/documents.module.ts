@@ -11,6 +11,9 @@ import { GradeCalculatorService } from './grade-calculator.service.js';
 import { FileForensicsService } from './file-forensics.service.js';
 import { DocumentReconciliationService } from './document-reconciliation.service.js';
 
+import { OpenRouterVisionExtractorService } from './extractors/openrouter-vision-extractor.service.js';
+import { ParseurExtractorService } from './extractors/parseur-extractor.service.js';
+
 @Module({
   imports: [CloudinaryModule, SettingsModule],
   controllers: [DocumentsController],
@@ -23,6 +26,8 @@ import { DocumentReconciliationService } from './document-reconciliation.service
     GradeCalculatorService,
     FileForensicsService,
     DocumentReconciliationService,
+    OpenRouterVisionExtractorService,
+    ParseurExtractorService,
   ],
   exports: [
     DocumentsStorageService,
@@ -33,6 +38,8 @@ import { DocumentReconciliationService } from './document-reconciliation.service
     GradeCalculatorService,
     FileForensicsService,
     DocumentReconciliationService,
+    OpenRouterVisionExtractorService,
+    ParseurExtractorService,
   ],
 })
 export class DocumentsModule {}

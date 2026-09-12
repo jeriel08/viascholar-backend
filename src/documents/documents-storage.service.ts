@@ -88,17 +88,19 @@ export class DocumentsStorageService {
       `Scholar (User ID: ${userId}) uploaded document (ID: ${document.document_id}, Type: ${documentType}, Files: ${fileList.length})${metadataForensics.is_flagged ? ` [Forensic Flags: ${metadataForensics.flags.join(', ')}]` : ''}.`,
     );
 
-    // Send the document buffer to Parseur for background OCR processing
+    // Send the document buffer to OCR engine (OpenRouter Vision or Parseur depending on OCR_PROVIDER)
     void this.documentOcrService
-      .sendToParseur(
+      .processDocumentExtraction(
         document.document_id,
         processed.buffer,
         processed.fileName,
         processed.mimeType,
+        documentType,
+        fileList,
       )
       ?.catch((err: Error) => {
         this.logger.error(
-          `Parseur dispatch failed for doc ${document.document_id}: ${err.message}`,
+          `Automated OCR extraction failed for doc ${document.document_id}: ${err.message}`,
         );
       });
 
@@ -179,17 +181,19 @@ export class DocumentsStorageService {
       `Scholar (User ID: ${userId}) replaced document (ID: ${documentId}, Type: ${doc.document_type}) with ${fileList.length} file(s)${metadataForensics.is_flagged ? ` [Forensic Flags: ${metadataForensics.flags.join(', ')}]` : ''}.`,
     );
 
-    // Re-trigger Parseur OCR
+    // Re-trigger OCR extraction (OpenRouter Vision or Parseur depending on OCR_PROVIDER)
     void this.documentOcrService
-      .sendToParseur(
+      .processDocumentExtraction(
         documentId,
         processed.buffer,
         processed.fileName,
         processed.mimeType,
+        doc.document_type || 'document',
+        fileList,
       )
       ?.catch((err: Error) => {
         this.logger.error(
-          `Parseur re-dispatch failed for doc ${documentId}: ${err.message}`,
+          `Automated OCR extraction failed on replacement for doc ${documentId}: ${err.message}`,
         );
       });
 
