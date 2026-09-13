@@ -29,6 +29,7 @@ interface RawExtractedGrade {
 
 interface RawExtractedData {
   label?: string;
+  detected_document_type?: string;
   general_average?: number | string;
   first_sem_average?: number | string;
   first_semester_average?: number | string;
@@ -50,6 +51,7 @@ interface ScholarProfileInput {
   first_name?: string | null;
   last_name?: string | null;
   course_of_study?: string | null;
+  current_year_level?: number | null;
 }
 
 @Injectable()
@@ -79,6 +81,18 @@ export class DocumentReconciliationService {
       documentType,
       extractedData.label,
     );
+
+    // 0. Document Type Alignment Check
+    const detectedType = extractedData.detected_document_type;
+    if (detectedType) {
+      if (detectedType === 'STATEMENT_OF_ACCOUNT' || detectedType === 'OTHER') {
+        flags.push('INVALID_DOCUMENT_TYPE');
+      } else if (isForm138 && detectedType === 'TRANSCRIPT_OF_RECORDS') {
+        flags.push('DOCUMENT_TYPE_MISMATCH');
+      } else if (!isForm138 && detectedType === 'FORM_138') {
+        flags.push('DOCUMENT_TYPE_MISMATCH');
+      }
+    }
 
     // 1. Math Reconciliation & Semester-Aware Verification
     let mathResult: ForensicEvaluationResult['math_reconciliation'];
@@ -235,6 +249,8 @@ export class DocumentReconciliationService {
     // 5. Risk Level Calculation
     let riskLevel: ForensicRiskLevel = 'LOW';
     const highRiskFlags = [
+      'INVALID_DOCUMENT_TYPE',
+      'DOCUMENT_TYPE_MISMATCH',
       'SEVERE_MATH_DISCREPANCY',
       'SUSPICIOUS_SOFTWARE_PHOTOSHOP',
       'SUSPICIOUS_SOFTWARE_CANVA',
@@ -263,6 +279,10 @@ export class DocumentReconciliationService {
 
     if (detectedSoft.length > 0) {
       summary = `High tampering risk: Document asset contains signatures of graphic editing tool (${detectedSoft.join(', ')}).`;
+    } else if (uniqueFlags.includes('INVALID_DOCUMENT_TYPE')) {
+      summary = `High risk mismatch: Document was recognized as an invalid or non-grade record (${detectedType}).`;
+    } else if (uniqueFlags.includes('DOCUMENT_TYPE_MISMATCH')) {
+      summary = `Review advisory: Uploaded document type (${detectedType}) does not match expected category (${documentType}).`;
     } else if (uniqueFlags.includes('SEVERE_MATH_DISCREPANCY')) {
       summary = `High risk discrepancy: Reported GWA (${mathResult?.reported_gwa}) deviates significantly from calculated subject average (${mathResult?.calculated_gwa}).`;
     } else if (uniqueFlags.includes('MODERATE_MATH_VARIANCE')) {

@@ -11,7 +11,7 @@ import { GradeCalculatorService } from './grade-calculator.service.js';
 import { FileForensicsService } from './file-forensics.service.js';
 import { DocumentReconciliationService } from './document-reconciliation.service.js';
 
-import { OpenRouterVisionExtractorService } from './extractors/openrouter-vision-extractor.service.js';
+import { LlamaExtractService } from './extractors/llama-extract.service.js';
 import { ParseurExtractorService } from './extractors/parseur-extractor.service.js';
 
 @Module({
@@ -26,7 +26,7 @@ import { ParseurExtractorService } from './extractors/parseur-extractor.service.
     GradeCalculatorService,
     FileForensicsService,
     DocumentReconciliationService,
-    OpenRouterVisionExtractorService,
+    LlamaExtractService,
     ParseurExtractorService,
   ],
   exports: [
@@ -38,7 +38,7 @@ import { ParseurExtractorService } from './extractors/parseur-extractor.service.
     GradeCalculatorService,
     FileForensicsService,
     DocumentReconciliationService,
-    OpenRouterVisionExtractorService,
+    LlamaExtractService,
     ParseurExtractorService,
   ],
 })

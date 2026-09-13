@@ -23,7 +23,7 @@ export class GradeCalculatorService {
    * Identifies whether the document is a High School Form 138 / 137 / Report Card
    */
   isForm138(documentType?: string, label?: string): boolean {
-    const matcher = /138|137|report card|high school|shs|senior high/i;
+    const matcher = /138|137|form\s*9|sf9|report\s*card|high\s*school|shs|senior\s*high/i;
     return matcher.test(documentType || '') || matcher.test(label || '');
   }
 

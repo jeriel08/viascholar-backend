@@ -55,6 +55,11 @@ export class DocumentsStorageService {
         `Scholars in Year Level ${yearLevel} (2nd to 4th year) are required to upload a Transcript of Records (TOR) or Certificate of Grades (COG). Form 138 / Form 9 / High School report cards are only permitted for 1st year students.`,
       );
     }
+    if (yearLevel === 1 && !this.isHighSchoolDocument(documentType)) {
+      throw new BadRequestException(
+        '1st-year applicants are required to upload their Senior High School Form 138 or Form 9 report card.',
+      );
+    }
 
     const fileList = Array.isArray(files) ? files : [files];
     if (fileList.length === 0) {
@@ -105,7 +110,7 @@ export class DocumentsStorageService {
       `Scholar (User ID: ${userId}) uploaded document (ID: ${document.document_id}, Type: ${documentType}, Files: ${fileList.length})${metadataForensics.is_flagged ? ` [Forensic Flags: ${metadataForensics.flags.join(', ')}]` : ''}.`,
     );
 
-    // Send the document buffer to OCR engine (OpenRouter Vision or Parseur depending on OCR_PROVIDER)
+    // Send the document buffer to OCR engine (LlamaExtract or Parseur depending on OCR_PROVIDER)
     void this.documentOcrService
       .processDocumentExtraction(
         document.document_id,
@@ -161,6 +166,15 @@ export class DocumentsStorageService {
         `Scholars in Year Level ${yearLevel} (2nd to 4th year) are required to upload a Transcript of Records (TOR) or Certificate of Grades (COG). Form 138 / Form 9 / High School report cards are only permitted for 1st year students.`,
       );
     }
+    if (
+      yearLevel === 1 &&
+      doc.document_type &&
+      !this.isHighSchoolDocument(doc.document_type)
+    ) {
+      throw new BadRequestException(
+        '1st-year applicants are required to upload their Senior High School Form 138 or Form 9 report card.',
+      );
+    }
 
     const fileList = Array.isArray(files) ? files : [files];
     if (fileList.length === 0) {
@@ -211,7 +225,7 @@ export class DocumentsStorageService {
       `Scholar (User ID: ${userId}) replaced document (ID: ${documentId}, Type: ${doc.document_type}) with ${fileList.length} file(s)${metadataForensics.is_flagged ? ` [Forensic Flags: ${metadataForensics.flags.join(', ')}]` : ''}.`,
     );
 
-    // Re-trigger OCR extraction (OpenRouter Vision or Parseur depending on OCR_PROVIDER)
+    // Re-trigger OCR extraction (LlamaExtract or Parseur depending on OCR_PROVIDER)
     void this.documentOcrService
       .processDocumentExtraction(
         documentId,
@@ -368,20 +382,11 @@ export class DocumentsStorageService {
 
     const allowedTypes = isYear2Plus
       ? ['TOR', 'COG', 'Transcript of Records', 'Certificate of Grades']
-      : [
-          'Form 138',
-          'Form 137',
-          'Form 9',
-          'High School Report Card',
-          'TOR',
-          'COG',
-          'Transcript of Records',
-          'Certificate of Grades',
-        ];
+      : ['Form 138', 'Form 9', 'Form 137', 'High School Report Card'];
 
     const prohibitedTypes = isYear2Plus
-      ? ['Form 138', 'Form 137', 'Form 9', 'High School Report Card']
-      : [];
+      ? ['Form 138', 'Form 9', 'Form 137', 'High School Report Card']
+      : ['TOR', 'COG', 'Transcript of Records', 'Certificate of Grades'];
 
     return {
       current_year_level: yearLevel,
@@ -390,7 +395,7 @@ export class DocumentsStorageService {
       prohibited_types: prohibitedTypes,
       message: isYear2Plus
         ? 'As a 2nd-4th year scholar, you must submit a Transcript of Records (TOR) or Certificate of Grades (COG).'
-        : 'As a 1st year student, you may submit Form 138 / Form 9 / High School Report Card or TOR.',
+        : 'As a 1st year applicant, you must submit your Senior High School Form 138 or Form 9 report card.',
     };
   }
 }

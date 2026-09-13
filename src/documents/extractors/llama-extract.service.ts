@@ -1,0 +1,491 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { LlamaCloud, toFile } from '@llamaindex/llama-cloud';
+import { PDFDocument } from 'pdf-lib';
+import {
+  ExtractedResult,
+  IDocumentExtractor,
+  InputDocumentFile,
+} from './document-extractor.interface.js';
+
+const DOCUMENT_DATA_SCHEMA = {
+  type: 'object',
+  properties: {
+    detected_document_type: {
+      type: 'string',
+      enum: [
+        'FORM_138',
+        'TRANSCRIPT_OF_RECORDS',
+        'CERTIFICATE_OF_GRADES',
+        'STATEMENT_OF_ACCOUNT',
+        'OTHER',
+      ],
+      description:
+        "Classification of the document. 'FORM_138' for DepEd Form 138 / SF9-SHS / SF9-JHS / Form 9 / Form 137 / Progress Report Card; 'TRANSCRIPT_OF_RECORDS' for College Official Transcript of Records (TOR); 'CERTIFICATE_OF_GRADES' for Certified Copy of Grades (COG) / Grade Slip; 'STATEMENT_OF_ACCOUNT' for billing statements; 'OTHER' for unrelated or other documents.",
+    },
+    student_name: {
+      type: 'string',
+      description:
+        "Student's full name from the document. Format as 'LAST NAME, FIRST NAME MIDDLE NAME' or 'FIRST NAME LAST NAME'.",
+    },
+    school_name: {
+      type: 'string',
+      description:
+        'Name of the college, university, or high school issuing the document.',
+    },
+    course_name: {
+      type: 'string',
+      description:
+        "For College: Degree program (e.g., 'BS Information Technology', 'Bachelor of Science in Accountancy'). For High School / Senior High: The Track & Strand / Specialization (e.g. 'Academic Track - Accountancy, Business and Management (ABM)', 'STEM', 'TVL-ICT', 'HUMSS', 'GAS').",
+    },
+    track: {
+      type: 'string',
+      description:
+        "For Senior High (Form 138 / SF9): The Track if specified (e.g., 'Academic Track', 'Technical-Vocational-Livelihood (TVL) Track', 'Arts and Design'). Null if not high school.",
+    },
+    strand: {
+      type: 'string',
+      description:
+        "For Senior High (Form 138 / SF9): The specific Strand name (e.g., 'ABM', 'Accountancy, Business and Management', 'STEM', 'HUMSS', 'GAS', 'ICT'). Null if not high school.",
+    },
+    grade_level: {
+      type: 'string',
+      description:
+        "Grade or Year level. For Form 138 / Form 9, check the 'Grade' or 'Grade / Section' field (e.g., if 'Grade: 11' or '11 - ABM', extract 'Grade 11' or '11'). For college, extract '1st Year', '2nd Year', etc.",
+    },
+    section: {
+      type: 'string',
+      description:
+        "Class section identifier. For Form 138 / Form 9, check the 'Section' or 'Grade & Section' field (e.g., '11-ABM', '12-STEM 1', '7-Diamond', 'ABM-A'). Extract the clean section code (e.g., '11-ABM' or 'ABM'), NOT the full school or program name.",
+    },
+    has_signature: {
+      type: 'boolean',
+      description:
+        'True if a registrar signature, authorized signature line, or official school seal/stamp is visible; otherwise false.',
+    },
+    general_average: {
+      type: 'number',
+      description:
+        "The overall 'General Average' or 'GWA' printed at the bottom of the document or grade table. Null if unavailable.",
+    },
+    academic_year: {
+      type: 'string',
+      description:
+        'School year / Academic year (e.g., "2024-2025"). Remove prefixes like "A.Y.", "AY", "S.Y.", "SY".',
+    },
+    semester: {
+      type: 'string',
+      description:
+        'Main semester/cycle (e.g., "1st Semester", "2nd Semester", "Summer", "1st Trimester"). Return "Annual" for high school Form 138 unless explicitly separated.',
+    },
+    term: {
+      type: 'string',
+      description:
+        'Specific sub-term or period within semester if stated (e.g., "1st Term", "2nd Term"). Default to "Full Semester" if not specified.',
+    },
+    first_sem_average: {
+      type: 'number',
+      description:
+        'General average for First Semester at footer of 1st Semester table.',
+    },
+    second_sem_average: {
+      type: 'number',
+      description:
+        'General average for Second Semester at footer of 2nd Semester table.',
+    },
+    grades: {
+      type: 'array',
+      description:
+        'List of subjects and grades extracted from the document.',
+      items: {
+        type: 'object',
+        properties: {
+          subject_code: {
+            type: 'string',
+            description:
+              'Course code or subject identifier (e.g., "NSTP 1", "PAHF 1", "GE 2").',
+          },
+          subject_name: {
+            type: 'string',
+            description: 'Descriptive title of the subject.',
+          },
+          units: {
+            type: 'number',
+            description:
+              'Credit units/hours. Default to 0.0 if not listed.',
+          },
+          grade: {
+            type: 'number',
+            description:
+              'Final grade or rating earned. If final grade is blank, latest quarter grade.',
+          },
+          semester: {
+            type: 'string',
+            description:
+              '"1st Semester" or "2nd Semester" based on table column or header.',
+          },
+        },
+        required: ['subject_code', 'grade'],
+      },
+    },
+  },
+  required: ['student_name', 'grades'],
+};
+
+const PROSPECTUS_DATA_SCHEMA = {
+  type: 'object',
+  properties: {
+    course_name: {
+      type: 'string',
+      description:
+        'Full program or degree name (e.g., "Bachelor of Science in Information Technology", "BS Computer Science").',
+    },
+    course_code: {
+      type: 'string',
+      description:
+        'Course code or program abbreviation (e.g., "BSIT", "BSCS", "BSIS").',
+    },
+    curriculum_year: {
+      type: 'string',
+      description:
+        'Effective curriculum school year (e.g., "2023-2024", "2024-2025", "Effective SY 2021-2022").',
+    },
+    total_units: {
+      type: 'number',
+      description: 'Total credit units required across all years.',
+    },
+    subjects: {
+      type: 'array',
+      description:
+        'All curriculum subjects organized across all year levels and semesters.',
+      items: {
+        type: 'object',
+        properties: {
+          subject_code: {
+            type: 'string',
+            description:
+              'Course / subject code (e.g., "IT 101", "CCE 102", "GE 2", "NSTP 1").',
+          },
+          descriptive_title: {
+            type: 'string',
+            description:
+              'Descriptive title of the subject (e.g., "Introduction to Computing").',
+          },
+          units: {
+            type: 'number',
+            description:
+              'Credit units (e.g. 3.0). If lecture and laboratory are listed separately, sum them.',
+          },
+          year_level: {
+            type: 'number',
+            description:
+              'Numeric year level (1 for 1st Year, 2 for 2nd Year, 3 for 3rd Year, 4 for 4th Year).',
+          },
+          semester: {
+            type: 'string',
+            description:
+              'Term/semester ("1st Semester", "2nd Semester", or "Summer").',
+          },
+          prerequisites: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'List of prerequisite subject codes (e.g. ["CCE 101"]). Empty array if none.',
+          },
+        },
+        required: [
+          'subject_code',
+          'descriptive_title',
+          'units',
+          'year_level',
+          'semester',
+        ],
+      },
+    },
+  },
+  required: ['subjects'],
+};
+
+@Injectable()
+export class LlamaExtractService implements IDocumentExtractor {
+  private readonly logger = new Logger(LlamaExtractService.name);
+
+  constructor(private configService: ConfigService) {}
+
+  private getClient(): LlamaCloud {
+    const apiKey =
+      this.configService.get<string>('LLAMA_CLOUD_API_KEY') ||
+      this.configService.get<string>('LLAMA_PARSE_API_KEY') ||
+      process.env.LLAMA_CLOUD_API_KEY;
+
+    if (!apiKey) {
+      throw new Error(
+        'LLAMA_CLOUD_API_KEY is not configured in environment variables.',
+      );
+    }
+
+    return new LlamaCloud({ apiKey });
+  }
+
+  /**
+   * Helper that merges multiple input files (images or PDFs) into a single multi-page PDF buffer.
+   */
+  private async mergeInputFilesToSinglePdf(
+    files: InputDocumentFile[],
+  ): Promise<{ buffer: Buffer; fileName: string; mimeType: string }> {
+    if (files.length === 1) {
+      return {
+        buffer: files[0].buffer,
+        fileName: files[0].fileName || 'document.pdf',
+        mimeType: files[0].mimeType || 'application/pdf',
+      };
+    }
+
+    this.logger.log(
+      `Merging ${files.length} input files into a single multi-page PDF before dispatching to LlamaExtract...`,
+    );
+
+    const mergedPdf = await PDFDocument.create();
+
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const mime = (f.mimeType || '').toLowerCase();
+      const name = (f.fileName || '').toLowerCase();
+      const isPdf = mime.includes('pdf') || name.endsWith('.pdf');
+
+      try {
+        if (isPdf) {
+          const srcDoc = await PDFDocument.load(f.buffer, {
+            ignoreEncryption: true,
+          });
+          const copiedPages = await mergedPdf.copyPages(
+            srcDoc,
+            srcDoc.getPageIndices(),
+          );
+          copiedPages.forEach((p) => mergedPdf.addPage(p));
+        } else if (mime.includes('png') || name.endsWith('.png')) {
+          const img = await mergedPdf.embedPng(f.buffer);
+          const page = mergedPdf.addPage([img.width, img.height]);
+          page.drawImage(img, {
+            x: 0,
+            y: 0,
+            width: img.width,
+            height: img.height,
+          });
+        } else {
+          // JPEG / WebP / generic image fallback
+          try {
+            const img = await mergedPdf.embedJpg(f.buffer);
+            const page = mergedPdf.addPage([img.width, img.height]);
+            page.drawImage(img, {
+              x: 0,
+              y: 0,
+              width: img.width,
+              height: img.height,
+            });
+          } catch {
+            const img = await mergedPdf.embedPng(f.buffer);
+            const page = mergedPdf.addPage([img.width, img.height]);
+            page.drawImage(img, {
+              x: 0,
+              y: 0,
+              width: img.width,
+              height: img.height,
+            });
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(
+          `Could not embed file index ${i} ('${f.fileName}') into PDF: ${err.message}`,
+        );
+      }
+    }
+
+    if (mergedPdf.getPageCount() === 0) {
+      // Fallback to first file if merging didn't add pages
+      return {
+        buffer: files[0].buffer,
+        fileName: files[0].fileName || 'document.pdf',
+        mimeType: files[0].mimeType || 'application/pdf',
+      };
+    }
+
+    const mergedBytes = await mergedPdf.save();
+    const primaryName = files[0].fileName?.replace(/\.[^/.]+$/, '') || 'document';
+
+    return {
+      buffer: Buffer.from(mergedBytes),
+      fileName: `${primaryName}_merged_${files.length}pages.pdf`,
+      mimeType: 'application/pdf',
+    };
+  }
+
+  private async executeExtraction<T>(
+    input: InputDocumentFile | InputDocumentFile[],
+    dataSchema: Record<string, any>,
+    systemPrompt?: string,
+  ): Promise<T> {
+    const client = this.getClient();
+    const files = Array.isArray(input) ? input : [input];
+
+    if (files.length === 0 || !files[0]?.buffer) {
+      throw new Error('No valid file buffer provided for LlamaExtract.');
+    }
+
+    // Merge all files/pages into a single unified document so LlamaExtract processes ALL pages
+    const unifiedFile = await this.mergeInputFilesToSinglePdf(files);
+    const fileName = unifiedFile.fileName;
+    const mimeType = unifiedFile.mimeType;
+
+    this.logger.log(
+      `Uploading unified document '${fileName}' (${mimeType}, from ${files.length} source file(s)) to LlamaCloud for extraction...`,
+    );
+
+    const uploadable = await toFile(unifiedFile.buffer, fileName, {
+      type: mimeType,
+    });
+
+    const fileObj = await client.files.create({
+      file: uploadable,
+      purpose: 'extract',
+      external_file_id: fileName,
+    });
+
+    this.logger.log(`Created LlamaCloud file ${fileObj.id}. Initiating extraction job...`);
+
+    const job = await client.extract.create({
+      file_input: fileObj.id,
+      configuration: {
+        data_schema: dataSchema as any,
+        extraction_target: 'per_doc',
+        tier: 'agentic',
+        ...(systemPrompt ? { system_prompt: systemPrompt } : {}),
+      },
+    });
+
+    this.logger.log(`LlamaExtract job ${job.id} dispatched. Waiting for completion...`);
+
+    let currentJob = job;
+    let attempts = 0;
+    const maxAttempts = 90; // 90 * 2000ms = 180 seconds
+
+    while (
+      !['COMPLETED', 'FAILED', 'CANCELLED'].includes(currentJob.status) &&
+      attempts < maxAttempts
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      currentJob = await client.extract.get(job.id);
+      attempts++;
+    }
+
+    if (currentJob.status !== 'COMPLETED') {
+      const errorMsg =
+        currentJob.error_message ||
+        `LlamaExtract job ${job.id} ended with status ${currentJob.status}`;
+      this.logger.error(errorMsg);
+      throw new Error(errorMsg);
+    }
+
+    const result = currentJob.extract_result;
+    if (!result) {
+      throw new Error(`LlamaExtract job ${job.id} completed without extract_result.`);
+    }
+
+    // Clean up remote uploaded file if possible
+    try {
+      await client.files.delete(fileObj.id);
+    } catch (cleanupErr: any) {
+      this.logger.debug(`File cleanup skipped for ${fileObj.id}: ${cleanupErr.message}`);
+    }
+
+    return result as T;
+  }
+
+  async extractData(
+    input: InputDocumentFile | InputDocumentFile[],
+    documentType: string,
+  ): Promise<ExtractedResult> {
+    const systemPrompt = `You are an expert document OCR and structured data extraction AI specializing in Philippine academic documents (Form 138 / Report Card / SF9, Transcript of Records - TOR, Statement of Account, Certified Copy of Grades - COG).
+Your task is to analyze the attached document and extract structured JSON adhering strictly to the schema for document type: ${documentType}.
+
+STRICT EXTRACTION INSTRUCTIONS:
+1. Document Type Detection ('detected_document_type'):
+   - Check the top-left, top-center header, or document titles:
+     * "SF9", "SF9-SHS", "SF9-JHS", "Form 138", "Form 9", "Form 137", "Progress Report Card", "Learner's Progress Report Card", "DepEd" -> "FORM_138"
+     * "Official Transcript of Records", "Transcript of Records", "TOR", "Permanent Record" -> "TRANSCRIPT_OF_RECORDS"
+     * "Certified Copy of Grades", "Certificate of Grades", "COG", "Grade Slip", "Report of Rating" -> "CERTIFICATE_OF_GRADES"
+     * "Statement of Account", "Assessment Form", "Billing" -> "STATEMENT_OF_ACCOUNT"
+     * Other documents -> "OTHER"
+2. Senior High / Junior High (Form 138 / Form 9 / SF9):
+   - Check header metadata fields for Grade, Section, Track, and Strand:
+     * "Grade / Section" or "Grade:" and "Section:" (e.g. if header says '11 - ABM' or 'Grade 11 - ABM', extract grade_level: 'Grade 11', section: '11-ABM')
+     * "Track:" (e.g. 'Academic Track', 'TVL Track') -> extract to 'track'
+     * "Strand:" (e.g. 'Accountancy, Business and Management (ABM)', 'STEM', 'HUMSS') -> extract to 'strand' and 'course_name'
+     * Do NOT extract descriptive tracks as the section name. The section is the short code/name (e.g. '11-ABM', 'Diamond', '12-STEM 1').
+3. College Documents (TOR / COG):
+   - Extract Degree Program (e.g. 'Bachelor of Science in Information Technology') into 'course_name'.
+   - Extract Year Level (e.g. '1st Year', '2nd Year', '3rd Year') into 'grade_level'.
+4. Format:
+   - Ensure numeric values for grades, units, and averages are numbers (e.g. 1.75, 88.5, 90.0), not stringified numbers.
+   - If a field is not found or not applicable, set it to null.`;
+
+    const rawData = await this.executeExtraction<ExtractedResult>(
+      input,
+      DOCUMENT_DATA_SCHEMA,
+      systemPrompt,
+    );
+
+    return {
+      detected_document_type: rawData.detected_document_type,
+      student_name: rawData.student_name,
+      school_name: rawData.school_name,
+      course_name: rawData.course_name,
+      track: rawData.track,
+      strand: rawData.strand,
+      grade_level: rawData.grade_level,
+      section: rawData.section,
+      has_signature: rawData.has_signature,
+      general_average: rawData.general_average,
+      academic_year: rawData.academic_year,
+      semester: rawData.semester,
+      term: rawData.term,
+      first_sem_average: rawData.first_sem_average,
+      second_sem_average: rawData.second_sem_average,
+      grades: Array.isArray(rawData.grades) ? rawData.grades : [],
+    };
+  }
+
+  async extractProspectusData(
+    input: InputDocumentFile | InputDocumentFile[],
+  ): Promise<{
+    course_name?: string;
+    course_code?: string;
+    curriculum_year?: string;
+    total_units?: number;
+    subjects: Array<{
+      subject_code: string;
+      descriptive_title: string;
+      units: number;
+      year_level: number;
+      semester: string;
+      prerequisites?: string[];
+    }>;
+  }> {
+    const systemPrompt = `You are an expert academic curriculum OCR and structured extraction AI specializing in Philippine college and university curriculum evaluation sheets, program checklists, and prospectuses.
+Extract all curriculum metadata and subjects organized by Year Level and Semester strictly adhering to the JSON schema.`;
+
+    const rawData = await this.executeExtraction<any>(
+      input,
+      PROSPECTUS_DATA_SCHEMA,
+      systemPrompt,
+    );
+
+    return {
+      course_name: rawData.course_name,
+      course_code: rawData.course_code,
+      curriculum_year: rawData.curriculum_year,
+      total_units: rawData.total_units,
+      subjects: Array.isArray(rawData.subjects) ? rawData.subjects : [],
+    };
+  }
+}

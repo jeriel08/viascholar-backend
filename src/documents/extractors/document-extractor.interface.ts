@@ -8,9 +8,18 @@ export interface ExtractedGradeItem {
 }
 
 export interface ExtractedResult {
+  detected_document_type?:
+    | 'FORM_138'
+    | 'TRANSCRIPT_OF_RECORDS'
+    | 'CERTIFICATE_OF_GRADES'
+    | 'STATEMENT_OF_ACCOUNT'
+    | 'OTHER'
+    | string;
   student_name?: string;
   school_name?: string;
   course_name?: string;
+  track?: string;
+  strand?: string;
   grade_level?: string;
   section?: string;
   has_signature?: boolean | string;

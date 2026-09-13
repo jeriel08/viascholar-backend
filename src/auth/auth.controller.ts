@@ -26,7 +26,7 @@ import { AuthService } from './auth.service.js';
 import { ProfileService } from './profile.service.js';
 import { LoginDto } from './dto/login.dto.js';
 import { RegisterScholarDto } from './dto/register-scholar.dto.js';
-import { Role } from '../generated/prisma/browser.js';
+import { Role } from '../generated/prisma/enums.js';
 import { Roles } from './decorators/roles.decorator.js';
 import { RolesGuard } from './decorators/roles.guard.js';
 import { CreateStaffDto } from './dto/create-staff.dto.js';

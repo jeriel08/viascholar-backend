@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { OpenRouterVisionExtractorService } from '../documents/extractors/openrouter-vision-extractor.service.js';
+import { LlamaExtractService } from '../documents/extractors/llama-extract.service.js';
 import { InputDocumentFile } from '../documents/extractors/document-extractor.interface.js';
 
 export interface NormalizedProspectusSubject {
@@ -33,7 +33,7 @@ export class ProspectusOcrService {
   private readonly logger = new Logger(ProspectusOcrService.name);
 
   constructor(
-    private readonly openRouterExtractor: OpenRouterVisionExtractorService,
+    private readonly llamaExtractService: LlamaExtractService,
   ) {}
 
   /**
@@ -88,8 +88,8 @@ export class ProspectusOcrService {
   async processProspectusExtraction(
     input: InputDocumentFile | InputDocumentFile[],
   ): Promise<NormalizedProspectusData> {
-    this.logger.log('Dispatching uploaded files to OpenRouter Vision for Prospectus parsing...');
-    const rawData = await this.openRouterExtractor.extractProspectusData(input);
+    this.logger.log('Dispatching uploaded files to LlamaExtract for Prospectus parsing...');
+    const rawData = await this.llamaExtractService.extractProspectusData(input);
 
     const normalizedSubjects: NormalizedProspectusSubject[] = [];
     let calculatedUnits = 0;
@@ -139,7 +139,7 @@ export class ProspectusOcrService {
     input: InputDocumentFile | InputDocumentFile[],
   ): Promise<ExtractedHistoricalCourse[]> {
     this.logger.log('Dispatching historical CCG/TOR document for grade extraction...');
-    const rawData = await this.openRouterExtractor.extractData(input, 'Historical TOR / Certified Copy of Grades');
+    const rawData = await this.llamaExtractService.extractData(input, 'Historical TOR / Certified Copy of Grades');
 
     const rawGrades = Array.isArray(rawData.grades) ? rawData.grades : [];
     const historicalCourses: ExtractedHistoricalCourse[] = [];

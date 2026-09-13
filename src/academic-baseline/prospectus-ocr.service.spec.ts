@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ProspectusOcrService } from './prospectus-ocr.service.js';
-import { OpenRouterVisionExtractorService } from '../documents/extractors/openrouter-vision-extractor.service.js';
+import { LlamaExtractService } from '../documents/extractors/llama-extract.service.js';
 
 describe('ProspectusOcrService', () => {
   let service: ProspectusOcrService;
@@ -11,7 +11,7 @@ describe('ProspectusOcrService', () => {
       providers: [
         ProspectusOcrService,
         {
-          provide: OpenRouterVisionExtractorService,
+          provide: LlamaExtractService,
           useValue: {
             extractProspectusData: jest.fn(),
             extractData: jest.fn(),

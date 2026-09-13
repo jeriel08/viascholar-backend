@@ -290,6 +290,23 @@ export class DocumentsController {
     return this.ocrService.syncFromParseur(req.user.user_id, id);
   }
 
+  @Post(':id/retry-ocr')
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR, Role.APPLICANT, Role.SCHOLAR)
+  @ApiOperation({
+    summary:
+      'Retry automated AI OCR extraction on an already uploaded document',
+  })
+  retryDocumentOcr(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.ocrService.retryDocumentOcr(
+      req.user.user_id,
+      id,
+      req.user.role,
+    );
+  }
+
   @Patch(':id/request-changes')
   @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({
