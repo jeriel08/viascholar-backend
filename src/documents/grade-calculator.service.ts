@@ -6,7 +6,7 @@ export interface EvaluatedGradeItem {
   subject_code?: string;
   subject_name?: string;
   units?: number;
-  grade: number;
+  grade: number | string;
 }
 
 export interface GwaComputationResult {
@@ -47,18 +47,19 @@ export class GradeCalculatorService {
     if (explicitGeneralAvg != null && !isNaN(explicitGeneralAvg)) {
       computedGwa = explicitGeneralAvg;
       for (const item of gradeItems) {
-        const grade = Number(item.grade);
         if (schoolConfig) {
           const evaluation = this.settingsService.evaluateStudentGrade(
-            grade,
+            item.grade,
             schoolConfig,
           );
           if (!evaluation.isPassing) {
             hasFailedGrade = true;
           }
-        } else if (isForm138 && grade < 75.0) {
-          // Standard Philippine high school passing mark is 75.0
-          hasFailedGrade = true;
+        } else {
+          const numGrade = Number(item.grade);
+          if (!isNaN(numGrade) && isForm138 && numGrade < 75.0) {
+            hasFailedGrade = true;
+          }
         }
       }
     } else if (isForm138) {
@@ -77,30 +78,52 @@ export class GradeCalculatorService {
         : gradeItems;
 
       let sum = 0;
+      let numericCount = 0;
       for (const item of coreItems) {
-        const grade = Number(item.grade);
-        sum += grade;
-        if (grade < 75.0) {
-          hasFailedGrade = true;
+        const numGrade = Number(item.grade);
+        if (!isNaN(numGrade)) {
+          sum += numGrade;
+          numericCount++;
         }
-      }
-      computedGwa = coreItems.length > 0 ? sum / coreItems.length : 0;
-    } else {
-      // College TOR / Certificate of Grades: Weighted by credit units
-      for (const item of gradeItems) {
-        const units = item.units != null ? Number(item.units) : 1;
-        const grade = Number(item.grade);
-        totalUnits += units;
-        weightedSum += grade * units;
 
         if (schoolConfig) {
           const evaluation = this.settingsService.evaluateStudentGrade(
-            grade,
+            item.grade,
             schoolConfig,
           );
           if (!evaluation.isPassing) {
             hasFailedGrade = true;
           }
+        } else if (!isNaN(numGrade) && numGrade < 75.0) {
+          hasFailedGrade = true;
+        }
+      }
+      computedGwa = numericCount > 0 ? sum / numericCount : 0;
+    } else {
+      // College TOR / Certificate of Grades: Weighted by credit units
+      for (const item of gradeItems) {
+        const numGrade = Number(item.grade);
+        const units = item.units != null ? Number(item.units) : 1;
+
+        if (schoolConfig) {
+          const evaluation = this.settingsService.evaluateStudentGrade(
+            item.grade,
+            schoolConfig,
+          );
+          if (!evaluation.isPassing) {
+            hasFailedGrade = true;
+          }
+        } else if (!isNaN(numGrade)) {
+          // Default fallback: 3.0 passing on 5.0 scale or 75.0 on 100% scale
+          if (numGrade > 3.0 && numGrade <= 5.0) {
+            hasFailedGrade = true;
+          }
+        }
+
+        // Only include numerical marks in weighted GWA (exclude non-numerical codes like PSD, P, TWE, INC)
+        if (!isNaN(numGrade) && String(item.grade).trim() !== '') {
+          totalUnits += units;
+          weightedSum += numGrade * units;
         }
       }
       computedGwa = totalUnits > 0 ? weightedSum / totalUnits : 0;

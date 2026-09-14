@@ -186,6 +186,21 @@ const PROSPECTUS_DATA_SCHEMA = {
             description:
               'Term/semester ("1st Semester", "2nd Semester", or "Summer").',
           },
+          grade: {
+            type: 'string',
+            description:
+              'Grade mark or rating obtained if the subject is completed/taken on this evaluation sheet (e.g. "4.0", "3.5", "3.0", "2.5", "2.0", "1.0", "PSD", "PASSED", "7.1", "9.0", "INC"). Set to null if untaken/no grade.',
+          },
+          status: {
+            type: 'string',
+            description:
+              'Course completion status on the evaluation sheet (e.g. "PASSED", "CREDITED", "ENROLLED", "FAILED", "UNTAKEN"). If grade is passing (e.g. 2.0-4.0 in UM or 1.0-3.0 in UP/USEP or PSD), set to "PASSED" or "CREDITED".',
+          },
+          credited_term: {
+            type: 'string',
+            description:
+              'Academic year / semester or term label when this course was taken (e.g., "1st Year - 1st Sem", "2023-2024 1st Sem", or null).',
+          },
           prerequisites: {
             type: 'array',
             items: { type: 'string' },
@@ -468,11 +483,24 @@ STRICT EXTRACTION INSTRUCTIONS:
       units: number;
       year_level: number;
       semester: string;
+      grade?: string | null;
+      status?: string | null;
+      credited_term?: string | null;
       prerequisites?: string[];
     }>;
   }> {
     const systemPrompt = `You are an expert academic curriculum OCR and structured extraction AI specializing in Philippine college and university curriculum evaluation sheets, program checklists, and prospectuses.
-Extract all curriculum metadata and subjects organized by Year Level and Semester strictly adhering to the JSON schema.`;
+
+CRITICAL INSTRUCTIONS:
+1. Extract all curriculum subjects organized by Year Level (1, 2, 3, 4) and Semester ("1st Semester", "2nd Semester", "Summer").
+2. Pay special attention to section headers indicating Year & Semester (e.g. "1st Year / 1st Sem", "1st Year 2nd Sem", "2nd Year / 1st Sem", "3rd Year", "4th Year"). Every subject MUST be assigned its exact year_level (1, 2, 3, 4) and semester ("1st Semester", "2nd Semester", etc.).
+3. For Student Portal Evaluation screenshots or Academic Program Evaluations:
+   - Rows often display the grade mark before or after the subject code (e.g. "4.0 CCE 102 3.0 Computer Programming 1", "4.0 PAHF 1 2.0 MOVEMENT COMPETENCY TRAINING", "3.5 IT 101 3.0 Introduction to Computing", or "PSD NSTP 1 3.0 CWTS").
+   - If a grade is present on the row, extract it into the 'grade' field (e.g., "4.0", "3.5", "PSD", "2.0").
+   - Set 'status' to "PASSED" or "CREDITED" if a passing grade is present, "FAILED" if failing, or "UNTAKEN" if blank/no grade.
+   - Set 'credited_term' to the term label (e.g. "1st Year - 1st Sem") if applicable.
+4. Extract credit units as numbers (e.g. 3.0, 2.0, 1.0).
+5. Output clean subject codes (e.g., "CCE 102", "PAHF 1", "IT 101").`;
 
     const rawData = await this.executeExtraction<any>(
       input,

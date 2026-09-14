@@ -1,55 +1,50 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AcademicBaselineService } from './academic-baseline.service.js';
-import { PrismaService } from '../prisma/prisma.service.js';
-import { AuditService } from '../audit/audit.service.js';
-import { CloudinaryService } from '../cloudinary/cloudinary.service.js';
-import { SettingsService } from '../settings/settings.service.js';
-import { EventsGateway } from '../events/events.gateway.js';
-import { ProspectusOcrService } from './prospectus-ocr.service.js';
+import { ScholarBaselineService } from './services/scholar-baseline.service.js';
+import { BaselineDocumentIngestionService } from './services/baseline-document-ingestion.service.js';
+import { CoordinatorBaselineService } from './services/coordinator-baseline.service.js';
+import { ActiveScholarsAnalyticsService } from './services/active-scholars-analytics.service.js';
 
 describe('AcademicBaselineService', () => {
   let service: AcademicBaselineService;
-  let prismaMock: any;
+  let scholarBaselineServiceMock: any;
+  let baselineDocumentIngestionServiceMock: any;
+  let coordinatorBaselineServiceMock: any;
+  let activeScholarsAnalyticsServiceMock: any;
 
   beforeEach(async () => {
-    prismaMock = {
-      scholarProfile: {
-        findUnique: jest.fn(),
-        update: jest.fn(),
-        findMany: jest.fn(),
-      },
-      scholarProspectus: {
-        findUnique: jest.fn(),
-        create: jest.fn(),
-        update: jest.fn(),
-        upsert: jest.fn(),
-      },
-      prospectusSubject: {
-        findMany: jest.fn(),
-        create: jest.fn(),
-        createMany: jest.fn(),
-        update: jest.fn(),
-        deleteMany: jest.fn(),
-      },
-      scholarDocument: {
-        create: jest.fn(),
-        update: jest.fn(),
-      },
-      schoolGradingSystem: {
-        findUnique: jest.fn(),
-      },
+    scholarBaselineServiceMock = {
+      getScholarBaselineState: jest.fn().mockResolvedValue({ profile_id: 1 } as never),
+      selectOrProposeSchool: jest.fn().mockResolvedValue({ message: 'OK' } as never),
+      updateProspectusSubjects: jest.fn().mockResolvedValue({ message: 'OK' } as never),
+      submitForReview: jest.fn().mockResolvedValue({ message: 'OK' } as never),
+    };
+
+    baselineDocumentIngestionServiceMock = {
+      uploadProspectus: jest.fn().mockResolvedValue({ message: 'OK' } as never),
+      uploadHistoricalCcg: jest.fn().mockResolvedValue({ message: 'OK' } as never),
+    };
+
+    coordinatorBaselineServiceMock = {
+      getCoordinatorPendingBaselines: jest.fn().mockResolvedValue([] as never),
+      getCoordinatorBaselineReview: jest.fn().mockResolvedValue({} as never),
+      coordinatorUpdateSubjects: jest.fn().mockResolvedValue({ message: 'OK' } as never),
+      freezeBaseline: jest.fn().mockResolvedValue({ message: 'OK' } as never),
+      unfreezeBaseline: jest.fn().mockResolvedValue({ message: 'OK' } as never),
+    };
+
+    activeScholarsAnalyticsServiceMock = {
+      getCoordinatorActiveScholars: jest.fn().mockResolvedValue([] as never),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AcademicBaselineService,
-        { provide: PrismaService, useValue: prismaMock },
-        { provide: AuditService, useValue: { log: jest.fn() } },
-        { provide: CloudinaryService, useValue: { uploadBuffer: jest.fn() } },
-        { provide: SettingsService, useValue: { evaluateStudentGrade: jest.fn() } },
-        { provide: EventsGateway, useValue: { emitToUser: jest.fn(), emitToStaff: jest.fn() } },
-        { provide: ProspectusOcrService, useValue: { normalizeSubjectCode: jest.fn((c: string) => c.replace(/\s+/g, '').toUpperCase()) } },
+        { provide: ScholarBaselineService, useValue: scholarBaselineServiceMock },
+        { provide: BaselineDocumentIngestionService, useValue: baselineDocumentIngestionServiceMock },
+        { provide: CoordinatorBaselineService, useValue: coordinatorBaselineServiceMock },
+        { provide: ActiveScholarsAnalyticsService, useValue: activeScholarsAnalyticsServiceMock },
       ],
     }).compile();
 
@@ -58,5 +53,26 @@ describe('AcademicBaselineService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  it('delegates getScholarBaselineState to ScholarBaselineService', async () => {
+    await service.getScholarBaselineState(123);
+    expect(scholarBaselineServiceMock.getScholarBaselineState).toHaveBeenCalledWith(123);
+  });
+
+  it('delegates uploadProspectus to BaselineDocumentIngestionService', async () => {
+    const files = [{ originalname: 'prospectus.pdf' }] as any;
+    await service.uploadProspectus(123, files);
+    expect(baselineDocumentIngestionServiceMock.uploadProspectus).toHaveBeenCalledWith(123, files);
+  });
+
+  it('delegates getCoordinatorPendingBaselines to CoordinatorBaselineService', async () => {
+    await service.getCoordinatorPendingBaselines();
+    expect(coordinatorBaselineServiceMock.getCoordinatorPendingBaselines).toHaveBeenCalled();
+  });
+
+  it('delegates getCoordinatorActiveScholars to ActiveScholarsAnalyticsService', async () => {
+    await service.getCoordinatorActiveScholars();
+    expect(activeScholarsAnalyticsServiceMock.getCoordinatorActiveScholars).toHaveBeenCalled();
   });
 });

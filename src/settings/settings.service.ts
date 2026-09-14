@@ -239,34 +239,136 @@ export class SettingsService implements OnModuleInit {
   }
 
   /**
-   * Reusable utility to evaluate student grades against school configurations
+   * Reusable utility to evaluate student grades against school configurations.
+   * Handles numeric grades, UM decimal codes (e.g. 9.0, 7.1, 7.2), and alphanumeric marks (PSD, TWE, INC, DRP).
    */
-  evaluateStudentGrade(grade: number, schoolConfig: any) {
-    const gradeKey = grade.toFixed(1); // Converts 9 to "9.0", 7.2 to "7.2"
+  evaluateStudentGrade(grade: number | string, schoolConfig: any) {
+    const rawGradeStr = String(grade ?? '').trim();
     const specialCodes =
       (schoolConfig?.special_codes as Record<string, string>) || {};
 
-    // 1. Evaluate Special Status Codes first
-    if (specialCodes[gradeKey]) {
-      const status = specialCodes[gradeKey];
+    // 1. Evaluate Special Status Codes first (checking exact match, case-insensitive, or fixed float)
+    const numGrade = Number(grade);
+    const isNum = !isNaN(numGrade) && rawGradeStr !== '';
+    const gradeKeyFormatted = isNum ? numGrade.toFixed(1) : rawGradeStr;
 
-      if (status === 'DROPPED' || status === 'FAILED') {
-        return {
-          isPassing: false,
-          flag: 'ACADEMIC_FAILURE',
-          statusLabel: status,
-        };
-      }
-      if (status === 'LACKING_REQUIREMENTS' || status === 'NOT_FULLY_PAID') {
-        return {
-          isPassing: false,
-          flag: 'PENDING_REQUIREMENTS',
-          statusLabel: status,
-        };
+    // Search for code match in special_codes (e.g. "9.0", "9", "7.1", "PSD", "TWE", "INC")
+    let matchedStatus: string | undefined = undefined;
+    for (const [codeKey, statusVal] of Object.entries(specialCodes)) {
+      const cleanKey = String(codeKey).trim().toUpperCase();
+      if (
+        cleanKey === rawGradeStr.toUpperCase() ||
+        (isNum && cleanKey === gradeKeyFormatted) ||
+        (isNum && cleanKey === String(numGrade))
+      ) {
+        matchedStatus = String(statusVal).trim().toUpperCase();
+        break;
       }
     }
 
-    // 2. Evaluate Numerical Thresholds (Respecting scale direction)
+    if (matchedStatus) {
+      // Administrative Hold / Requirements Hold (check first before failure words)
+      const pendingKeywords = [
+        'LACKING_REQUIREMENTS',
+        'LACKING_PAYMENT',
+        'NOT_FULLY_PAID',
+        'INCOMPLETE',
+        'INC',
+        'LEAVE_OF_ABSENCE',
+        'LOA',
+        'ON_HOLD',
+        'PENDING',
+        'LACKING PAYMENT',
+        'LACKING REQUIREMENTS',
+      ];
+      if (
+        pendingKeywords.includes(matchedStatus) ||
+        matchedStatus.includes('LACKING') ||
+        matchedStatus.includes('INCOMPLETE') ||
+        matchedStatus.includes('PAYMENT') ||
+        matchedStatus.includes('REQUIREMENT') ||
+        matchedStatus.includes('HOLD')
+      ) {
+        return {
+          isPassing: false,
+          flag: 'PENDING_REQUIREMENTS',
+          statusLabel: matchedStatus,
+        };
+      }
+
+      // Non-numerical Passing / Credited
+      const passedKeywords = [
+        'PASSED',
+        'PASS',
+        'PSD',
+        'P',
+        'CREDITED',
+        'SATISFACTORY',
+        'S',
+      ];
+      if (
+        passedKeywords.includes(matchedStatus) ||
+        matchedStatus.startsWith('PASS') ||
+        matchedStatus === 'P' ||
+        matchedStatus === 'PSD'
+      ) {
+        return {
+          isPassing: true,
+          flag: 'CLEARED',
+          statusLabel: matchedStatus,
+        };
+      }
+
+      // Academic Failure / Terminal Marks (disqualifies applicant/scholar)
+      const failureKeywords = [
+        'DROPPED',
+        'FAILED',
+        'FAIL',
+        'FAILURE_DUE_TO_ABSENCES',
+        'FA',
+        'TOTAL_WITHDRAWAL',
+        'TWE',
+        'DISQUALIFIED',
+        'UNSATISFACTORY',
+        'U',
+      ];
+      if (
+        failureKeywords.includes(matchedStatus) ||
+        matchedStatus.includes('DROP') ||
+        matchedStatus.includes('FAIL') ||
+        matchedStatus.includes('WITHDRAW') ||
+        matchedStatus.includes('DISQUALIF')
+      ) {
+        return {
+          isPassing: false,
+          flag: 'ACADEMIC_FAILURE',
+          statusLabel: matchedStatus,
+        };
+      }
+
+      return {
+        isPassing: false,
+        flag: 'ACADEMIC_FAILURE',
+        statusLabel: matchedStatus,
+      };
+    }
+
+    // 2. Non-numeric marks not in special_codes (common fallback keywords)
+    if (!isNum) {
+      const upper = rawGradeStr.toUpperCase();
+      if (/^(PASSED|PASS|PSD|P|CREDITED|SATISFACTORY|S)$/i.test(upper)) {
+        return { isPassing: true, flag: 'CLEARED', statusLabel: 'PASSED' };
+      }
+      if (/^(DROPPED|DROP|DRP|FAILED|FAIL|TWE|FA)$/i.test(upper)) {
+        return { isPassing: false, flag: 'ACADEMIC_FAILURE', statusLabel: upper };
+      }
+      if (/^(INC|INCOMPLETE|LOA|HOLD)$/i.test(upper)) {
+        return { isPassing: false, flag: 'PENDING_REQUIREMENTS', statusLabel: upper };
+      }
+      return { isPassing: false, flag: 'BELOW_PASSING_MARK', statusLabel: upper || 'UNKNOWN' };
+    }
+
+    // 3. Evaluate Numerical Thresholds (Respecting scale direction)
     const highest = Number(schoolConfig?.highest_grade ?? 100);
     const passing = Number(schoolConfig?.passing_grade ?? 75);
     const failing = Number(schoolConfig?.failing_grade ?? 50);
@@ -274,10 +376,12 @@ export class SettingsService implements OnModuleInit {
     let isPassing = false;
     if (highest < failing) {
       // 5-point inverted scale (e.g. 1.0 highest, 3.0 passing, 5.0 failing)
-      isPassing = grade <= passing && grade >= highest;
+      // Lower or equal to passing mark is passing
+      isPassing = numGrade <= passing && numGrade >= highest;
     } else {
-      // Standard percentage or 4.0 scale (e.g. 100 highest, 75 passing)
-      isPassing = grade >= passing && grade <= highest;
+      // Standard percentage (75 passing, 100 highest) or UM 4.0 scale (2.0 passing, 4.0 highest)
+      // Greater or equal to passing mark is passing
+      isPassing = numGrade >= passing && numGrade <= highest;
     }
 
     return {
@@ -288,7 +392,11 @@ export class SettingsService implements OnModuleInit {
   }
 
   /**
-   * Evaluates if computed GWA meets retention threshold across different grading scales
+   * Evaluates if computed GWA meets retention threshold across different grading scales.
+   * e.g., A 90% threshold translates to:
+   * - 90.00 on a 100% percentage scale
+   * - ~3.20 - 3.50 on UM's 4.0 scale (where 2.0 = 75%, 4.0 = 100%)
+   * - ~1.80 on USEP / UP 5.0 scale (where 3.0 = 75%, 1.0 = 100%)
    */
   evaluateGwaThreshold(
     gwa: number,
@@ -303,25 +411,24 @@ export class SettingsService implements OnModuleInit {
     const passing = Number(schoolConfig.passing_grade ?? 3.0);
     const failing = Number(schoolConfig.failing_grade ?? 5.0);
 
+    const normalizedPercent = Math.max(
+      75,
+      Math.min(100, globalThresholdPercent),
+    );
+
     if (highest < failing) {
-      // 5-point scale (e.g. 1.0 highest, 3.0 passing at 75%)
-      // 90% translates to ~1.80 on a 5-point scale
-      const normalizedPercent = Math.max(
-        75,
-        Math.min(100, globalThresholdPercent),
-      );
+      // Inverted 5-point scale (e.g. 1.0 highest, 3.0 passing at 75%)
+      // 90% translates to: 3.0 - (15 / 25) * 2.0 = 1.80
       const thresholdGwa =
         passing - ((normalizedPercent - 75) / 25) * (passing - highest);
       return gwa <= Number(thresholdGwa.toFixed(2));
     } else {
-      // Standard scale
-      const normalizedPercent = Math.max(
-        75,
-        Math.min(100, globalThresholdPercent),
-      );
+      // Ascending scale (e.g. UM 4.0: 4.0 highest, 2.0 passing at 75%)
+      // 90% translates to: 2.0 + (15 / 25) * 2.0 = 3.20
       const thresholdGwa =
         passing + ((normalizedPercent - 75) / 25) * (highest - passing);
       return gwa >= Number(thresholdGwa.toFixed(2));
     }
   }
 }
+

@@ -9,6 +9,10 @@ export interface NormalizedProspectusSubject {
   year_level: number;
   semester: string;
   prerequisites: string[];
+  grade?: number | null;
+  status?: string;
+  credited_term?: string | null;
+  raw_grade_str?: string | null;
 }
 
 export interface NormalizedProspectusData {
@@ -106,6 +110,33 @@ export class ProspectusOcrService {
         ? sub.prerequisites.map((p) => String(p).trim()).filter(Boolean)
         : [];
 
+      // Determine grade & completion status from evaluation checklist
+      const rawGradeStr = sub.grade != null ? String(sub.grade).trim() : '';
+      const rawStatus = sub.status != null ? String(sub.status).trim().toUpperCase() : '';
+      const numGrade = !isNaN(Number(rawGradeStr)) && rawGradeStr !== '' ? Number(rawGradeStr) : null;
+
+      let determinedStatus = 'UNTAKEN';
+      let termCredited: string | null = null;
+
+      const yearLabel = yearLevel === 1 ? '1st Year' : yearLevel === 2 ? '2nd Year' : yearLevel === 3 ? '3rd Year' : `${yearLevel}th Year`;
+
+      if (
+        rawStatus === 'PASSED' ||
+        rawStatus === 'CREDITED' ||
+        rawGradeStr.toUpperCase() === 'PSD' ||
+        rawGradeStr.toUpperCase() === 'PASSED' ||
+        rawGradeStr.toUpperCase() === 'P' ||
+        (numGrade != null && numGrade > 0 && numGrade !== 1.0 && numGrade !== 5.0 && numGrade !== 9.0)
+      ) {
+        determinedStatus = 'CREDITED';
+        termCredited = sub.credited_term || `${yearLabel} - ${semester}`;
+      } else if (rawStatus === 'FAILED' || numGrade === 1.0 || numGrade === 5.0 || numGrade === 9.0) {
+        determinedStatus = 'FAILED';
+        termCredited = sub.credited_term || `${yearLabel} - ${semester}`;
+      } else if (rawStatus === 'ENROLLED' || rawStatus === 'ONGOING' || rawStatus === 'IP') {
+        determinedStatus = 'ENROLLED';
+      }
+
       calculatedUnits += units;
 
       normalizedSubjects.push({
@@ -115,6 +146,10 @@ export class ProspectusOcrService {
         year_level: yearLevel,
         semester,
         prerequisites: prereqs,
+        grade: numGrade,
+        status: determinedStatus,
+        credited_term: termCredited,
+        raw_grade_str: rawGradeStr || undefined,
       });
     }
 

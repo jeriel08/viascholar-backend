@@ -183,6 +183,15 @@ export class AcademicBaselineController {
     return this.baselineService.getCoordinatorPendingBaselines();
   }
 
+  @Get('coordinator/active-scholars')
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @ApiOperation({
+    summary: 'Coordinator lists all active scholars with real-time academic standing & financial summary',
+  })
+  getActiveScholars() {
+    return this.baselineService.getCoordinatorActiveScholars();
+  }
+
   @Get('coordinator/review/:scholarProfileId')
   @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({
