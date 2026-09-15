@@ -128,6 +128,49 @@ const DOCUMENT_DATA_SCHEMA = {
         required: ['subject_code', 'grade'],
       },
     },
+    grading_legend: {
+      type: 'object',
+      description:
+        'Grading system / evaluation legend printed on the document (often found on the reverse side or footer of Transcript of Records / Grade Report). Null if no legend is found.',
+      properties: {
+        legend_title: {
+          type: 'string',
+          description:
+            'Header or title of the applicable grading legend (e.g., "GRADING SYSTEM & EQUIVALENT EFFECTIVE 1ST SEMESTER SY 2020-2021 (FOR UNDERGRADUATE)").',
+        },
+        grading_scale: {
+          type: 'string',
+          enum: ['NUMERIC_5_POINT', 'NUMERIC_4_POINT', 'PERCENTAGE_100', 'OTHER'],
+          description:
+            '"NUMERIC_4_POINT" if 4.0 is highest and 1.0 or 2.0 is lowest/passing (e.g. UM: 4.00 Excellent/100%, 2.00 Passing/75%, 1.00 Failure/50%); "NUMERIC_5_POINT" if 1.0 is highest and 3.0 is passing, 5.0 is failing (e.g. USEP, UP, ADDU); "PERCENTAGE_100" if 75-100% scale (e.g. DepEd Form 138).',
+        },
+        highest_grade: {
+          type: 'number',
+          description:
+            'Top/highest numerical mark (e.g., 1.00 for 5-point scale, 4.00 for 4-point scale, 100.00 for percentage).',
+        },
+        passing_grade: {
+          type: 'number',
+          description:
+            'Minimum passing mark (e.g., 3.00 for 5-point scale, 2.00 for 4-point scale, 75.00 for percentage).',
+        },
+        failing_grade: {
+          type: 'number',
+          description:
+            'Failing mark (e.g., 5.00 for 5-point scale, 1.00 for 4-point scale, 50.00 for percentage).',
+        },
+        special_codes: {
+          type: 'object',
+          description:
+            'Key-value pairs of special codes or non-numeric marks listed in the legend (e.g., {"7.1": "LACKING_PAYMENT", "7.2": "LACKING_REQUIREMENTS", "9.0": "DROPPED", "INC": "INCOMPLETE", "PSD": "PASSED"}).',
+        },
+        notes: {
+          type: 'string',
+          description:
+            'Any notable remarks, percentage equivalents, or policies extracted from the legend.',
+        },
+      },
+    },
   },
   required: ['student_name', 'grades'],
 };
@@ -440,7 +483,16 @@ STRICT EXTRACTION INSTRUCTIONS:
 3. College Documents (TOR / COG):
    - Extract Degree Program (e.g. 'Bachelor of Science in Information Technology') into 'course_name'.
    - Extract Year Level (e.g. '1st Year', '2nd Year', '3rd Year') into 'grade_level'.
-4. Format:
+4. Grading Legend & Scale Disambiguation ('grading_legend'):
+   - Many Philippine college transcripts (TOR) display multiple grading system tables/legends (e.g. for Undergraduate vs. Juris Doctor / Professional School vs. Old/Legacy systems).
+   - ALWAYS select the legend applicable to UNDERGRADUATE / COLLEGE students. Ignore legends labeled "JURIS DOCTOR", "PROFESSIONAL SCHOOL", "GRADUATE SCHOOL", or "MASTER'S/DOCTORAL".
+   - Match the document's academic year / semester against the legend's "EFFECTIVE" dates. For current and recent college records (e.g., 2021-2026), prioritize current undergraduate scales (e.g., "EFFECTIVE 1ST SEMESTER SY 2020-2021 (FOR UNDERGRADUATE)") over legacy scales (e.g., "EFFECTIVE SUMMER 2020-BELOW").
+   - Cross-verify the extracted subject numerical grades against the scale direction:
+     * If subject grades are numbers like 3.5, 3.2, 4.0, 2.5, 2.0, the scale is NUMERIC_4_POINT (UM scale: 4.00 is highest, 2.00 is passing, 1.00 is failing).
+     * If subject grades are numbers like 1.25, 1.50, 1.75, 2.00, 2.50, 3.00, the scale is NUMERIC_5_POINT (USEP/UP/ADDU scale: 1.00 is highest, 3.00 is passing, 5.00 is failing).
+     * If subject grades are numbers like 85, 90, 92, the scale is PERCENTAGE_100 (DepEd scale: 100 is highest, 75 is passing).
+   - Extract special status codes listed in the legend (e.g., {"7.1": "LACKING_PAYMENT", "7.2": "LACKING_REQUIREMENTS", "9.0": "DROPPED", "INC": "INCOMPLETE", "PSD": "PASSED", "DRP": "DROPPED", "TWE": "TOTAL_WITHDRAWAL"}) into 'special_codes'.
+5. Format:
    - Ensure numeric values for grades, units, and averages are numbers (e.g. 1.75, 88.5, 90.0), not stringified numbers.
    - If a field is not found or not applicable, set it to null.`;
 
@@ -467,6 +519,7 @@ STRICT EXTRACTION INSTRUCTIONS:
       first_sem_average: rawData.first_sem_average,
       second_sem_average: rawData.second_sem_average,
       grades: Array.isArray(rawData.grades) ? rawData.grades : [],
+      grading_legend: rawData.grading_legend ?? null,
     };
   }
 

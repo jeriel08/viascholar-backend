@@ -143,6 +143,122 @@ export class DocumentOcrService {
         validation_flags: forensicEvaluation.flags,
       };
 
+      // Auto-register or link school grading system from extracted data
+      try {
+        const detectedSchoolName = (extractedData.school_name || '').trim();
+        if (detectedSchoolName && doc.scholar_profile_id) {
+          // 1. Direct exact match
+          let matchedSchool = await this.prisma.schoolGradingSystem.findFirst({
+            where: {
+              school_name: { equals: detectedSchoolName, mode: 'insensitive' },
+            },
+          });
+
+          // 2. Intelligent fuzzy/normalized matching against existing configured schools
+          if (!matchedSchool) {
+            const allSchools = await this.prisma.schoolGradingSystem.findMany();
+            const normalize = (s: string) =>
+              s
+                .toLowerCase()
+                .replace(/\([^)]*\)/g, '') // remove parentheticals e.g. (UM), (USEP), (ADDU), (DepEd Standard)
+                .replace(/[^a-z0-9]/g, '')
+                .trim();
+
+            const normalizedDetected = normalize(detectedSchoolName);
+
+            // Normalized exact name match (e.g. "University of Mindanao" matches "University of Mindanao (UM)")
+            matchedSchool =
+              allSchools.find(
+                (s) => normalize(s.school_name) === normalizedDetected,
+              ) ?? null;
+
+            // Substring or containment match
+            if (!matchedSchool) {
+              matchedSchool =
+                allSchools.find((s) => {
+                  const normS = normalize(s.school_name);
+                  return (
+                    (normS.length > 5 && normalizedDetected.includes(normS)) ||
+                    (normalizedDetected.length > 5 && normS.includes(normalizedDetected))
+                  );
+                }) ?? null;
+            }
+
+            // High school / Senior High fallback to verified DepEd scale
+            if (!matchedSchool) {
+              const isHighSchool =
+                /high\s*school|senior\s*high|junior\s*high|secondary|sf9|form\s*138|sf10/i.test(
+                  detectedSchoolName,
+                );
+              if (isHighSchool) {
+                matchedSchool =
+                  allSchools.find(
+                    (s) =>
+                      /high\s*school|senior\s*high|deped/i.test(s.school_name) &&
+                      s.is_verified,
+                  ) ?? null;
+              }
+            }
+          }
+
+          let schoolIdToLink = matchedSchool?.school_id;
+
+          // Only create a new unverified school entry if NO existing school matched
+          if (!matchedSchool && extractedData.grading_legend) {
+            const legend = extractedData.grading_legend;
+            const defaultHighest =
+              legend.highest_grade ??
+              (legend.grading_scale === 'NUMERIC_4_POINT' ? 4.0 : 1.0);
+            const defaultPassing =
+              legend.passing_grade ??
+              (legend.grading_scale === 'NUMERIC_4_POINT' ? 2.0 : 3.0);
+            const defaultFailing =
+              legend.failing_grade ??
+              (legend.grading_scale === 'NUMERIC_4_POINT' ? 1.0 : 5.0);
+
+            const newSchool = await this.prisma.schoolGradingSystem.create({
+              data: {
+                school_name: detectedSchoolName,
+                grading_scale:
+                  legend.grading_scale ||
+                  (legend.highest_grade === 4
+                    ? 'NUMERIC_4_POINT'
+                    : 'NUMERIC_5_POINT'),
+                highest_grade: defaultHighest,
+                passing_grade: defaultPassing,
+                failing_grade: defaultFailing,
+                special_codes: legend.special_codes
+                  ? (legend.special_codes as Prisma.InputJsonValue)
+                  : undefined,
+                notes:
+                  legend.notes ||
+                  `Auto-extracted from document: ${legend.legend_title || 'Legend'}`,
+                is_verified: false,
+                submitted_by_user_id: doc.scholar_profile?.user_id,
+              },
+            });
+            schoolIdToLink = newSchool.school_id;
+            this.eventsGateway.emitToStaff('school_grading:created', newSchool);
+          }
+
+          if (schoolIdToLink || !doc.scholar_profile?.school_name) {
+            await this.prisma.scholarProfile.update({
+              where: { profile_id: doc.scholar_profile_id },
+              data: {
+                ...(schoolIdToLink ? { school_id: schoolIdToLink } : {}),
+                ...(!doc.scholar_profile?.school_name
+                  ? { school_name: detectedSchoolName }
+                  : {}),
+              },
+            });
+          }
+        }
+      } catch (schoolErr: any) {
+        this.logger.warn(
+          `Could not auto-link school grading system: ${schoolErr.message}`,
+        );
+      }
+
       const finalRejectionReason = isInvalidOrMismatchedType
         ? mismatchRejectionReason
         : hasGrades

@@ -115,9 +115,21 @@ export class ScholarBaselineService {
       }
       targetSchoolId = existingSchool.school_id;
     } else if (dto.new_school_name) {
-      const existing = await this.prisma.schoolGradingSystem.findUnique({
-        where: { school_name: dto.new_school_name.trim() },
-      });
+      const allSchools = await this.prisma.schoolGradingSystem.findMany();
+      const normalize = (s: string) =>
+        s
+          .toLowerCase()
+          .replace(/\([^)]*\)/g, '')
+          .replace(/[^a-z0-9]/g, '')
+          .trim();
+      const targetNormalized = normalize(dto.new_school_name);
+
+      const existing = allSchools.find(
+        (s) =>
+          s.school_name.toLowerCase() === dto.new_school_name!.trim().toLowerCase() ||
+          normalize(s.school_name) === targetNormalized,
+      );
+
       if (existing) {
         targetSchoolId = existing.school_id;
       } else {

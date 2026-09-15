@@ -7,6 +7,16 @@ export interface ExtractedGradeItem {
   [key: string]: unknown;
 }
 
+export interface ExtractedGradingLegend {
+  legend_title?: string;
+  grading_scale?: 'NUMERIC_5_POINT' | 'NUMERIC_4_POINT' | 'PERCENTAGE_100' | string;
+  highest_grade?: number;
+  passing_grade?: number;
+  failing_grade?: number;
+  special_codes?: Record<string, string>;
+  notes?: string;
+}
+
 export interface ExtractedResult {
   detected_document_type?:
     | 'FORM_138'
@@ -30,6 +40,7 @@ export interface ExtractedResult {
   first_sem_average?: number | null;
   second_sem_average?: number | null;
   grades?: ExtractedGradeItem[];
+  grading_legend?: ExtractedGradingLegend | null;
   [key: string]: unknown;
 }
 

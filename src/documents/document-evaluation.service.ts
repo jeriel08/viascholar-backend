@@ -10,7 +10,11 @@ import { MailService } from '../mail/mail.service.js';
 import { GradeCalculatorService } from './grade-calculator.service.js';
 import { ConfirmDocumentDto } from './dto/confirm-document.dto.js';
 import { VerifyDocumentDto } from './dto/verify-document.dto.js';
-import { Application, Prisma } from '../generated/prisma/client.js';
+import {
+  Application,
+  Prisma,
+  SchoolGradingSystem,
+} from '../generated/prisma/client.js';
 import { EventsGateway } from '../events/events.gateway.js';
 
 interface ConfirmedGradeData {
@@ -273,13 +277,40 @@ export class DocumentEvaluationService {
     );
 
     // Fetch school grading configuration if not Form 138
-    const schoolName =
-      doc.scholar_profile.school_name || 'University of Mindanao';
-    const schoolConfig = !isForm138
-      ? await this.prisma.schoolGradingSystem.findUnique({
-          where: { school_name: schoolName },
-        })
-      : null;
+    let schoolConfig: SchoolGradingSystem | null = null;
+    if (!isForm138) {
+      if (doc.scholar_profile.school_id) {
+        schoolConfig = await this.prisma.schoolGradingSystem.findUnique({
+          where: { school_id: doc.scholar_profile.school_id },
+        });
+      }
+      if (!schoolConfig && doc.scholar_profile.school_name) {
+        schoolConfig = await this.prisma.schoolGradingSystem.findFirst({
+          where: {
+            school_name: {
+              equals: doc.scholar_profile.school_name,
+              mode: 'insensitive',
+            },
+          },
+        });
+      }
+      if (!schoolConfig && extracted.school_name) {
+        schoolConfig = await this.prisma.schoolGradingSystem.findFirst({
+          where: {
+            school_name: {
+              equals: String(extracted.school_name),
+              mode: 'insensitive',
+            },
+          },
+        });
+      }
+      // If still not found, fallback to 'University of Mindanao' as standard baseline
+      if (!schoolConfig) {
+        schoolConfig = await this.prisma.schoolGradingSystem.findFirst({
+          where: { school_name: { contains: 'Mindanao', mode: 'insensitive' } },
+        });
+      }
+    }
 
     // Check for explicit general_average (from dto override, confirmed data, or OCR)
     const explicitGeneralAvg =
@@ -315,6 +346,13 @@ export class DocumentEvaluationService {
       Number(globalSettings.grade_threshold),
       schoolConfig,
     );
+
+    const normalizedPercentage =
+      this.gradeCalculatorService.normalizeGwaToPercentage(
+        computedGwa,
+        schoolConfig,
+        isForm138,
+      );
 
     const isEligible = !hasFailedGrade && meetsThreshold;
     const evalFlag = !meetsThreshold

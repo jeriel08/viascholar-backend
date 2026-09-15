@@ -129,14 +129,7 @@ export class BaselineDocumentIngestionService {
       },
     });
 
-    const hasAutoCreditedSubjects = extracted.subjects.some(
-      (s) => s.status === 'CREDITED' || s.status === 'PASSED',
-    );
-
-    const nextStatus =
-      scholar.current_year_level && scholar.current_year_level > 1 && !hasAutoCreditedSubjects
-        ? 'PENDING_HISTORICAL_CCG'
-        : 'PENDING_COORDINATOR_REVIEW';
+    const nextStatus = 'PENDING_HISTORICAL_CCG';
 
     await this.prisma.scholarProfile.update({
       where: { profile_id: scholar.profile_id },
@@ -297,7 +290,7 @@ export class BaselineDocumentIngestionService {
 
     await this.prisma.scholarProfile.update({
       where: { profile_id: scholar.profile_id },
-      data: { academic_baseline_status: 'PENDING_COORDINATOR_REVIEW' },
+      data: { academic_baseline_status: 'PENDING_HISTORICAL_CCG' },
     });
 
     await this.auditService.log(
@@ -320,7 +313,7 @@ export class BaselineDocumentIngestionService {
       matched_credited: matchedCredited,
       unmapped_items: unmappedItems,
       prospectus: refreshedProspectus,
-      academic_baseline_status: 'PENDING_COORDINATOR_REVIEW',
+      academic_baseline_status: 'PENDING_HISTORICAL_CCG',
     };
   }
 }
