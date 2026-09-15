@@ -48,6 +48,8 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server!: Server;
 
+  private readonly onlineUsers = new Map<number, Set<string>>();
+
   constructor(
     @Inject(JwtService) private readonly jwtService: JwtService,
     @Inject(ConfigService) private readonly configService: ConfigService,
@@ -110,8 +112,28 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         await client.join('admin');
       }
 
+      // Presence tracking
+      const isFirstSocketForUser = !this.onlineUsers.has(user.userId);
+      if (isFirstSocketForUser) {
+        this.onlineUsers.set(user.userId, new Set());
+      }
+      this.onlineUsers.get(user.userId)!.add(client.id);
+
+      // Send active presence state to newly connected client
+      client.emit('presence:state', {
+        onlineUserIds: Array.from(this.onlineUsers.keys()),
+      });
+
+      // Broadcast user online if newly active
+      if (isFirstSocketForUser) {
+        this.server.emit('presence:user_online', {
+          userId: user.userId,
+          role: user.role,
+        });
+      }
+
       this.logger.log(
-        `[Socket] Connected: ${client.id} (User: ${user.userId}, Role: ${user.role})`,
+        `[Socket] Connected: ${client.id} (User: ${user.userId}, Role: ${user.role}, Online users: ${this.onlineUsers.size})`,
       );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -123,7 +145,23 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   handleDisconnect(client: Socket) {
+    const user = (client.data as SocketClientData)?.user;
+    if (user?.userId && this.onlineUsers.has(user.userId)) {
+      const socketSet = this.onlineUsers.get(user.userId)!;
+      socketSet.delete(client.id);
+      if (socketSet.size === 0) {
+        this.onlineUsers.delete(user.userId);
+        this.server?.emit('presence:user_offline', {
+          userId: user.userId,
+        });
+      }
+    }
     this.logger.log(`[Socket] Disconnected: ${client.id}`);
+  }
+
+  @SubscribeMessage('presence:get_online')
+  handleGetOnline(): { onlineUserIds: number[] } {
+    return { onlineUserIds: Array.from(this.onlineUsers.keys()) };
   }
 
   @SubscribeMessage('ping')

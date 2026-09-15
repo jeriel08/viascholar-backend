@@ -36,9 +36,7 @@ export interface ExtractedHistoricalCourse {
 export class ProspectusOcrService {
   private readonly logger = new Logger(ProspectusOcrService.name);
 
-  constructor(
-    private readonly llamaExtractService: LlamaExtractService,
-  ) {}
+  constructor(private readonly llamaExtractService: LlamaExtractService) {}
 
   /**
    * Cleans and standardizes subject codes for robust fuzzy matching (e.g. "IT - 101 A" -> "IT101A")
@@ -61,8 +59,10 @@ export class ProspectusOcrService {
     if (!sem) return '1st Semester';
     const lower = sem.toLowerCase();
     if (lower.includes('summer') || lower.includes('midyear')) return 'Summer';
-    if (lower.includes('2nd') || lower.includes('second')) return '2nd Semester';
-    if (lower.includes('3rd') || lower.includes('third')) return '3rd Trimester';
+    if (lower.includes('2nd') || lower.includes('second'))
+      return '2nd Semester';
+    if (lower.includes('3rd') || lower.includes('third'))
+      return '3rd Trimester';
     return '1st Semester';
   }
 
@@ -70,7 +70,8 @@ export class ProspectusOcrService {
    * Normalizes year level (e.g. "1st Year", 1 -> 1)
    */
   normalizeYearLevel(year: any): number {
-    if (typeof year === 'number' && year >= 1 && year <= 6) return Math.floor(year);
+    if (typeof year === 'number' && year >= 1 && year <= 6)
+      return Math.floor(year);
     if (typeof year === 'string') {
       const match = year.match(/\d/);
       if (match) {
@@ -92,7 +93,9 @@ export class ProspectusOcrService {
   async processProspectusExtraction(
     input: InputDocumentFile | InputDocumentFile[],
   ): Promise<NormalizedProspectusData> {
-    this.logger.log('Dispatching uploaded files to LlamaExtract for Prospectus parsing...');
+    this.logger.log(
+      'Dispatching uploaded files to LlamaExtract for Prospectus parsing...',
+    );
     const rawData = await this.llamaExtractService.extractProspectusData(input);
 
     const normalizedSubjects: NormalizedProspectusSubject[] = [];
@@ -112,13 +115,24 @@ export class ProspectusOcrService {
 
       // Determine grade & completion status from evaluation checklist
       const rawGradeStr = sub.grade != null ? String(sub.grade).trim() : '';
-      const rawStatus = sub.status != null ? String(sub.status).trim().toUpperCase() : '';
-      const numGrade = !isNaN(Number(rawGradeStr)) && rawGradeStr !== '' ? Number(rawGradeStr) : null;
+      const rawStatus =
+        sub.status != null ? String(sub.status).trim().toUpperCase() : '';
+      const numGrade =
+        !isNaN(Number(rawGradeStr)) && rawGradeStr !== ''
+          ? Number(rawGradeStr)
+          : null;
 
       let determinedStatus = 'UNTAKEN';
       let termCredited: string | null = null;
 
-      const yearLabel = yearLevel === 1 ? '1st Year' : yearLevel === 2 ? '2nd Year' : yearLevel === 3 ? '3rd Year' : `${yearLevel}th Year`;
+      const yearLabel =
+        yearLevel === 1
+          ? '1st Year'
+          : yearLevel === 2
+            ? '2nd Year'
+            : yearLevel === 3
+              ? '3rd Year'
+              : `${yearLevel}th Year`;
 
       if (
         rawStatus === 'PASSED' ||
@@ -126,14 +140,27 @@ export class ProspectusOcrService {
         rawGradeStr.toUpperCase() === 'PSD' ||
         rawGradeStr.toUpperCase() === 'PASSED' ||
         rawGradeStr.toUpperCase() === 'P' ||
-        (numGrade != null && numGrade > 0 && numGrade !== 1.0 && numGrade !== 5.0 && numGrade !== 9.0)
+        (numGrade != null &&
+          numGrade > 0 &&
+          numGrade !== 1.0 &&
+          numGrade !== 5.0 &&
+          numGrade !== 9.0)
       ) {
         determinedStatus = 'CREDITED';
         termCredited = sub.credited_term || `${yearLabel} - ${semester}`;
-      } else if (rawStatus === 'FAILED' || numGrade === 1.0 || numGrade === 5.0 || numGrade === 9.0) {
+      } else if (
+        rawStatus === 'FAILED' ||
+        numGrade === 1.0 ||
+        numGrade === 5.0 ||
+        numGrade === 9.0
+      ) {
         determinedStatus = 'FAILED';
         termCredited = sub.credited_term || `${yearLabel} - ${semester}`;
-      } else if (rawStatus === 'ENROLLED' || rawStatus === 'ONGOING' || rawStatus === 'IP') {
+      } else if (
+        rawStatus === 'ENROLLED' ||
+        rawStatus === 'ONGOING' ||
+        rawStatus === 'IP'
+      ) {
         determinedStatus = 'ENROLLED';
       }
 
@@ -173,8 +200,13 @@ export class ProspectusOcrService {
   async processHistoricalCcgExtraction(
     input: InputDocumentFile | InputDocumentFile[],
   ): Promise<ExtractedHistoricalCourse[]> {
-    this.logger.log('Dispatching historical CCG/TOR document for grade extraction...');
-    const rawData = await this.llamaExtractService.extractData(input, 'Historical TOR / Certified Copy of Grades');
+    this.logger.log(
+      'Dispatching historical CCG/TOR document for grade extraction...',
+    );
+    const rawData = await this.llamaExtractService.extractData(
+      input,
+      'Historical TOR / Certified Copy of Grades',
+    );
 
     const rawGrades = Array.isArray(rawData.grades) ? rawData.grades : [];
     const historicalCourses: ExtractedHistoricalCourse[] = [];

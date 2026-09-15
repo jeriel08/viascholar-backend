@@ -32,17 +32,28 @@ export class ScholarBaselineService {
         prospectus: {
           include: {
             subjects: {
-              orderBy: [{ year_level: 'asc' }, { semester: 'asc' }, { subject_code: 'asc' }],
+              orderBy: [
+                { year_level: 'asc' },
+                { semester: 'asc' },
+                { subject_code: 'asc' },
+              ],
             },
             document: true,
             frozen_by_employee: {
-              select: { employee_id: true, first_name: true, last_name: true, title: true },
+              select: {
+                employee_id: true,
+                first_name: true,
+                last_name: true,
+                title: true,
+              },
             },
           },
         },
         documents: {
           where: {
-            document_type: { in: ['PROSPECTUS', 'HISTORICAL_CCG', 'TOR', 'GRADE_SLIP'] },
+            document_type: {
+              in: ['PROSPECTUS', 'HISTORICAL_CCG', 'TOR', 'GRADE_SLIP'],
+            },
           },
           orderBy: { uploaded_at: 'desc' },
         },
@@ -111,7 +122,9 @@ export class ScholarBaselineService {
         where: { school_id: dto.school_id },
       });
       if (!existingSchool) {
-        throw new NotFoundException(`School grading ID ${dto.school_id} not found.`);
+        throw new NotFoundException(
+          `School grading ID ${dto.school_id} not found.`,
+        );
       }
       targetSchoolId = existingSchool.school_id;
     } else if (dto.new_school_name) {
@@ -126,7 +139,8 @@ export class ScholarBaselineService {
 
       const existing = allSchools.find(
         (s) =>
-          s.school_name.toLowerCase() === dto.new_school_name!.trim().toLowerCase() ||
+          s.school_name.toLowerCase() ===
+            dto.new_school_name!.trim().toLowerCase() ||
           normalize(s.school_name) === targetNormalized,
       );
 
@@ -152,7 +166,9 @@ export class ScholarBaselineService {
         targetSchoolId = newSchool.school_id;
       }
     } else {
-      throw new BadRequestException('Either school_id or new_school_name must be provided.');
+      throw new BadRequestException(
+        'Either school_id or new_school_name must be provided.',
+      );
     }
 
     const nextStatus =
@@ -198,7 +214,9 @@ export class ScholarBaselineService {
     let scholarProfileId: number;
 
     if (isStaff) {
-      throw new BadRequestException('Staff should use coordinatorUpdateSubjects endpoint.');
+      throw new BadRequestException(
+        'Staff should use coordinatorUpdateSubjects endpoint.',
+      );
     } else {
       const scholar = await this.prisma.scholarProfile.findUnique({
         where: { user_id: userId },
@@ -206,7 +224,9 @@ export class ScholarBaselineService {
       });
       if (!scholar) throw new NotFoundException('Scholar profile not found.');
       if (scholar.prospectus?.is_frozen) {
-        throw new ForbiddenException('Your academic baseline is frozen and cannot be modified.');
+        throw new ForbiddenException(
+          'Your academic baseline is frozen and cannot be modified.',
+        );
       }
       scholarProfileId = scholar.profile_id;
     }
@@ -216,7 +236,9 @@ export class ScholarBaselineService {
     });
 
     if (!prospectus) {
-      throw new NotFoundException('Scholar prospectus record not found. Please upload a prospectus first.');
+      throw new NotFoundException(
+        'Scholar prospectus record not found. Please upload a prospectus first.',
+      );
     }
 
     await this.prisma.scholarProspectus.update({
@@ -268,7 +290,11 @@ export class ScholarBaselineService {
       where: { prospectus_id: prospectus.prospectus_id },
       include: {
         subjects: {
-          orderBy: [{ year_level: 'asc' }, { semester: 'asc' }, { subject_code: 'asc' }],
+          orderBy: [
+            { year_level: 'asc' },
+            { semester: 'asc' },
+            { subject_code: 'asc' },
+          ],
         },
       },
     });
@@ -294,10 +320,14 @@ export class ScholarBaselineService {
 
     if (!scholar) throw new NotFoundException('Scholar profile not found.');
     if (!scholar.prospectus) {
-      throw new BadRequestException('Please upload your prospectus before submitting for review.');
+      throw new BadRequestException(
+        'Please upload your prospectus before submitting for review.',
+      );
     }
     if (scholar.prospectus.subjects.length === 0) {
-      throw new BadRequestException('No subjects found on prospectus checklist.');
+      throw new BadRequestException(
+        'No subjects found on prospectus checklist.',
+      );
     }
 
     const updated = await this.prisma.scholarProfile.update({
@@ -326,7 +356,11 @@ export class ScholarBaselineService {
     };
 
     this.eventsGateway.emitToStaff('baseline:submitted_for_review', payload);
-    this.eventsGateway.emitToUser(userId, 'baseline:submitted_for_review', payload);
+    this.eventsGateway.emitToUser(
+      userId,
+      'baseline:submitted_for_review',
+      payload,
+    );
 
     return {
       message: 'Academic baseline submitted for coordinator review.',

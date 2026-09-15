@@ -1,15 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import {
-  IsArray,
-  IsOptional,
-  IsString,
-  ValidateNested,
-} from 'class-validator';
+import { IsArray, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { UpdateProspectusSubjectDto } from './update-prospectus-subject.dto.js';
 
 export class BatchUpdateSubjectsDto {
-  @ApiPropertyOptional({ example: '2023-2024', description: 'Curriculum catalog year' })
+  @ApiPropertyOptional({
+    example: '2023-2024',
+    description: 'Curriculum catalog year',
+  })
   @IsString()
   @IsOptional()
   curriculum_year?: string;

@@ -60,14 +60,20 @@ export class CoordinatorBaselineService {
           include: {
             document: true,
             subjects: {
-              orderBy: [{ year_level: 'asc' }, { semester: 'asc' }, { subject_code: 'asc' }],
+              orderBy: [
+                { year_level: 'asc' },
+                { semester: 'asc' },
+                { subject_code: 'asc' },
+              ],
             },
             frozen_by_employee: true,
           },
         },
         documents: {
           where: {
-            document_type: { in: ['PROSPECTUS', 'HISTORICAL_CCG', 'TOR', 'GRADE_SLIP'] },
+            document_type: {
+              in: ['PROSPECTUS', 'HISTORICAL_CCG', 'TOR', 'GRADE_SLIP'],
+            },
           },
           orderBy: { uploaded_at: 'desc' },
         },
@@ -75,7 +81,9 @@ export class CoordinatorBaselineService {
     });
 
     if (!scholar) {
-      throw new NotFoundException(`Scholar profile ID ${scholarProfileId} not found.`);
+      throw new NotFoundException(
+        `Scholar profile ID ${scholarProfileId} not found.`,
+      );
     }
 
     const subjects = scholar.prospectus?.subjects || [];
@@ -131,7 +139,8 @@ export class CoordinatorBaselineService {
     const prospectus = await this.prisma.scholarProspectus.findUnique({
       where: { prospectus_id: prospectusId },
     });
-    if (!prospectus) throw new NotFoundException(`Prospectus ID ${prospectusId} not found.`);
+    if (!prospectus)
+      throw new NotFoundException(`Prospectus ID ${prospectusId} not found.`);
 
     await this.prisma.scholarProspectus.update({
       where: { prospectus_id: prospectusId },
@@ -182,7 +191,11 @@ export class CoordinatorBaselineService {
       where: { prospectus_id: prospectusId },
       include: {
         subjects: {
-          orderBy: [{ year_level: 'asc' }, { semester: 'asc' }, { subject_code: 'asc' }],
+          orderBy: [
+            { year_level: 'asc' },
+            { semester: 'asc' },
+            { subject_code: 'asc' },
+          ],
         },
       },
     });
@@ -223,7 +236,9 @@ export class CoordinatorBaselineService {
     }
 
     if (prospectus.is_frozen) {
-      throw new BadRequestException('This academic baseline is already frozen.');
+      throw new BadRequestException(
+        'This academic baseline is already frozen.',
+      );
     }
 
     const frozenAt = new Date();
@@ -238,7 +253,11 @@ export class CoordinatorBaselineService {
       },
       include: {
         subjects: {
-          orderBy: [{ year_level: 'asc' }, { semester: 'asc' }, { subject_code: 'asc' }],
+          orderBy: [
+            { year_level: 'asc' },
+            { semester: 'asc' },
+            { subject_code: 'asc' },
+          ],
         },
         frozen_by_employee: {
           select: { first_name: true, last_name: true, title: true },

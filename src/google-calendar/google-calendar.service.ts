@@ -89,7 +89,11 @@ export class GoogleCalendarService {
     }
 
     // Graceful fallback URL generator (Jitsi Meet) when Google Calendar API fails or OAuth token is invalid
-    const roomSlug = params.title.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').substring(0, 30);
+    const roomSlug = params.title
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '-')
+      .replace(/-+/g, '-')
+      .substring(0, 30);
     const uniqueSuffix = randomUUID().substring(0, 8);
     return {
       meetingUrl: `https://meet.jit.si/viascholar-${roomSlug}-${uniqueSuffix}`,

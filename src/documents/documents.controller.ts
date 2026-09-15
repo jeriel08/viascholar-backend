@@ -86,8 +86,7 @@ export class DocumentsController {
   @Get('allowed-types')
   @Roles(Role.APPLICANT, Role.SCHOLAR)
   @ApiOperation({
-    summary:
-      'Get allowed document types based on scholar current year level',
+    summary: 'Get allowed document types based on scholar current year level',
   })
   getAllowedDocumentTypes(@Request() req: AuthenticatedRequest) {
     return this.storageService.getAllowedDocumentTypes(req.user.user_id);
@@ -278,7 +277,13 @@ export class DocumentsController {
   }
 
   @Post(':id/sync-parseur')
-  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR, Role.APPLICANT, Role.SCHOLAR)
+  @Roles(
+    Role.ADMIN,
+    Role.GRANTOR,
+    Role.COORDINATOR,
+    Role.APPLICANT,
+    Role.SCHOLAR,
+  )
   @ApiOperation({
     summary:
       'Re-fetch OCR results from Parseur and backfill the extracted data',
@@ -291,7 +296,13 @@ export class DocumentsController {
   }
 
   @Post(':id/retry-ocr')
-  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR, Role.APPLICANT, Role.SCHOLAR)
+  @Roles(
+    Role.ADMIN,
+    Role.GRANTOR,
+    Role.COORDINATOR,
+    Role.APPLICANT,
+    Role.SCHOLAR,
+  )
   @ApiOperation({
     summary:
       'Retry automated AI OCR extraction on an already uploaded document',

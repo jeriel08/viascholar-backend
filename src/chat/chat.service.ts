@@ -322,9 +322,7 @@ export class ChatService {
     }
 
     if (conversation.status === 'REJECTED') {
-      throw new ForbiddenException(
-        'This message request was declined.',
-      );
+      throw new ForbiddenException('This message request was declined.');
     }
 
     const partnerUserId =
@@ -591,17 +589,13 @@ export class ChatService {
       'Scholar';
 
     // Notify the grantor via WebSocket
-    this.eventsGateway.emitToUser(
-      dto.grantor_user_id,
-      'chat:message_request',
-      {
-        conversationId: conversation.conversation_id,
-        scholarUserId,
-        scholarName,
-        subject: conversation.subject,
-        reason: dto.reason,
-      },
-    );
+    this.eventsGateway.emitToUser(dto.grantor_user_id, 'chat:message_request', {
+      conversationId: conversation.conversation_id,
+      scholarUserId,
+      scholarName,
+      subject: conversation.subject,
+      reason: dto.reason,
+    });
 
     return conversation;
   }

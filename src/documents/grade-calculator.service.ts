@@ -23,7 +23,8 @@ export class GradeCalculatorService {
    * Identifies whether the document is a High School Form 138 / 137 / Report Card
    */
   isForm138(documentType?: string, label?: string): boolean {
-    const matcher = /138|137|form\s*9|sf9|report\s*card|high\s*school|shs|senior\s*high/i;
+    const matcher =
+      /138|137|form\s*9|sf9|report\s*card|high\s*school|shs|senior\s*high/i;
     return matcher.test(documentType || '') || matcher.test(label || '');
   }
 
@@ -187,7 +188,11 @@ export class GradeCalculatorService {
   ): number {
     if (gwa == null || isNaN(gwa)) return 0;
 
-    if (isForm138 || !schoolConfig || schoolConfig.grading_scale === 'PERCENTAGE_100') {
+    if (
+      isForm138 ||
+      !schoolConfig ||
+      schoolConfig.grading_scale === 'PERCENTAGE_100'
+    ) {
       return Number(Math.min(100, Math.max(0, gwa)).toFixed(2));
     }
 

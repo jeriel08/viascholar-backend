@@ -141,7 +141,6 @@ export class AuthController {
     return this.authService.refreshToken(req.user.user_id);
   }
 
-
   @Patch('me')
   @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'))

@@ -82,7 +82,9 @@ export class SettingsService implements OnModuleInit {
     }
 
     const isStudent = userRole === 'APPLICANT' || userRole === 'SCHOLAR';
-    const isVerified = isStudent ? (dto.is_verified ?? false) : (dto.is_verified ?? true);
+    const isVerified = isStudent
+      ? (dto.is_verified ?? false)
+      : (dto.is_verified ?? true);
 
     let verifiedByEmployeeId: number | undefined = undefined;
     if (!isStudent) {
@@ -113,7 +115,9 @@ export class SettingsService implements OnModuleInit {
 
     await this.auditService.log(
       userId,
-      isVerified ? 'SCHOOL_GRADING_CREATED' : 'SCHOOL_GRADING_SUBMITTED_BY_STUDENT',
+      isVerified
+        ? 'SCHOOL_GRADING_CREATED'
+        : 'SCHOOL_GRADING_SUBMITTED_BY_STUDENT',
       `${isVerified ? 'Configured' : 'Proposed'} grading system for school: ${dto.school_name}`,
     );
 
@@ -360,12 +364,24 @@ export class SettingsService implements OnModuleInit {
         return { isPassing: true, flag: 'CLEARED', statusLabel: 'PASSED' };
       }
       if (/^(DROPPED|DROP|DRP|FAILED|FAIL|TWE|FA)$/i.test(upper)) {
-        return { isPassing: false, flag: 'ACADEMIC_FAILURE', statusLabel: upper };
+        return {
+          isPassing: false,
+          flag: 'ACADEMIC_FAILURE',
+          statusLabel: upper,
+        };
       }
       if (/^(INC|INCOMPLETE|LOA|HOLD)$/i.test(upper)) {
-        return { isPassing: false, flag: 'PENDING_REQUIREMENTS', statusLabel: upper };
+        return {
+          isPassing: false,
+          flag: 'PENDING_REQUIREMENTS',
+          statusLabel: upper,
+        };
       }
-      return { isPassing: false, flag: 'BELOW_PASSING_MARK', statusLabel: upper || 'UNKNOWN' };
+      return {
+        isPassing: false,
+        flag: 'BELOW_PASSING_MARK',
+        statusLabel: upper || 'UNKNOWN',
+      };
     }
 
     // 3. Evaluate Numerical Thresholds (Respecting scale direction)
@@ -431,4 +447,3 @@ export class SettingsService implements OnModuleInit {
     }
   }
 }
-

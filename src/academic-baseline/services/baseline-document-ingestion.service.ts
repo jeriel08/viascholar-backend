@@ -28,7 +28,9 @@ export class BaselineDocumentIngestionService {
   // 1. Upload Prospectus Document & Trigger Batch Ingestion OCR
   async uploadProspectus(userId: number, files: Express.Multer.File[]) {
     if (!files || files.length === 0) {
-      throw new BadRequestException('At least one prospectus file is required.');
+      throw new BadRequestException(
+        'At least one prospectus file is required.',
+      );
     }
 
     const scholar = await this.prisma.scholarProfile.findUnique({
@@ -74,7 +76,8 @@ export class BaselineDocumentIngestionService {
       fileUrl: uploadResult.secure_url,
     }));
 
-    const extracted = await this.prospectusOcrService.processProspectusExtraction(inputFiles);
+    const extracted =
+      await this.prospectusOcrService.processProspectusExtraction(inputFiles);
 
     const prospectus = await this.prisma.scholarProspectus.upsert({
       where: { scholar_profile_id: scholar.profile_id },
@@ -83,16 +86,22 @@ export class BaselineDocumentIngestionService {
         document_id: doc.document_id,
         curriculum_year: extracted.curriculum_year || 'Current Catalog',
         course_code: extracted.course_code || undefined,
-        course_name: extracted.course_name || scholar.course_of_study || 'Degree Program',
-        total_units: extracted.total_units ? Number(extracted.total_units) : undefined,
+        course_name:
+          extracted.course_name || scholar.course_of_study || 'Degree Program',
+        total_units: extracted.total_units
+          ? Number(extracted.total_units)
+          : undefined,
         status: 'DRAFT',
       },
       update: {
         document_id: doc.document_id,
         curriculum_year: extracted.curriculum_year || 'Current Catalog',
         course_code: extracted.course_code || undefined,
-        course_name: extracted.course_name || scholar.course_of_study || 'Degree Program',
-        total_units: extracted.total_units ? Number(extracted.total_units) : undefined,
+        course_name:
+          extracted.course_name || scholar.course_of_study || 'Degree Program',
+        total_units: extracted.total_units
+          ? Number(extracted.total_units)
+          : undefined,
         status: 'DRAFT',
       },
     });
@@ -115,9 +124,14 @@ export class BaselineDocumentIngestionService {
           semester: sub.semester,
           prerequisites: sub.prerequisites,
           status: sub.status || 'UNTAKEN',
-          grade: sub.grade !== undefined && sub.grade !== null ? sub.grade : undefined,
+          grade:
+            sub.grade !== undefined && sub.grade !== null
+              ? sub.grade
+              : undefined,
           credited_term: sub.credited_term || undefined,
-          remarks: sub.raw_grade_str ? `Extracted mark: ${sub.raw_grade_str}` : undefined,
+          remarks: sub.raw_grade_str
+            ? `Extracted mark: ${sub.raw_grade_str}`
+            : undefined,
         })),
       });
     }
@@ -146,7 +160,11 @@ export class BaselineDocumentIngestionService {
       where: { prospectus_id: prospectus.prospectus_id },
       include: {
         subjects: {
-          orderBy: [{ year_level: 'asc' }, { semester: 'asc' }, { subject_code: 'asc' }],
+          orderBy: [
+            { year_level: 'asc' },
+            { semester: 'asc' },
+            { subject_code: 'asc' },
+          ],
         },
         document: true,
       },
@@ -164,7 +182,8 @@ export class BaselineDocumentIngestionService {
     });
 
     return {
-      message: 'Prospectus extracted and curriculum baseline initialized successfully.',
+      message:
+        'Prospectus extracted and curriculum baseline initialized successfully.',
       prospectus: fullProspectus,
       academic_baseline_status: nextStatus,
     };
@@ -173,7 +192,9 @@ export class BaselineDocumentIngestionService {
   // 2. Upload Historical CCG / TOR & Auto-Credit Passed Courses
   async uploadHistoricalCcg(userId: number, files: Express.Multer.File[]) {
     if (!files || files.length === 0) {
-      throw new BadRequestException('At least one historical grade transcript file is required.');
+      throw new BadRequestException(
+        'At least one historical grade transcript file is required.',
+      );
     }
 
     const scholar = await this.prisma.scholarProfile.findUnique({
@@ -191,11 +212,15 @@ export class BaselineDocumentIngestionService {
     }
 
     if (!scholar.prospectus) {
-      throw new BadRequestException('Please upload and establish your prospectus first before historical grades.');
+      throw new BadRequestException(
+        'Please upload and establish your prospectus first before historical grades.',
+      );
     }
 
     if (scholar.prospectus.is_frozen) {
-      throw new ForbiddenException('Your academic baseline is frozen and cannot be modified.');
+      throw new ForbiddenException(
+        'Your academic baseline is frozen and cannot be modified.',
+      );
     }
 
     const firstFile = files[0];
@@ -227,29 +252,42 @@ export class BaselineDocumentIngestionService {
     }));
 
     const historicalCourses =
-      await this.prospectusOcrService.processHistoricalCcgExtraction(inputFiles);
+      await this.prospectusOcrService.processHistoricalCcgExtraction(
+        inputFiles,
+      );
 
     const schoolConfig = scholar.school_grading_system;
     const prospectusSubjects = scholar.prospectus.subjects;
 
-    const matchedCredited: Array<{ subject_code: string; grade: number; title: string }> = [];
+    const matchedCredited: Array<{
+      subject_code: string;
+      grade: number;
+      title: string;
+    }> = [];
     const unmappedItems: Array<{ subject_code: string; grade: number }> = [];
 
     for (const hCourse of historicalCourses) {
-      const normalizedHistoricalCode = this.prospectusOcrService.normalizeSubjectCode(hCourse.subject_code);
+      const normalizedHistoricalCode =
+        this.prospectusOcrService.normalizeSubjectCode(hCourse.subject_code);
 
       const targetSub = prospectusSubjects.find((ps) => {
-        const normalizedProspectusCode = this.prospectusOcrService.normalizeSubjectCode(ps.subject_code);
+        const normalizedProspectusCode =
+          this.prospectusOcrService.normalizeSubjectCode(ps.subject_code);
         return normalizedProspectusCode === normalizedHistoricalCode;
       });
 
       if (targetSub) {
         let isPassing = true;
         if (schoolConfig) {
-          const evalResult = this.settingsService.evaluateStudentGrade(hCourse.grade, schoolConfig);
+          const evalResult = this.settingsService.evaluateStudentGrade(
+            hCourse.grade,
+            schoolConfig,
+          );
           isPassing = evalResult.isPassing;
         } else {
-          isPassing = hCourse.grade >= 75 || (hCourse.grade >= 1.0 && hCourse.grade <= 3.0);
+          isPassing =
+            hCourse.grade >= 75 ||
+            (hCourse.grade >= 1.0 && hCourse.grade <= 3.0);
         }
 
         const newStatus = isPassing ? 'CREDITED' : 'FAILED';
@@ -260,7 +298,9 @@ export class BaselineDocumentIngestionService {
             status: newStatus,
             grade: hCourse.grade,
             historical_document_id: doc.document_id,
-            credited_term: hCourse.semester || `${targetSub.year_level} Year - ${targetSub.semester}`,
+            credited_term:
+              hCourse.semester ||
+              `${targetSub.year_level} Year - ${targetSub.semester}`,
           },
         });
 
@@ -303,7 +343,11 @@ export class BaselineDocumentIngestionService {
       where: { prospectus_id: scholar.prospectus.prospectus_id },
       include: {
         subjects: {
-          orderBy: [{ year_level: 'asc' }, { semester: 'asc' }, { subject_code: 'asc' }],
+          orderBy: [
+            { year_level: 'asc' },
+            { semester: 'asc' },
+            { subject_code: 'asc' },
+          ],
         },
       },
     });

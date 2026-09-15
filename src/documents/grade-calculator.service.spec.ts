@@ -7,11 +7,7 @@ describe('GradeCalculatorService & SettingsService Evaluation', () => {
 
   beforeEach(() => {
     // Mock settings service dependencies
-    settingsService = new SettingsService(
-      {} as any,
-      {} as any,
-      {} as any,
-    );
+    settingsService = new SettingsService({} as any, {} as any, {} as any);
     gradeCalculatorService = new GradeCalculatorService(settingsService);
   });
 
@@ -28,9 +24,9 @@ describe('GradeCalculatorService & SettingsService Evaluation', () => {
         '7.1': 'LACKING_PAYMENT',
         '7.2': 'LACKING_REQUIREMENTS',
         '1.0': 'FAILED',
-        'PSD': 'PASSED',
-        'TWE': 'TOTAL_WITHDRAWAL',
-        'INC': 'INCOMPLETE',
+        PSD: 'PASSED',
+        TWE: 'TOTAL_WITHDRAWAL',
+        INC: 'INCOMPLETE',
       },
     };
 
@@ -95,10 +91,18 @@ describe('GradeCalculatorService & SettingsService Evaluation', () => {
 
     it('should correctly evaluate 90% retention threshold for UM scale (where 2.0 is passing, 4.0 is max)', () => {
       // 90% threshold translates to 3.20 on UM scale
-      expect(settingsService.evaluateGwaThreshold(3.5, 90.0, umConfig)).toBe(true);
-      expect(settingsService.evaluateGwaThreshold(3.2, 90.0, umConfig)).toBe(true);
-      expect(settingsService.evaluateGwaThreshold(2.5, 90.0, umConfig)).toBe(false);
-      expect(settingsService.evaluateGwaThreshold(2.0, 90.0, umConfig)).toBe(false);
+      expect(settingsService.evaluateGwaThreshold(3.5, 90.0, umConfig)).toBe(
+        true,
+      );
+      expect(settingsService.evaluateGwaThreshold(3.2, 90.0, umConfig)).toBe(
+        true,
+      );
+      expect(settingsService.evaluateGwaThreshold(2.5, 90.0, umConfig)).toBe(
+        false,
+      );
+      expect(settingsService.evaluateGwaThreshold(2.0, 90.0, umConfig)).toBe(
+        false,
+      );
     });
   });
 
@@ -112,25 +116,43 @@ describe('GradeCalculatorService & SettingsService Evaluation', () => {
       failing_grade: 5.0,
       special_codes: {
         '5.0': 'FAILED',
-        'INC': 'INCOMPLETE',
-        'DRP': 'DROPPED',
+        INC: 'INCOMPLETE',
+        DRP: 'DROPPED',
       },
     };
 
     it('should evaluate USEP 1.0 to 3.0 as passing, and 5.0 / DRP as failed', () => {
-      expect(settingsService.evaluateStudentGrade(1.25, usepConfig).isPassing).toBe(true);
-      expect(settingsService.evaluateStudentGrade(3.0, usepConfig).isPassing).toBe(true);
-      expect(settingsService.evaluateStudentGrade(3.5, usepConfig).isPassing).toBe(false);
-      expect(settingsService.evaluateStudentGrade(5.0, usepConfig).isPassing).toBe(false);
-      expect(settingsService.evaluateStudentGrade('DRP', usepConfig).isPassing).toBe(false);
+      expect(
+        settingsService.evaluateStudentGrade(1.25, usepConfig).isPassing,
+      ).toBe(true);
+      expect(
+        settingsService.evaluateStudentGrade(3.0, usepConfig).isPassing,
+      ).toBe(true);
+      expect(
+        settingsService.evaluateStudentGrade(3.5, usepConfig).isPassing,
+      ).toBe(false);
+      expect(
+        settingsService.evaluateStudentGrade(5.0, usepConfig).isPassing,
+      ).toBe(false);
+      expect(
+        settingsService.evaluateStudentGrade('DRP', usepConfig).isPassing,
+      ).toBe(false);
     });
 
     it('should correctly evaluate 90% retention threshold for USEP scale (where 1.0 is max, 3.0 is passing)', () => {
       // 90% threshold translates to 1.80 on 5.0 scale (lower is better)
-      expect(settingsService.evaluateGwaThreshold(1.5, 90.0, usepConfig)).toBe(true);
-      expect(settingsService.evaluateGwaThreshold(1.75, 90.0, usepConfig)).toBe(true);
-      expect(settingsService.evaluateGwaThreshold(2.0, 90.0, usepConfig)).toBe(false);
-      expect(settingsService.evaluateGwaThreshold(3.5, 90.0, usepConfig)).toBe(false);
+      expect(settingsService.evaluateGwaThreshold(1.5, 90.0, usepConfig)).toBe(
+        true,
+      );
+      expect(settingsService.evaluateGwaThreshold(1.75, 90.0, usepConfig)).toBe(
+        true,
+      );
+      expect(settingsService.evaluateGwaThreshold(2.0, 90.0, usepConfig)).toBe(
+        false,
+      );
+      expect(settingsService.evaluateGwaThreshold(3.5, 90.0, usepConfig)).toBe(
+        false,
+      );
     });
   });
 });

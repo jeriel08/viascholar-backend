@@ -8,7 +8,10 @@ import {
 } from 'class-validator';
 
 export class UpdateProspectusSubjectDto {
-  @ApiPropertyOptional({ example: 12, description: 'Subject ID if updating existing subject' })
+  @ApiPropertyOptional({
+    example: 12,
+    description: 'Subject ID if updating existing subject',
+  })
   @IsNumber()
   @IsOptional()
   subject_id?: number;
@@ -58,7 +61,10 @@ export class UpdateProspectusSubjectDto {
   @IsOptional()
   status?: string;
 
-  @ApiPropertyOptional({ example: 3.5, description: 'Historical grade if credited' })
+  @ApiPropertyOptional({
+    example: 3.5,
+    description: 'Historical grade if credited',
+  })
   @IsNumber()
   @IsOptional()
   grade?: number;

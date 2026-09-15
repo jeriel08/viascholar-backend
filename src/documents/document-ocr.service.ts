@@ -87,11 +87,10 @@ export class DocumentOcrService {
         },
       ];
 
-      const extractedData =
-        await this.llamaExtractService.extractData(
-          inputFiles,
-          documentType,
-        );
+      const extractedData = await this.llamaExtractService.extractData(
+        inputFiles,
+        documentType,
+      );
 
       const existingExtracted = (doc.extracted_data ??
         {}) as ExtractedDocumentData;
@@ -179,7 +178,8 @@ export class DocumentOcrService {
                   const normS = normalize(s.school_name);
                   return (
                     (normS.length > 5 && normalizedDetected.includes(normS)) ||
-                    (normalizedDetected.length > 5 && normS.includes(normalizedDetected))
+                    (normalizedDetected.length > 5 &&
+                      normS.includes(normalizedDetected))
                   );
                 }) ?? null;
             }
@@ -194,8 +194,9 @@ export class DocumentOcrService {
                 matchedSchool =
                   allSchools.find(
                     (s) =>
-                      /high\s*school|senior\s*high|deped/i.test(s.school_name) &&
-                      s.is_verified,
+                      /high\s*school|senior\s*high|deped/i.test(
+                        s.school_name,
+                      ) && s.is_verified,
                   ) ?? null;
               }
             }
@@ -269,7 +270,8 @@ export class DocumentOcrService {
         where: { document_id: documentId },
         data: {
           status: validationStatus,
-          extracted_data: mergedExtractedData as unknown as Prisma.InputJsonValue,
+          extracted_data:
+            mergedExtractedData as unknown as Prisma.InputJsonValue,
           rejection_reason: finalRejectionReason,
         },
       });

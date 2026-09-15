@@ -425,7 +425,6 @@ export class ContractsService {
       );
     }
 
-
     return updated;
   }
 

@@ -9,7 +9,8 @@ export interface ExtractedGradeItem {
 
 export interface ExtractedGradingLegend {
   legend_title?: string;
-  grading_scale?: 'NUMERIC_5_POINT' | 'NUMERIC_4_POINT' | 'PERCENTAGE_100' | string;
+  grading_scale?:
+    'NUMERIC_5_POINT' | 'NUMERIC_4_POINT' | 'PERCENTAGE_100' | string;
   highest_grade?: number;
   passing_grade?: number;
   failing_grade?: number;

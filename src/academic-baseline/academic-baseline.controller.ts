@@ -44,9 +44,7 @@ interface AuthenticatedRequest {
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Controller('academic-baseline')
 export class AcademicBaselineController {
-  constructor(
-    private readonly baselineService: AcademicBaselineService,
-  ) {}
+  constructor(private readonly baselineService: AcademicBaselineService) {}
 
   private validateUploadedFiles(files: Express.Multer.File[]) {
     if (!files || files.length === 0) {
@@ -73,9 +71,16 @@ export class AcademicBaselineController {
   // ==========================================
 
   @Get('me')
-  @Roles(Role.SCHOLAR, Role.APPLICANT, Role.COORDINATOR, Role.GRANTOR, Role.ADMIN)
+  @Roles(
+    Role.SCHOLAR,
+    Role.APPLICANT,
+    Role.COORDINATOR,
+    Role.GRANTOR,
+    Role.ADMIN,
+  )
   @ApiOperation({
-    summary: 'Scholar views their complete academic baseline setup state and checklist',
+    summary:
+      'Scholar views their complete academic baseline setup state and checklist',
   })
   getMyBaseline(@Request() req: AuthenticatedRequest) {
     return this.baselineService.getScholarBaselineState(req.user.user_id);
@@ -84,7 +89,8 @@ export class AcademicBaselineController {
   @Post('select-school')
   @Roles(Role.SCHOLAR, Role.APPLICANT)
   @ApiOperation({
-    summary: 'Scholar selects existing school grading system or proposes new institution',
+    summary:
+      'Scholar selects existing school grading system or proposes new institution',
   })
   selectSchool(
     @Request() req: AuthenticatedRequest,
@@ -99,7 +105,8 @@ export class AcademicBaselineController {
   @UseInterceptors(AnyFilesInterceptor())
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
-    summary: 'Scholar uploads curriculum prospectus evaluation sheet for OCR ingestion',
+    summary:
+      'Scholar uploads curriculum prospectus evaluation sheet for OCR ingestion',
   })
   @ApiBody({
     schema: {
@@ -124,7 +131,8 @@ export class AcademicBaselineController {
   @Put('prospectus/subjects')
   @Roles(Role.SCHOLAR, Role.APPLICANT)
   @ApiOperation({
-    summary: 'Scholar adjusts or corrects prospectus subjects before submitting for review',
+    summary:
+      'Scholar adjusts or corrects prospectus subjects before submitting for review',
   })
   updateMyProspectusSubjects(
     @Request() req: AuthenticatedRequest,
@@ -139,7 +147,8 @@ export class AcademicBaselineController {
   @UseInterceptors(AnyFilesInterceptor())
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
-    summary: 'Continuing scholar uploads historical CCG/TOR to auto-credit completed courses',
+    summary:
+      'Continuing scholar uploads historical CCG/TOR to auto-credit completed courses',
   })
   @ApiBody({
     schema: {
@@ -164,7 +173,8 @@ export class AcademicBaselineController {
   @Post('submit-for-review')
   @Roles(Role.SCHOLAR, Role.APPLICANT)
   @ApiOperation({
-    summary: 'Scholar finalizes checklist and submits baseline for coordinator audit',
+    summary:
+      'Scholar finalizes checklist and submits baseline for coordinator audit',
   })
   submitForReview(@Request() req: AuthenticatedRequest) {
     return this.baselineService.submitForReview(req.user.user_id);
@@ -177,7 +187,8 @@ export class AcademicBaselineController {
   @Get('coordinator/pending')
   @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({
-    summary: 'Coordinator lists all scholars awaiting baseline review or frozen',
+    summary:
+      'Coordinator lists all scholars awaiting baseline review or frozen',
   })
   getPendingBaselines() {
     return this.baselineService.getCoordinatorPendingBaselines();
@@ -186,7 +197,8 @@ export class AcademicBaselineController {
   @Get('coordinator/active-scholars')
   @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({
-    summary: 'Coordinator lists all active scholars with real-time academic standing & financial summary',
+    summary:
+      'Coordinator lists all active scholars with real-time academic standing & financial summary',
   })
   getActiveScholars() {
     return this.baselineService.getCoordinatorActiveScholars();
@@ -195,7 +207,8 @@ export class AcademicBaselineController {
   @Get('coordinator/review/:scholarProfileId')
   @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({
-    summary: 'Coordinator gets full side-by-side baseline audit data for a scholar',
+    summary:
+      'Coordinator gets full side-by-side baseline audit data for a scholar',
   })
   getCoordinatorReview(
     @Param('scholarProfileId', ParseIntPipe) scholarProfileId: number,
@@ -206,7 +219,8 @@ export class AcademicBaselineController {
   @Put('coordinator/review/:prospectusId/subjects')
   @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({
-    summary: 'Coordinator edits, adds, or overrides subjects and credit statuses on prospectus',
+    summary:
+      'Coordinator edits, adds, or overrides subjects and credit statuses on prospectus',
   })
   coordinatorUpdateSubjects(
     @Request() req: AuthenticatedRequest,
@@ -223,7 +237,8 @@ export class AcademicBaselineController {
   @Post('coordinator/freeze/:prospectusId')
   @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({
-    summary: 'Coordinator locks and freezes baseline curriculum, preventing further edits',
+    summary:
+      'Coordinator locks and freezes baseline curriculum, preventing further edits',
   })
   freezeBaseline(
     @Request() req: AuthenticatedRequest,
@@ -240,7 +255,8 @@ export class AcademicBaselineController {
   @Post('coordinator/unfreeze/:prospectusId')
   @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({
-    summary: 'Coordinator unlocks/unfreezes baseline curriculum if amendments are needed',
+    summary:
+      'Coordinator unlocks/unfreezes baseline curriculum if amendments are needed',
   })
   unfreezeBaseline(
     @Request() req: AuthenticatedRequest,

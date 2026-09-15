@@ -195,7 +195,10 @@ export class DocumentEvaluationService {
       reason,
       requestedAt: new Date().toISOString(),
     };
-    this.eventsGateway.emitToStaff('document:changes_requested', changesPayload);
+    this.eventsGateway.emitToStaff(
+      'document:changes_requested',
+      changesPayload,
+    );
     if (doc.scholar_profile?.user_id) {
       this.eventsGateway.emitToUser(
         doc.scholar_profile.user_id,

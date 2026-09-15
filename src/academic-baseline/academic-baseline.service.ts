@@ -34,7 +34,10 @@ export class AcademicBaselineService {
 
   // 3. Upload Prospectus Document & Trigger Batch Ingestion OCR
   async uploadProspectus(userId: number, files: Express.Multer.File[]) {
-    return this.baselineDocumentIngestionService.uploadProspectus(userId, files);
+    return this.baselineDocumentIngestionService.uploadProspectus(
+      userId,
+      files,
+    );
   }
 
   // 4. Scholar / Staff updates prospectus subjects before freezing
@@ -43,12 +46,19 @@ export class AcademicBaselineService {
     dto: BatchUpdateSubjectsDto,
     isStaff = false,
   ) {
-    return this.scholarBaselineService.updateProspectusSubjects(userId, dto, isStaff);
+    return this.scholarBaselineService.updateProspectusSubjects(
+      userId,
+      dto,
+      isStaff,
+    );
   }
 
   // 5. Upload Historical CCG / TOR & Auto-Credit Passed Courses
   async uploadHistoricalCcg(userId: number, files: Express.Multer.File[]) {
-    return this.baselineDocumentIngestionService.uploadHistoricalCcg(userId, files);
+    return this.baselineDocumentIngestionService.uploadHistoricalCcg(
+      userId,
+      files,
+    );
   }
 
   // 6. Scholar submits baseline for coordinator freeze review
@@ -67,7 +77,9 @@ export class AcademicBaselineService {
 
   // 8. Coordinator: Get full side-by-side audit bundle for a scholar
   async getCoordinatorBaselineReview(scholarProfileId: number) {
-    return this.coordinatorBaselineService.getCoordinatorBaselineReview(scholarProfileId);
+    return this.coordinatorBaselineService.getCoordinatorBaselineReview(
+      scholarProfileId,
+    );
   }
 
   // 9. Coordinator updates / adds / adjusts subjects on a prospectus

@@ -95,8 +95,7 @@ const DOCUMENT_DATA_SCHEMA = {
     },
     grades: {
       type: 'array',
-      description:
-        'List of subjects and grades extracted from the document.',
+      description: 'List of subjects and grades extracted from the document.',
       items: {
         type: 'object',
         properties: {
@@ -111,8 +110,7 @@ const DOCUMENT_DATA_SCHEMA = {
           },
           units: {
             type: 'number',
-            description:
-              'Credit units/hours. Default to 0.0 if not listed.',
+            description: 'Credit units/hours. Default to 0.0 if not listed.',
           },
           grade: {
             type: 'number',
@@ -140,7 +138,12 @@ const DOCUMENT_DATA_SCHEMA = {
         },
         grading_scale: {
           type: 'string',
-          enum: ['NUMERIC_5_POINT', 'NUMERIC_4_POINT', 'PERCENTAGE_100', 'OTHER'],
+          enum: [
+            'NUMERIC_5_POINT',
+            'NUMERIC_4_POINT',
+            'PERCENTAGE_100',
+            'OTHER',
+          ],
           description:
             '"NUMERIC_4_POINT" if 4.0 is highest and 1.0 or 2.0 is lowest/passing (e.g. UM: 4.00 Excellent/100%, 2.00 Passing/75%, 1.00 Failure/50%); "NUMERIC_5_POINT" if 1.0 is highest and 3.0 is passing, 5.0 is failing (e.g. USEP, UP, ADDU); "PERCENTAGE_100" if 75-100% scale (e.g. DepEd Form 138).',
         },
@@ -369,7 +372,8 @@ export class LlamaExtractService implements IDocumentExtractor {
     }
 
     const mergedBytes = await mergedPdf.save();
-    const primaryName = files[0].fileName?.replace(/\.[^/.]+$/, '') || 'document';
+    const primaryName =
+      files[0].fileName?.replace(/\.[^/.]+$/, '') || 'document';
 
     return {
       buffer: Buffer.from(mergedBytes),
@@ -409,7 +413,9 @@ export class LlamaExtractService implements IDocumentExtractor {
       external_file_id: fileName,
     });
 
-    this.logger.log(`Created LlamaCloud file ${fileObj.id}. Initiating extraction job...`);
+    this.logger.log(
+      `Created LlamaCloud file ${fileObj.id}. Initiating extraction job...`,
+    );
 
     const job = await client.extract.create({
       file_input: fileObj.id,
@@ -421,7 +427,9 @@ export class LlamaExtractService implements IDocumentExtractor {
       },
     });
 
-    this.logger.log(`LlamaExtract job ${job.id} dispatched. Waiting for completion...`);
+    this.logger.log(
+      `LlamaExtract job ${job.id} dispatched. Waiting for completion...`,
+    );
 
     let currentJob = job;
     let attempts = 0;
@@ -446,14 +454,18 @@ export class LlamaExtractService implements IDocumentExtractor {
 
     const result = currentJob.extract_result;
     if (!result) {
-      throw new Error(`LlamaExtract job ${job.id} completed without extract_result.`);
+      throw new Error(
+        `LlamaExtract job ${job.id} completed without extract_result.`,
+      );
     }
 
     // Clean up remote uploaded file if possible
     try {
       await client.files.delete(fileObj.id);
     } catch (cleanupErr: any) {
-      this.logger.debug(`File cleanup skipped for ${fileObj.id}: ${cleanupErr.message}`);
+      this.logger.debug(
+        `File cleanup skipped for ${fileObj.id}: ${cleanupErr.message}`,
+      );
     }
 
     return result as T;

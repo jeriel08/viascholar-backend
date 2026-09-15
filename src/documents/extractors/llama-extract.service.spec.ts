@@ -1,4 +1,11 @@
-import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import {
+  jest,
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+} from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { LlamaExtractService } from './llama-extract.service.js';
@@ -11,12 +18,12 @@ describe('LlamaExtractService', () => {
   let mockExtractGet: jest.Mock;
 
   beforeEach(async () => {
-    mockFilesCreate = jest.fn().mockResolvedValue({ id: 'file-123' } as any) as any;
-    mockFilesDelete = jest.fn().mockResolvedValue(undefined as any) as any;
+    mockFilesCreate = jest.fn().mockResolvedValue({ id: 'file-123' } as any);
+    mockFilesDelete = jest.fn().mockResolvedValue(undefined as any);
     mockExtractCreate = jest.fn().mockResolvedValue({
       id: 'job-123',
       status: 'PENDING',
-    } as any) as any;
+    } as any);
     mockExtractGet = jest.fn().mockResolvedValue({
       id: 'job-123',
       status: 'COMPLETED',
@@ -37,7 +44,7 @@ describe('LlamaExtractService', () => {
           },
         ],
       },
-    } as any) as any;
+    } as any);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -176,7 +183,9 @@ describe('LlamaExtractService', () => {
     expect(mockFilesCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         purpose: 'extract',
-        external_file_id: expect.stringContaining('form138_page1_merged_2pages.pdf'),
+        external_file_id: expect.stringContaining(
+          'form138_page1_merged_2pages.pdf',
+        ),
       }),
     );
     expect(mockExtractCreate).toHaveBeenCalledWith(

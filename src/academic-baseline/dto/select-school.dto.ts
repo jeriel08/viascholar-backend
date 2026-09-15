@@ -27,7 +27,8 @@ export class SelectSchoolDto {
 
   @ApiPropertyOptional({
     example: 'UM_SCALE',
-    description: 'Scale identifier (e.g., UM_SCALE, NUMERIC_4_POINT, NUMERIC_5_POINT, PERCENTAGE_100)',
+    description:
+      'Scale identifier (e.g., UM_SCALE, NUMERIC_4_POINT, NUMERIC_5_POINT, PERCENTAGE_100)',
   })
   @IsString()
   @IsOptional()

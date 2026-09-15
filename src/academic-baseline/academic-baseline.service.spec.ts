@@ -15,21 +15,31 @@ describe('AcademicBaselineService', () => {
 
   beforeEach(async () => {
     scholarBaselineServiceMock = {
-      getScholarBaselineState: jest.fn().mockResolvedValue({ profile_id: 1 } as never),
-      selectOrProposeSchool: jest.fn().mockResolvedValue({ message: 'OK' } as never),
-      updateProspectusSubjects: jest.fn().mockResolvedValue({ message: 'OK' } as never),
+      getScholarBaselineState: jest
+        .fn()
+        .mockResolvedValue({ profile_id: 1 } as never),
+      selectOrProposeSchool: jest
+        .fn()
+        .mockResolvedValue({ message: 'OK' } as never),
+      updateProspectusSubjects: jest
+        .fn()
+        .mockResolvedValue({ message: 'OK' } as never),
       submitForReview: jest.fn().mockResolvedValue({ message: 'OK' } as never),
     };
 
     baselineDocumentIngestionServiceMock = {
       uploadProspectus: jest.fn().mockResolvedValue({ message: 'OK' } as never),
-      uploadHistoricalCcg: jest.fn().mockResolvedValue({ message: 'OK' } as never),
+      uploadHistoricalCcg: jest
+        .fn()
+        .mockResolvedValue({ message: 'OK' } as never),
     };
 
     coordinatorBaselineServiceMock = {
       getCoordinatorPendingBaselines: jest.fn().mockResolvedValue([] as never),
       getCoordinatorBaselineReview: jest.fn().mockResolvedValue({} as never),
-      coordinatorUpdateSubjects: jest.fn().mockResolvedValue({ message: 'OK' } as never),
+      coordinatorUpdateSubjects: jest
+        .fn()
+        .mockResolvedValue({ message: 'OK' } as never),
       freezeBaseline: jest.fn().mockResolvedValue({ message: 'OK' } as never),
       unfreezeBaseline: jest.fn().mockResolvedValue({ message: 'OK' } as never),
     };
@@ -41,10 +51,22 @@ describe('AcademicBaselineService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AcademicBaselineService,
-        { provide: ScholarBaselineService, useValue: scholarBaselineServiceMock },
-        { provide: BaselineDocumentIngestionService, useValue: baselineDocumentIngestionServiceMock },
-        { provide: CoordinatorBaselineService, useValue: coordinatorBaselineServiceMock },
-        { provide: ActiveScholarsAnalyticsService, useValue: activeScholarsAnalyticsServiceMock },
+        {
+          provide: ScholarBaselineService,
+          useValue: scholarBaselineServiceMock,
+        },
+        {
+          provide: BaselineDocumentIngestionService,
+          useValue: baselineDocumentIngestionServiceMock,
+        },
+        {
+          provide: CoordinatorBaselineService,
+          useValue: coordinatorBaselineServiceMock,
+        },
+        {
+          provide: ActiveScholarsAnalyticsService,
+          useValue: activeScholarsAnalyticsServiceMock,
+        },
       ],
     }).compile();
 
@@ -57,22 +79,30 @@ describe('AcademicBaselineService', () => {
 
   it('delegates getScholarBaselineState to ScholarBaselineService', async () => {
     await service.getScholarBaselineState(123);
-    expect(scholarBaselineServiceMock.getScholarBaselineState).toHaveBeenCalledWith(123);
+    expect(
+      scholarBaselineServiceMock.getScholarBaselineState,
+    ).toHaveBeenCalledWith(123);
   });
 
   it('delegates uploadProspectus to BaselineDocumentIngestionService', async () => {
     const files = [{ originalname: 'prospectus.pdf' }] as any;
     await service.uploadProspectus(123, files);
-    expect(baselineDocumentIngestionServiceMock.uploadProspectus).toHaveBeenCalledWith(123, files);
+    expect(
+      baselineDocumentIngestionServiceMock.uploadProspectus,
+    ).toHaveBeenCalledWith(123, files);
   });
 
   it('delegates getCoordinatorPendingBaselines to CoordinatorBaselineService', async () => {
     await service.getCoordinatorPendingBaselines();
-    expect(coordinatorBaselineServiceMock.getCoordinatorPendingBaselines).toHaveBeenCalled();
+    expect(
+      coordinatorBaselineServiceMock.getCoordinatorPendingBaselines,
+    ).toHaveBeenCalled();
   });
 
   it('delegates getCoordinatorActiveScholars to ActiveScholarsAnalyticsService', async () => {
     await service.getCoordinatorActiveScholars();
-    expect(activeScholarsAnalyticsServiceMock.getCoordinatorActiveScholars).toHaveBeenCalled();
+    expect(
+      activeScholarsAnalyticsServiceMock.getCoordinatorActiveScholars,
+    ).toHaveBeenCalled();
   });
 });

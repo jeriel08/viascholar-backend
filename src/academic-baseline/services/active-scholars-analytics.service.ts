@@ -188,12 +188,13 @@ export class ActiveScholarsAnalyticsService {
         ? {
             term: `${latestDisb.academic_year} ${latestDisb.semester}`,
             amount: Number(latestDisb.amount),
-            status: (latestDisb.status === 'CLAIMED' ||
-            latestDisb.status === 'RELEASED'
-              ? 'Paid'
-              : latestDisb.status === 'PENDING'
-                ? 'Pending'
-                : 'On hold') as 'Paid' | 'Pending' | 'On hold',
+            status:
+              latestDisb.status === 'CLAIMED' ||
+              latestDisb.status === 'RELEASED'
+                ? 'Paid'
+                : latestDisb.status === 'PENDING'
+                  ? 'Pending'
+                  : 'On hold',
           }
         : {
             term: 'Current Term',
@@ -218,22 +219,24 @@ export class ActiveScholarsAnalyticsService {
                 year: 'numeric',
               })
             : 'Pending',
-        status: (d.status === 'CLAIMED' || d.status === 'RELEASED'
-          ? 'Paid'
-          : d.status === 'PENDING'
-            ? 'Pending'
-            : 'On hold') as 'Paid' | 'Pending' | 'On hold',
+        status:
+          d.status === 'CLAIMED' || d.status === 'RELEASED'
+            ? 'Paid'
+            : d.status === 'PENDING'
+              ? 'Pending'
+              : 'On hold',
       }));
 
       // 7. Grade history
       const gradeHistory = gradeReports.map((gr) => ({
         term: `${gr.academic_year} ${gr.semester}`,
         gwa: Number(gr.gpa),
-        status: (gr.status === 'APPROVED'
-          ? 'Passed'
-          : gr.status === 'FLAGGED' || gr.status === 'REJECTED'
-            ? 'Failed'
-            : 'Incomplete') as 'Passed' | 'Failed' | 'Incomplete',
+        status:
+          gr.status === 'APPROVED'
+            ? 'Passed'
+            : gr.status === 'FLAGGED' || gr.status === 'REJECTED'
+              ? 'Failed'
+              : 'Incomplete',
       }));
 
       if (gradeHistory.length === 0 && gwa > 0) {

@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsNotEmpty, IsOptional, IsString, Max, Min } from 'class-validator';
+import {
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreateApplicationDto {
@@ -53,7 +60,8 @@ export class CreateApplicationDto {
 
   @ApiPropertyOptional({
     example: 1,
-    description: 'Current academic year level of the student (1 to 5: College, 6: Masteral, 7: Doctoral)',
+    description:
+      'Current academic year level of the student (1 to 5: College, 6: Masteral, 7: Doctoral)',
   })
   @Type(() => Number)
   @IsInt()

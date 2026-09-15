@@ -87,7 +87,7 @@ export class ApplicationStageService {
     // Check if an interview has already taken place
     const hasCompletedInterview = Boolean(
       application.interview_at &&
-        new Date(application.interview_at) <= new Date(),
+      new Date(application.interview_at) <= new Date(),
     );
 
     const isCoordinatorAccepting =
