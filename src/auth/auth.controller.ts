@@ -26,6 +26,9 @@ import { AuthService } from './auth.service.js';
 import { ProfileService } from './profile.service.js';
 import { LoginDto } from './dto/login.dto.js';
 import { RegisterScholarDto } from './dto/register-scholar.dto.js';
+import { ForgotPasswordDto } from './dto/forgot-password.dto.js';
+import { ResetPasswordDto } from './dto/reset-password.dto.js';
+import { GoogleLoginDto } from './dto/google-login.dto.js';
 import { Role } from '../generated/prisma/enums.js';
 import { Roles } from './decorators/roles.decorator.js';
 import { RolesGuard } from './decorators/roles.guard.js';
@@ -86,6 +89,45 @@ export class AuthController {
   })
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
+  }
+
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('forgot-password')
+  @ApiOperation({
+    summary: 'Request password reset email link',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Password reset link sent if account exists.',
+  })
+  forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(dto);
+  }
+
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('reset-password')
+  @ApiOperation({
+    summary: 'Reset password using secure signed email token',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Password reset successfully.',
+  })
+  resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto);
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Post('google')
+  @ApiOperation({
+    summary: 'Authenticate or Register using Google OAuth ID token',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Google authentication successful.',
+  })
+  googleLogin(@Body() dto: GoogleLoginDto) {
+    return this.authService.googleLogin(dto);
   }
 
   @Post('create-staff')

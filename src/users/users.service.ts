@@ -21,6 +21,14 @@ export class UsersService {
 
     if (query.role) {
       where.role = query.role;
+    } else if (query.roles) {
+      const roleList = query.roles
+        .split(',')
+        .map((r) => r.trim() as any)
+        .filter(Boolean);
+      if (roleList.length > 0) {
+        where.role = { in: roleList };
+      }
     }
 
     if (query.search) {
@@ -34,6 +42,16 @@ export class UsersService {
         {
           scholar_profile: {
             last_name: { contains: query.search, mode: 'insensitive' },
+          },
+        },
+        {
+          scholar_profile: {
+            course_of_study: { contains: query.search, mode: 'insensitive' },
+          },
+        },
+        {
+          scholar_profile: {
+            scholarship_track: { contains: query.search, mode: 'insensitive' },
           },
         },
         {

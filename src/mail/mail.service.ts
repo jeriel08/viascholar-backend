@@ -25,6 +25,7 @@ import {
   buildDocumentActionRequiredHtml,
   buildGradeReportStatusUpdatedHtml,
 } from './templates/document.templates.js';
+import { buildPasswordResetHtml } from './templates/password-reset.template.js';
 
 @Injectable()
 export class MailService {
@@ -352,6 +353,23 @@ export class MailService {
     await this.sendEmail(
       studentEmail,
       `Grade Report Update: ${data.status} (A.Y. ${data.academicYear} ${data.semester})`,
+      html,
+    );
+  }
+
+  // 14. Password Reset Email
+  async sendPasswordResetEmail(
+    email: string,
+    data: {
+      userName: string;
+      resetUrl: string;
+      expiresInMinutes: number;
+    },
+  ) {
+    const html = buildPasswordResetHtml(data);
+    await this.sendEmail(
+      email,
+      'Reset Your Password - ViaScholar',
       html,
     );
   }

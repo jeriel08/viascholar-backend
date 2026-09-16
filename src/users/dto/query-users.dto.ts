@@ -8,6 +8,11 @@ export class QueryUsersDto {
   @IsOptional()
   role?: Role;
 
+  @ApiPropertyOptional({ example: 'APPLICANT,SCHOLAR' })
+  @IsString()
+  @IsOptional()
+  roles?: string;
+
   @ApiPropertyOptional({ example: 'donna' })
   @IsString()
   @IsOptional()
