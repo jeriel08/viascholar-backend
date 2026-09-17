@@ -7,6 +7,11 @@ import {
   IDocumentExtractor,
   InputDocumentFile,
 } from './document-extractor.interface.js';
+import {
+  ENROLLMENT_COR_DATA_SCHEMA,
+  ENROLLMENT_SOA_DATA_SCHEMA,
+  CONSOLIDATED_ENROLLMENT_DATA_SCHEMA,
+} from './enrollment-extract.schemas.js';
 
 const DOCUMENT_DATA_SCHEMA = {
   type: 'object',
@@ -580,5 +585,47 @@ CRITICAL INSTRUCTIONS:
       total_units: rawData.total_units,
       subjects: Array.isArray(rawData.subjects) ? rawData.subjects : [],
     };
+  }
+
+  async extractEnrollmentCorData(
+    input: InputDocumentFile | InputDocumentFile[],
+  ): Promise<any> {
+    const systemPrompt = `You are an expert academic document OCR AI specializing in Philippine college and university Certificate of Registration (COR), Certificate of Matriculation (COM), E-Form, and Form 1.
+Extract the student identification, term, and enrolled subjects table. Cleanly parse subject codes, titles, credit units, section, and schedule.`;
+
+    const rawData = await this.executeExtraction<any>(
+      input,
+      ENROLLMENT_COR_DATA_SCHEMA,
+      systemPrompt,
+    );
+    return rawData;
+  }
+
+  async extractEnrollmentSoaData(
+    input: InputDocumentFile | InputDocumentFile[],
+  ): Promise<any> {
+    const systemPrompt = `You are an expert financial document OCR AI specializing in Philippine college and university Statement of Account (SOA), Student Ledgers, and Assessment Forms.
+Extract the student identification, academic year, semester, assessment date, total assessment, tuition/lab/misc fees, and net balance due.`;
+
+    const rawData = await this.executeExtraction<any>(
+      input,
+      ENROLLMENT_SOA_DATA_SCHEMA,
+      systemPrompt,
+    );
+    return rawData;
+  }
+
+  async extractConsolidatedEnrollmentData(
+    input: InputDocumentFile | InputDocumentFile[],
+  ): Promise<any> {
+    const systemPrompt = `You are an expert academic and financial document OCR AI specializing in consolidated Philippine university enrollment & assessment forms (e.g. UM Certificate of Matriculation, HCDC Registration/Assessment Form).
+Extract the student identification, semester, enrolled subjects table, and financial tuition assessment breakdown.`;
+
+    const rawData = await this.executeExtraction<any>(
+      input,
+      CONSOLIDATED_ENROLLMENT_DATA_SCHEMA,
+      systemPrompt,
+    );
+    return rawData;
   }
 }

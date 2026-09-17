@@ -18,6 +18,7 @@ import { EventsModule } from './events/events.module.js';
 import { ChatModule } from './chat/chat.module.js';
 import { ForumModule } from './forum/forum.module.js';
 import { AcademicBaselineModule } from './academic-baseline/academic-baseline.module.js';
+import { TermEnrollmentModule } from './term-enrollment/term-enrollment.module.js';
 import { AppController } from './app.controller.js';
 
 @Module({
@@ -42,6 +43,7 @@ import { AppController } from './app.controller.js';
     DocumentsModule,
     ContractsModule,
     AcademicBaselineModule,
+    TermEnrollmentModule,
     MailModule,
     EventsModule,
     ChatModule,
