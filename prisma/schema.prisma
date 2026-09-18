@@ -46,8 +46,12 @@ enum ContractStatus {
 
 enum DisbursementStatus {
   PENDING
+  AUTHORIZED
   RELEASED
+  CHECK_ISSUED
+  OR_SUBMITTED
   CLAIMED
+  SETTLED
   CANCELLED
 }
 
@@ -107,6 +111,7 @@ model Employee {
   reviewed_applications  Application[]        @relation("EmployeeReviewedApplications")
   reviewed_grade_reports GradeReport[]        @relation("EmployeeReviewedGradeReports")
   approved_disbursements Disbursement[]       @relation("EmployeeApprovedDisbursements")
+  settled_disbursements  Disbursement[]       @relation("EmployeeSettledDisbursements")
   reviewed_documents     ScholarDocument[]    @relation("EmployeeReviewedDocuments")
   verified_schools       SchoolGradingSystem[] @relation("SchoolGradingVerifiedBy")
   frozen_prospectuses    ScholarProspectus[]  @relation("EmployeeFrozenProspectus")
@@ -234,17 +239,29 @@ model Disbursement {
   academic_year           String             @db.VarChar(15)
   semester                String             @db.VarChar(15)
   amount                  Decimal            @db.Decimal(10, 2)
-  check_payee             String?            @db.VarChar(100)
+  voucher_number          String?            @db.VarChar(100)
+  check_payee             String?            @db.VarChar(150)
   check_number            String?            @db.VarChar(100)
+  bank_name               String?            @db.VarChar(100)
   payment_method          String?            @db.VarChar(100)
   status                  DisbursementStatus @default(PENDING)
   date_issued             DateTime?          @db.Date
   date_claimed            DateTime?          @db.Date
+  or_number               String?            @db.VarChar(100)
+  or_payment_date         DateTime?          @db.Date
+  or_document_id          Int?
+  or_verified_at          DateTime?
+  settled_at              DateTime?
+  settled_by_employee_id  Int?
   approved_by_employee_id Int?
   remarks                 String?            @db.Text
+  created_at              DateTime           @default(now())
+  updated_at              DateTime           @default(now()) @updatedAt
 
-  scholar_profile      ScholarProfile @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
-  approved_by_employee Employee?       @relation("EmployeeApprovedDisbursements", fields: [approved_by_employee_id], references: [employee_id])
+  scholar_profile      ScholarProfile   @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
+  approved_by_employee Employee?        @relation("EmployeeApprovedDisbursements", fields: [approved_by_employee_id], references: [employee_id])
+  settled_by_employee  Employee?        @relation("EmployeeSettledDisbursements", fields: [settled_by_employee_id], references: [employee_id])
+  or_document          ScholarDocument? @relation("DisbursementOfficialReceipt", fields: [or_document_id], references: [document_id], onDelete: SetNull)
   term_enrollment      TermEnrollment?
 
   @@map("disbursements")
@@ -273,8 +290,9 @@ model ScholarDocument {
   grade_reports        GradeReport[]
   prospectus_documents ScholarProspectus[]
   credited_subjects    ProspectusSubject[]
-  cor_enrollments      TermEnrollment[]     @relation("EnrollmentCorDocument")
-  soa_enrollments      TermEnrollment[]     @relation("EnrollmentSoaDocument")
+  cor_enrollments                 TermEnrollment[]     @relation("EnrollmentCorDocument")
+  soa_enrollments                 TermEnrollment[]     @relation("EnrollmentSoaDocument")
+  official_receipt_disbursements  Disbursement[]       @relation("DisbursementOfficialReceipt")
 
   @@map("scholar_documents")
 }

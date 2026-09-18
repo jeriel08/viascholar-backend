@@ -82,6 +82,30 @@ export class ScholarEnrollmentService {
       mimeType: file.mimetype,
     });
 
+    const ay = extractedData.academic_year || '2026-2027';
+    const sem = extractedData.semester || '1st Semester';
+    const yr = extractedData.year_level || scholar.current_year_level || 1;
+
+    // Clean up old draft COR document if re-uploading
+    const existingDraft = await this.prisma.termEnrollment.findFirst({
+      where: {
+        scholar_profile_id: scholar.profile_id,
+        academic_year: ay,
+        semester: sem,
+        status: 'DRAFT',
+      },
+    });
+    if (existingDraft?.cor_document_id) {
+      const oldDoc = await this.prisma.scholarDocument.findUnique({
+        where: { document_id: existingDraft.cor_document_id },
+      });
+      if (oldDoc && oldDoc.status !== 'VERIFIED') {
+        await this.prisma.scholarDocument.delete({
+          where: { document_id: existingDraft.cor_document_id },
+        }).catch(() => {});
+      }
+    }
+
     // Save ScholarDocument
     const doc = await this.prisma.scholarDocument.create({
       data: {
@@ -97,10 +121,59 @@ export class ScholarEnrollmentService {
       },
     });
 
+    const auditResult = await this.auditEngineService.runAudit(
+      scholar.profile_id,
+      (extractedData.subjects || []) as any,
+      {
+        corStudentId: extractedData.student_number,
+        corStudentName: extractedData.student_name,
+        academicYear: ay,
+        semester: sem,
+      },
+    );
+
+    const draft = await this.prisma.termEnrollment.upsert({
+      where: {
+        scholar_profile_id_academic_year_semester: {
+          scholar_profile_id: scholar.profile_id,
+          academic_year: ay,
+          semester: sem,
+        },
+      },
+      create: {
+        scholar_profile_id: scholar.profile_id,
+        academic_year: ay,
+        semester: sem,
+        year_level: yr,
+        is_consolidated: false,
+        cor_document_id: doc.document_id,
+        total_units: extractedData.total_units || 0,
+        total_assessment: 0,
+        status: 'DRAFT',
+        audit_flags: auditResult.flags as any,
+        enrolled_subjects: extractedData.subjects as any,
+        cross_doc_reconciliation: auditResult.cross_doc_reconciliation as any,
+      },
+      update: {
+        cor_document_id: doc.document_id,
+        enrolled_subjects: extractedData.subjects as any,
+        total_units: extractedData.total_units || 0,
+        year_level: yr,
+        audit_flags: auditResult.flags as any,
+        cross_doc_reconciliation: auditResult.cross_doc_reconciliation as any,
+      },
+      include: {
+        cor_document: true,
+        soa_document: true,
+      },
+    });
+
     return {
       document_id: doc.document_id,
       file_url: uploadRes.secure_url,
       extracted_data: extractedData,
+      draft_enrollment: draft,
+      audit_result: auditResult,
     };
   }
 
@@ -117,6 +190,30 @@ export class ScholarEnrollmentService {
       mimeType: file.mimetype,
     });
 
+    const ay = extractedData.academic_year || '2026-2027';
+    const sem = extractedData.semester || '1st Semester';
+    const yr = scholar.current_year_level || 1;
+
+    // Clean up old draft SOA document if re-uploading
+    const existingDraft = await this.prisma.termEnrollment.findFirst({
+      where: {
+        scholar_profile_id: scholar.profile_id,
+        academic_year: ay,
+        semester: sem,
+        status: 'DRAFT',
+      },
+    });
+    if (existingDraft?.soa_document_id && existingDraft.soa_document_id !== existingDraft.cor_document_id) {
+      const oldDoc = await this.prisma.scholarDocument.findUnique({
+        where: { document_id: existingDraft.soa_document_id },
+      });
+      if (oldDoc && oldDoc.status !== 'VERIFIED') {
+        await this.prisma.scholarDocument.delete({
+          where: { document_id: existingDraft.soa_document_id },
+        }).catch(() => {});
+      }
+    }
+
     const doc = await this.prisma.scholarDocument.create({
       data: {
         scholar_profile_id: scholar.profile_id,
@@ -131,10 +228,79 @@ export class ScholarEnrollmentService {
       },
     });
 
+    const billingBreakdown = {
+      tuition_fee: extractedData.tuition_fee,
+      lab_fees: extractedData.lab_fees,
+      misc_fees: extractedData.misc_fees,
+      other_fees: extractedData.other_fees,
+      previous_balance: extractedData.previous_balance,
+      discounts: extractedData.discounts,
+      net_balance_due: extractedData.net_balance_due ?? extractedData.total_assessment,
+    };
+
+    const existingEnrollment = await this.prisma.termEnrollment.findFirst({
+      where: {
+        scholar_profile_id: scholar.profile_id,
+        academic_year: ay,
+        semester: sem,
+      },
+    });
+    const subjectsToAudit = (existingEnrollment?.enrolled_subjects as any) || [];
+
+    const auditResult = await this.auditEngineService.runAudit(
+      scholar.profile_id,
+      subjectsToAudit,
+      {
+        soaStudentId: extractedData.student_number,
+        soaStudentName: extractedData.student_name,
+        academicYear: ay,
+        semester: sem,
+      },
+    );
+
+    const draft = await this.prisma.termEnrollment.upsert({
+      where: {
+        scholar_profile_id_academic_year_semester: {
+          scholar_profile_id: scholar.profile_id,
+          academic_year: ay,
+          semester: sem,
+        },
+      },
+      create: {
+        scholar_profile_id: scholar.profile_id,
+        academic_year: ay,
+        semester: sem,
+        year_level: yr,
+        is_consolidated: false,
+        soa_document_id: doc.document_id,
+        total_units: 0,
+        total_assessment: extractedData.total_assessment || 0,
+        assessment_date: extractedData.assessment_date ? new Date(extractedData.assessment_date) : null,
+        status: 'DRAFT',
+        audit_flags: auditResult.flags as any,
+        billing_breakdown: billingBreakdown as any,
+        cross_doc_reconciliation: auditResult.cross_doc_reconciliation as any,
+      },
+      update: {
+        soa_document_id: doc.document_id,
+        total_assessment: extractedData.total_assessment || 0,
+        assessment_date: extractedData.assessment_date ? new Date(extractedData.assessment_date) : null,
+        audit_flags: auditResult.flags as any,
+        billing_breakdown: billingBreakdown as any,
+        cross_doc_reconciliation: auditResult.cross_doc_reconciliation as any,
+      },
+      include: {
+        cor_document: true,
+        soa_document: true,
+      },
+    });
+
     return {
       document_id: doc.document_id,
       file_url: uploadRes.secure_url,
       extracted_data: extractedData,
+      draft_enrollment: draft,
+      audit_result: auditResult,
     };
   }
 
@@ -151,6 +317,30 @@ export class ScholarEnrollmentService {
       mimeType: file.mimetype,
     });
 
+    const ay = extractedData.academic_year || '2026-2027';
+    const sem = extractedData.semester || '1st Semester';
+    const yr = extractedData.year_level || scholar.current_year_level || 1;
+
+    // Clean up old draft consolidated document if re-uploading
+    const existingDraft = await this.prisma.termEnrollment.findFirst({
+      where: {
+        scholar_profile_id: scholar.profile_id,
+        academic_year: ay,
+        semester: sem,
+        status: 'DRAFT',
+      },
+    });
+    if (existingDraft?.cor_document_id) {
+      const oldDoc = await this.prisma.scholarDocument.findUnique({
+        where: { document_id: existingDraft.cor_document_id },
+      });
+      if (oldDoc && oldDoc.status !== 'VERIFIED') {
+        await this.prisma.scholarDocument.delete({
+          where: { document_id: existingDraft.cor_document_id },
+        }).catch(() => {});
+      }
+    }
+
     const doc = await this.prisma.scholarDocument.create({
       data: {
         scholar_profile_id: scholar.profile_id,
@@ -165,47 +355,97 @@ export class ScholarEnrollmentService {
       },
     });
 
+    const billingBreakdown = {
+      tuition_fee: extractedData.tuition_fee,
+      lab_fees: extractedData.lab_fees,
+      misc_fees: extractedData.misc_fees,
+      other_fees: extractedData.other_fees,
+      previous_balance: extractedData.previous_balance,
+      discounts: extractedData.discounts,
+      net_balance_due: extractedData.net_balance_due ?? extractedData.total_assessment,
+    };
+
+    const auditResult = await this.auditEngineService.runAudit(
+      scholar.profile_id,
+      (extractedData.subjects || []) as any,
+      {
+        corStudentId: extractedData.student_number,
+        corStudentName: extractedData.student_name,
+        soaStudentId: extractedData.student_number,
+        soaStudentName: extractedData.student_name,
+        academicYear: ay,
+        semester: sem,
+      },
+    );
+
+    const draft = await this.prisma.termEnrollment.upsert({
+      where: {
+        scholar_profile_id_academic_year_semester: {
+          scholar_profile_id: scholar.profile_id,
+          academic_year: ay,
+          semester: sem,
+        },
+      },
+      create: {
+        scholar_profile_id: scholar.profile_id,
+        academic_year: ay,
+        semester: sem,
+        year_level: yr,
+        is_consolidated: true,
+        cor_document_id: doc.document_id,
+        soa_document_id: doc.document_id,
+        total_units: extractedData.total_units || 0,
+        total_assessment: extractedData.total_assessment || 0,
+        assessment_date: extractedData.assessment_date ? new Date(extractedData.assessment_date) : null,
+        status: 'DRAFT',
+        audit_flags: auditResult.flags as any,
+        enrolled_subjects: extractedData.subjects as any,
+        billing_breakdown: billingBreakdown as any,
+        cross_doc_reconciliation: auditResult.cross_doc_reconciliation as any,
+      },
+      update: {
+        is_consolidated: true,
+        cor_document_id: doc.document_id,
+        soa_document_id: doc.document_id,
+        total_units: extractedData.total_units || 0,
+        total_assessment: extractedData.total_assessment || 0,
+        assessment_date: extractedData.assessment_date ? new Date(extractedData.assessment_date) : null,
+        audit_flags: auditResult.flags as any,
+        enrolled_subjects: extractedData.subjects as any,
+        billing_breakdown: billingBreakdown as any,
+        cross_doc_reconciliation: auditResult.cross_doc_reconciliation as any,
+      },
+      include: {
+        cor_document: true,
+        soa_document: true,
+      },
+    });
+
     return {
       document_id: doc.document_id,
       file_url: uploadRes.secure_url,
       extracted_data: extractedData,
+      draft_enrollment: draft,
+      audit_result: auditResult,
     };
   }
 
-  // 5. Pre-audit calculation before final submission
-  async runPreAudit(userId: number, dto: SubmitEnrollmentDto) {
-    const scholar = await this.getScholarProfile(userId);
-    return this.auditEngineService.runAudit(scholar.profile_id, dto.enrolled_subjects, {
-      academicYear: dto.academic_year,
-      semester: dto.semester,
-    });
-  }
-
-  // 6. Submit final term enrollment for review
-  async submitEnrollment(userId: number, dto: SubmitEnrollmentDto) {
-    const scholar = await this.getScholarProfile(userId);
-
-    // Run audit engine
-    const auditResult = await this.auditEngineService.runAudit(
-      scholar.profile_id,
-      dto.enrolled_subjects,
-      {
-        academicYear: dto.academic_year,
-        semester: dto.semester,
-      },
-    );
-
-    // Upsert TermEnrollment record
-    const enrollment = await this.prisma.termEnrollment.upsert({
+  private async upsertEnrollment(
+    scholarProfileId: number,
+    dto: SubmitEnrollmentDto,
+    status: 'DRAFT' | 'PENDING_REVIEW',
+    auditResult: any,
+  ) {
+    return this.prisma.termEnrollment.upsert({
       where: {
         scholar_profile_id_academic_year_semester: {
-          scholar_profile_id: scholar.profile_id,
+          scholar_profile_id: scholarProfileId,
           academic_year: dto.academic_year,
           semester: dto.semester,
         },
       },
       create: {
-        scholar_profile_id: scholar.profile_id,
+        scholar_profile_id: scholarProfileId,
         academic_year: dto.academic_year,
         semester: dto.semester,
         year_level: dto.year_level,
@@ -215,7 +455,7 @@ export class ScholarEnrollmentService {
         total_units: dto.total_units,
         total_assessment: dto.total_assessment,
         assessment_date: dto.assessment_date ? new Date(dto.assessment_date) : null,
-        status: 'PENDING_REVIEW',
+        status,
         audit_flags: auditResult.flags as any,
         enrolled_subjects: dto.enrolled_subjects as any,
         billing_breakdown: dto.billing_breakdown as any,
@@ -229,7 +469,7 @@ export class ScholarEnrollmentService {
         total_units: dto.total_units,
         total_assessment: dto.total_assessment,
         assessment_date: dto.assessment_date ? new Date(dto.assessment_date) : null,
-        status: 'PENDING_REVIEW',
+        status,
         audit_flags: auditResult.flags as any,
         enrolled_subjects: dto.enrolled_subjects as any,
         billing_breakdown: dto.billing_breakdown as any,
@@ -240,6 +480,88 @@ export class ScholarEnrollmentService {
         soa_document: true,
       },
     });
+  }
+
+  // 5. Save or update draft enrollment without submitting
+  async saveDraft(userId: number, dto: SubmitEnrollmentDto) {
+    const scholar = await this.getScholarProfile(userId);
+    const auditResult = await this.auditEngineService.runAudit(
+      scholar.profile_id,
+      dto.enrolled_subjects,
+      { academicYear: dto.academic_year, semester: dto.semester },
+    );
+    const draft = await this.upsertEnrollment(scholar.profile_id, dto, 'DRAFT', auditResult);
+    return {
+      message: 'Draft enrollment saved successfully.',
+      enrollment: draft,
+      audit_result: auditResult,
+    };
+  }
+
+  // 6. Discard draft enrollment
+  async discardDraft(userId: number, academicYear?: string, semester?: string) {
+    const scholar = await this.getScholarProfile(userId);
+    const whereClause: any = {
+      scholar_profile_id: scholar.profile_id,
+      status: 'DRAFT',
+    };
+    if (academicYear && semester) {
+      whereClause.academic_year = academicYear;
+      whereClause.semester = semester;
+    }
+
+    const drafts = await this.prisma.termEnrollment.findMany({
+      where: whereClause,
+      select: { cor_document_id: true, soa_document_id: true },
+    });
+
+    const docIdsToDelete: number[] = [];
+    for (const d of drafts) {
+      if (d.cor_document_id) docIdsToDelete.push(d.cor_document_id);
+      if (d.soa_document_id && d.soa_document_id !== d.cor_document_id) {
+        docIdsToDelete.push(d.soa_document_id);
+      }
+    }
+
+    const deleted = await this.prisma.termEnrollment.deleteMany({
+      where: whereClause,
+    });
+
+    if (docIdsToDelete.length > 0) {
+      await this.prisma.scholarDocument
+        .deleteMany({
+          where: {
+            document_id: { in: docIdsToDelete },
+            status: { not: 'VERIFIED' },
+          },
+        })
+        .catch(() => {});
+    }
+
+    return {
+      message: 'Draft enrollment cleared successfully.',
+      count: deleted.count,
+    };
+  }
+
+  // 7. Pre-audit calculation before final submission
+  async runPreAudit(userId: number, dto: SubmitEnrollmentDto) {
+    const scholar = await this.getScholarProfile(userId);
+    return this.auditEngineService.runAudit(scholar.profile_id, dto.enrolled_subjects, {
+      academicYear: dto.academic_year,
+      semester: dto.semester,
+    });
+  }
+
+  // 8. Submit final term enrollment for review
+  async submitEnrollment(userId: number, dto: SubmitEnrollmentDto) {
+    const scholar = await this.getScholarProfile(userId);
+    const auditResult = await this.auditEngineService.runAudit(
+      scholar.profile_id,
+      dto.enrolled_subjects,
+      { academicYear: dto.academic_year, semester: dto.semester },
+    );
+    const enrollment = await this.upsertEnrollment(scholar.profile_id, dto, 'PENDING_REVIEW', auditResult);
 
     await this.auditService.log(
       userId,

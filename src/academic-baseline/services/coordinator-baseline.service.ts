@@ -265,6 +265,33 @@ export class CoordinatorBaselineService {
       },
     });
 
+    // Update the prospectus document status to VERIFIED in scholar_documents
+    if (prospectus.document_id) {
+      await this.prisma.scholarDocument.update({
+        where: { document_id: prospectus.document_id },
+        data: {
+          status: 'VERIFIED',
+          verified_at: frozenAt,
+          reviewed_by_employee_id: employee.employee_id,
+        },
+      });
+    }
+
+    // Update any attached historical CCG documents to VERIFIED
+    const historicalDocIds = prospectus.subjects
+      .map((s) => s.historical_document_id)
+      .filter((id): id is number => !!id);
+    if (historicalDocIds.length > 0) {
+      await this.prisma.scholarDocument.updateMany({
+        where: { document_id: { in: historicalDocIds } },
+        data: {
+          status: 'VERIFIED',
+          verified_at: frozenAt,
+          reviewed_by_employee_id: employee.employee_id,
+        },
+      });
+    }
+
     await this.prisma.scholarProfile.update({
       where: { profile_id: prospectus.scholar_profile_id },
       data: { academic_baseline_status: 'BASELINE_FROZEN' },

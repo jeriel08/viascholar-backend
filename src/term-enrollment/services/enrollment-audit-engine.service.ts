@@ -24,6 +24,132 @@ export class EnrollmentAuditEngineService {
       .replace(/(?<=[A-Z])I$/g, '1');
   }
 
+  getBaseSubjectCode(code: string): string {
+    if (!code) return '';
+    let normalized = this.normalizeSubjectCode(code);
+    normalized = normalized
+      .replace(/(?:LAB|LEC)$/i, '')
+      .replace(/(?<=\d[A-Z]?)L$/i, '')
+      .replace(/(?<=\d)L$/i, '');
+    return normalized;
+  }
+
+  private isNonPrerequisiteToken(token: string): boolean {
+    if (!token) return true;
+    const clean = token.trim().toLowerCase();
+    if (clean.length <= 1) return true;
+
+    const ignorableKeywords = [
+      'none',
+      'n/a',
+      'na',
+      'n.a.',
+      'n / a',
+      '-',
+      '--',
+      'nil',
+      'null',
+      'l',
+      'lab',
+      'lec',
+      '/l',
+      '/lab',
+      '/lec',
+      'no prerequisite',
+      'no prerequisites',
+      'no pre-requisite',
+      'none.',
+      'none / n/a',
+      'n/a.',
+      'n/a / none',
+    ];
+    if (ignorableKeywords.includes(clean)) return true;
+
+    // Academic standing / non-course requirements
+    if (
+      clean.includes('standing') ||
+      clean.includes('year') ||
+      clean.includes('level') ||
+      clean.includes('units') ||
+      clean.includes('graduating') ||
+      clean.includes('permission') ||
+      clean.includes('consent') ||
+      clean.includes('adviser') ||
+      clean.includes('regular') ||
+      clean.includes('n/a') ||
+      clean.includes('none')
+    ) {
+      return true;
+    }
+
+    // Must contain letters and digits or be a known code
+    if (!/[a-z]/i.test(clean)) return true;
+
+    return false;
+  }
+
+  parsePrerequisiteTokens(rawPrereqs: unknown): string[] {
+    if (!rawPrereqs) return [];
+    const list: string[] = [];
+
+    const items = Array.isArray(rawPrereqs)
+      ? rawPrereqs
+      : typeof rawPrereqs === 'string'
+        ? [rawPrereqs]
+        : [];
+
+    for (const item of items) {
+      if (typeof item !== 'string') continue;
+      const cleanItem = item.trim();
+      if (this.isNonPrerequisiteToken(cleanItem)) continue;
+
+      // Split by commas, semicolons, ampersands, or "and", "or", or "/" when surrounded by whitespace
+      const tokens = cleanItem.split(/[,;&|]|\s+(?:and|or)\s+|\s+\/\s+/i);
+      for (const t of tokens) {
+        const trimmed = t.trim();
+        if (trimmed && !this.isNonPrerequisiteToken(trimmed)) {
+          list.push(trimmed);
+        }
+      }
+    }
+
+    return list;
+  }
+
+  private isSubjectCleared(sub: {
+    status?: string | null;
+    grade?: any;
+    credited_term?: string | null;
+    historical_document_id?: number | null;
+    remarks?: string | null;
+  }): boolean {
+    const statusUpper = (sub.status || '').toUpperCase().trim();
+    if (['PASSED', 'CREDITED', 'TAKEN', 'COMPLETED', 'CREDIT', 'ENROLLED'].includes(statusUpper)) {
+      return true;
+    }
+
+    if (sub.grade !== null && sub.grade !== undefined) {
+      const g = Number(sub.grade);
+      if (!Number.isNaN(g) && g > 0 && g !== 5.0) {
+        return true;
+      }
+    }
+
+    if (sub.credited_term && sub.credited_term.trim() !== '') {
+      return true;
+    }
+
+    if (sub.historical_document_id != null) {
+      return true;
+    }
+
+    if (sub.remarks && /passed|credited|cleared|equivalent|enrolled/i.test(sub.remarks)) {
+      return true;
+    }
+
+    return false;
+  }
+
   async runAudit(
     scholarProfileId: number,
     enrolledSubjects: EnrolledSubjectItemDto[],
@@ -49,15 +175,24 @@ export class EnrollmentAuditEngineService {
 
     for (const sub of curriculumSubjects) {
       const normCode = this.normalizeSubjectCode(sub.subject_code);
-      normalizedCurriculumMap.set(normCode, sub);
+      const baseCode = this.getBaseSubjectCode(sub.subject_code);
+      if (normCode) normalizedCurriculumMap.set(normCode, sub);
+      if (baseCode && !normalizedCurriculumMap.has(baseCode)) {
+        normalizedCurriculumMap.set(baseCode, sub);
+      }
     }
 
-    // Set of cleared subject codes (PASSED or CREDITED)
+    // Set of cleared subject codes (PASSED, CREDITED, Graded, or Credited Term)
     const clearedCodes = new Set<string>();
     for (const sub of curriculumSubjects) {
-      const statusUpper = (sub.status || '').toUpperCase();
-      if (statusUpper === 'PASSED' || statusUpper === 'CREDITED') {
-        clearedCodes.add(this.normalizeSubjectCode(sub.subject_code));
+      if (this.isSubjectCleared(sub)) {
+        const norm = this.normalizeSubjectCode(sub.subject_code);
+        const base = this.getBaseSubjectCode(sub.subject_code);
+        if (norm) clearedCodes.add(norm);
+        if (base) clearedCodes.add(base);
+        if (norm && !norm.endsWith('L')) {
+          clearedCodes.add(norm + 'L');
+        }
       }
     }
 
@@ -67,10 +202,13 @@ export class EnrollmentAuditEngineService {
 
     for (const enrolled of enrolledSubjects) {
       const normEnrolledCode = this.normalizeSubjectCode(enrolled.subject_code);
+      const baseEnrolledCode = this.getBaseSubjectCode(enrolled.subject_code);
       const units = Number(enrolled.units) || 3.0;
       totalUnits += units;
 
-      const matchedCurriculumSub = normalizedCurriculumMap.get(normEnrolledCode);
+      const matchedCurriculumSub =
+        normalizedCurriculumMap.get(normEnrolledCode) ||
+        normalizedCurriculumMap.get(baseEnrolledCode);
 
       if (!matchedCurriculumSub) {
         // Off-track / unlisted elective
@@ -89,14 +227,13 @@ export class EnrollmentAuditEngineService {
       }
 
       // Check prerequisites
-      const prereqs: string[] = Array.isArray(matchedCurriculumSub.prerequisites)
-        ? (matchedCurriculumSub.prerequisites as string[])
-        : [];
+      const prereqTokens = this.parsePrerequisiteTokens(matchedCurriculumSub.prerequisites);
 
       const unmetPrereqs: string[] = [];
-      for (const p of prereqs) {
+      for (const p of prereqTokens) {
         const normP = this.normalizeSubjectCode(p);
-        if (normP && !clearedCodes.has(normP)) {
+        const baseP = this.getBaseSubjectCode(p);
+        if (normP && !clearedCodes.has(normP) && !clearedCodes.has(baseP)) {
           unmetPrereqs.push(p);
         }
       }

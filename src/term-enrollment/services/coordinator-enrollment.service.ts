@@ -37,10 +37,10 @@ export class CoordinatorEnrollmentService {
   // 1. Get queue of term enrollments pending review
   async getPendingEnrollments(search?: string, status?: string) {
     const where: any = {};
-    if (status) {
+    if (status && status !== 'ALL') {
       where.status = status;
     } else {
-      where.status = { in: ['PENDING_REVIEW', 'CHANGES_REQUESTED'] };
+      where.status = { not: 'DRAFT' };
     }
 
     if (search) {
@@ -190,6 +190,28 @@ export class CoordinatorEnrollmentService {
           }
         }
 
+        // 4. Update COR & SOA documents status to VERIFIED in ScholarDocument table
+        if (enrollment.cor_document_id) {
+          await tx.scholarDocument.update({
+            where: { document_id: enrollment.cor_document_id },
+            data: {
+              status: 'VERIFIED',
+              verified_at: new Date(),
+              reviewed_by_employee_id: coordinator.employee_id,
+            },
+          });
+        }
+        if (enrollment.soa_document_id && enrollment.soa_document_id !== enrollment.cor_document_id) {
+          await tx.scholarDocument.update({
+            where: { document_id: enrollment.soa_document_id },
+            data: {
+              status: 'VERIFIED',
+              verified_at: new Date(),
+              reviewed_by_employee_id: coordinator.employee_id,
+            },
+          });
+        }
+
         return { updatedEnrollment, disbursement };
       });
 
@@ -289,5 +311,63 @@ export class CoordinatorEnrollmentService {
         enrollment: updated,
       };
     }
+  }
+
+  // 4. Grantor authorizes disbursement for approved term enrollment
+  async grantorAuthorizeDisbursement(
+    userId: number,
+    enrollmentId: number,
+    dto?: { remarks?: string; check_number?: string; payment_method?: string },
+  ) {
+    const enrollment = await this.prisma.termEnrollment.findUnique({
+      where: { enrollment_id: enrollmentId },
+      include: {
+        disbursement: true,
+        scholar_profile: true,
+      },
+    });
+
+    if (!enrollment) {
+      throw new NotFoundException(`Term enrollment #${enrollmentId} not found.`);
+    }
+
+    if (!enrollment.disbursement_id || !enrollment.disbursement) {
+      throw new BadRequestException('No pending disbursement found for this enrollment.');
+    }
+
+    const updatedDisbursement = await this.prisma.disbursement.update({
+      where: { disbursement_id: enrollment.disbursement_id },
+      data: {
+        status: 'RELEASED',
+        date_issued: new Date(),
+        check_number: dto?.check_number,
+        payment_method: dto?.payment_method || 'BANK_TRANSFER',
+        remarks: dto?.remarks
+          ? `${enrollment.disbursement.remarks || ''}\nGrantor Authorization: ${dto.remarks}`.trim()
+          : enrollment.disbursement.remarks,
+      },
+    });
+
+    await this.auditService.log(
+      userId,
+      'GRANTOR_APPROVE_DISBURSEMENT',
+      `Grantor authorized disbursement #${updatedDisbursement.disbursement_id} of PHP ${updatedDisbursement.amount} for scholar #${enrollment.scholar_profile_id}`,
+    );
+
+    this.eventsGateway.emitToStaff('disbursement:updated', {
+      disbursement_id: updatedDisbursement.disbursement_id,
+      status: 'RELEASED',
+      scholar_id: enrollment.scholar_profile_id,
+    });
+    this.eventsGateway.emitToUser(enrollment.scholar_profile.user_id, 'disbursement:updated', {
+      disbursement_id: updatedDisbursement.disbursement_id,
+      status: 'RELEASED',
+      amount: updatedDisbursement.amount,
+    });
+
+    return {
+      message: 'Disbursement authorized and marked as released.',
+      disbursement: updatedDisbursement,
+    };
   }
 }

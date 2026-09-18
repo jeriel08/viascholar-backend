@@ -12,6 +12,10 @@ import {
   ENROLLMENT_SOA_DATA_SCHEMA,
   CONSOLIDATED_ENROLLMENT_DATA_SCHEMA,
 } from './enrollment-extract.schemas.js';
+import {
+  OFFICIAL_RECEIPT_DATA_SCHEMA,
+  type ExtractedReceiptData,
+} from './receipt-extract.schemas.js';
 
 const DOCUMENT_DATA_SCHEMA = {
   type: 'object',
@@ -624,6 +628,24 @@ Extract the student identification, semester, enrolled subjects table, and finan
     const rawData = await this.executeExtraction<any>(
       input,
       CONSOLIDATED_ENROLLMENT_DATA_SCHEMA,
+      systemPrompt,
+    );
+    return rawData;
+  }
+
+  async extractOfficialReceiptData(
+    input: InputDocumentFile | InputDocumentFile[],
+  ): Promise<ExtractedReceiptData> {
+    const systemPrompt = `You are an expert OCR and structured data extraction AI specializing in Philippine university cashier Official Receipts (OR).
+IMPORTANT EXTRACTION GUIDELINES:
+1. Philippine university receipts (e.g. from University of Mindanao / UM, Ateneo, UIC, USEP, HCDC) are frequently printed on continuous pre-printed dot-matrix forms or thermal paper slips.
+2. Text and numbers may be printed out of place, misaligned with pre-printed form boxes, or overlapping cashier stamps ("PAID", date stamps, cashier signature).
+3. The Official Receipt Number (OR #) is frequently composite, hyphenated, or alphanumeric with trailing letters (e.g. '46127-004084B', '109284-B', '0048192'). Extract the complete, exact alphanumeric string.
+4. Extract the Student ID Number (e.g. '46127' or '2021-00123'), full Student/Payor Name, total numeric Amount Paid (PHP), cashier transaction date (YYYY-MM-DD), issuing University Name, and Payment Mode (e.g., 'CHECK', 'CASH').`;
+
+    const rawData = await this.executeExtraction<ExtractedReceiptData>(
+      input,
+      OFFICIAL_RECEIPT_DATA_SCHEMA,
       systemPrompt,
     );
     return rawData;

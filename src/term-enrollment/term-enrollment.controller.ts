@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -158,6 +159,16 @@ export class TermEnrollmentController {
     return this.scholarService.uploadAndParseConsolidated(req.user.user_id, files[0]);
   }
 
+  @Post('draft')
+  @Roles(Role.SCHOLAR)
+  @ApiOperation({ summary: 'Save or update draft term enrollment without submitting' })
+  async saveDraft(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: SubmitEnrollmentDto,
+  ) {
+    return this.scholarService.saveDraft(req.user.user_id, dto);
+  }
+
   @Post('pre-audit')
   @Roles(Role.SCHOLAR)
   @ApiOperation({ summary: 'Run live pre-audit checks on enrolled subjects against frozen baseline' })
@@ -178,13 +189,28 @@ export class TermEnrollmentController {
     return this.scholarService.submitEnrollment(req.user.user_id, dto);
   }
 
+  @Delete('draft')
+  @Roles(Role.SCHOLAR)
+  @ApiOperation({ summary: 'Discard and clear active draft term enrollment' })
+  async discardDraft(
+    @Request() req: AuthenticatedRequest,
+    @Query('academic_year') academicYear?: string,
+    @Query('semester') semester?: string,
+  ) {
+    return this.scholarService.discardDraft(
+      req.user.user_id,
+      academicYear,
+      semester,
+    );
+  }
+
   // ==========================================
-  // COORDINATOR ENDPOINTS
+  // COORDINATOR & GRANTOR MONITORING ENDPOINTS
   // ==========================================
 
   @Get('coordinator/pending')
-  @Roles(Role.COORDINATOR, Role.ADMIN)
-  @ApiOperation({ summary: 'Get queue of term enrollments pending review' })
+  @Roles(Role.COORDINATOR, Role.ADMIN, Role.GRANTOR)
+  @ApiOperation({ summary: 'Get queue of term enrollments pending review or disbursement' })
   async getPendingEnrollments(
     @Query('search') search?: string,
     @Query('status') status?: string,
@@ -193,7 +219,7 @@ export class TermEnrollmentController {
   }
 
   @Get('coordinator/:id')
-  @Roles(Role.COORDINATOR, Role.ADMIN)
+  @Roles(Role.COORDINATOR, Role.ADMIN, Role.GRANTOR)
   @ApiOperation({ summary: 'Get full enrollment detail for side-by-side quick audit' })
   async getEnrollmentDetails(@Param('id', ParseIntPipe) id: number) {
     return this.coordinatorService.getEnrollmentDetails(id);
@@ -208,5 +234,16 @@ export class TermEnrollmentController {
     @Body() dto: ReviewEnrollmentDto,
   ) {
     return this.coordinatorService.reviewEnrollment(req.user.user_id, id, dto);
+  }
+
+  @Post('grantor/:id/authorize-disbursement')
+  @Roles(Role.GRANTOR, Role.ADMIN)
+  @ApiOperation({ summary: 'Grantor authorizes and releases tuition disbursement for approved enrollment' })
+  async authorizeDisbursement(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { remarks?: string; check_number?: string; payment_method?: string },
+  ) {
+    return this.coordinatorService.grantorAuthorizeDisbursement(req.user.user_id, id, dto);
   }
 }
