@@ -13,6 +13,7 @@ import { DocumentReconciliationService } from './document-reconciliation.service
 
 import { LlamaExtractService } from './extractors/llama-extract.service.js';
 import { ParseurExtractorService } from './extractors/parseur-extractor.service.js';
+import { AcademicAppealService } from './academic-appeal.service.js';
 
 @Module({
   imports: [CloudinaryModule, SettingsModule],
@@ -22,6 +23,7 @@ import { ParseurExtractorService } from './extractors/parseur-extractor.service.
     DocumentOcrService,
     DocumentEvaluationService,
     GradeReportsService,
+    AcademicAppealService,
     PdfMergerService,
     GradeCalculatorService,
     FileForensicsService,
@@ -34,6 +36,7 @@ import { ParseurExtractorService } from './extractors/parseur-extractor.service.
     DocumentOcrService,
     DocumentEvaluationService,
     GradeReportsService,
+    AcademicAppealService,
     PdfMergerService,
     GradeCalculatorService,
     FileForensicsService,

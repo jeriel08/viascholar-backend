@@ -385,18 +385,30 @@ export class SettingsService implements OnModuleInit {
     }
 
     // 3. Evaluate Numerical Thresholds (Respecting scale direction)
-    const highest = Number(schoolConfig?.highest_grade ?? 100);
-    const passing = Number(schoolConfig?.passing_grade ?? 75);
-    const failing = Number(schoolConfig?.failing_grade ?? 50);
+    let highest = Number(schoolConfig?.highest_grade);
+    let passing = Number(schoolConfig?.passing_grade);
+    let failing = Number(schoolConfig?.failing_grade);
+
+    if (!schoolConfig || isNaN(highest) || isNaN(passing)) {
+      if (numGrade <= 5.0 && numGrade >= 1.0) {
+        // Decimal scale (e.g. UP/USEP/standard 5.0 where 1.0 is highest and 3.0 is passing)
+        highest = 1.0;
+        passing = 3.0;
+        failing = 5.0;
+      } else {
+        // Standard percentage scale (75 passing, 100 highest)
+        highest = 100;
+        passing = 75;
+        failing = 50;
+      }
+    }
 
     let isPassing = false;
     if (highest < failing) {
       // 5-point inverted scale (e.g. 1.0 highest, 3.0 passing, 5.0 failing)
-      // Lower or equal to passing mark is passing
       isPassing = numGrade <= passing && numGrade >= highest;
     } else {
       // Standard percentage (75 passing, 100 highest) or UM 4.0 scale (2.0 passing, 4.0 highest)
-      // Greater or equal to passing mark is passing
       isPassing = numGrade >= passing && numGrade <= highest;
     }
 

@@ -116,6 +116,7 @@ model Employee {
   verified_schools       SchoolGradingSystem[] @relation("SchoolGradingVerifiedBy")
   frozen_prospectuses    ScholarProspectus[]  @relation("EmployeeFrozenProspectus")
   reviewed_enrollments   TermEnrollment[]     @relation("EmployeeReviewedEnrollments")
+  reviewed_appeals       GradeReport[]        @relation("EmployeeReviewedAppeals")
   meetings               Meeting[]
 
   @@map("employees")
@@ -196,14 +197,25 @@ model GradeReport {
   status                  GradeReportStatus @default(PENDING)
   evaluation_flag         String?           @db.VarChar(50)  // "CLEARED", "BELOW_PASSING_MARK", "ACADEMIC_FAILURE"
   is_eligible             Boolean           @default(false)
+  appeal_status           String            @default("NONE") @db.VarChar(50) // "NONE", "PENDING_GRANTOR", "APPROVED", "DENIED"
+  appeal_notes            String?           @db.Text
+  appeal_document_id      Int?
+  appeal_submitted_at     DateTime?
+  appeal_reviewed_at      DateTime?
+  appeal_reviewed_by_employee_id Int?
+  appeal_decision_notes   String?           @db.Text
+  term_enrollment_id      Int?
   submitted_at            DateTime          @default(now())
   reviewed_at             DateTime?
   reviewed_by_employee_id Int?
   remarks                 String?           @db.Text
 
-  scholar_profile      ScholarProfile @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
-  reviewed_by_employee Employee?       @relation("EmployeeReviewedGradeReports", fields: [reviewed_by_employee_id], references: [employee_id])
+  scholar_profile      ScholarProfile   @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
+  reviewed_by_employee Employee?        @relation("EmployeeReviewedGradeReports", fields: [reviewed_by_employee_id], references: [employee_id])
   document             ScholarDocument? @relation(fields: [document_id], references: [document_id], onDelete: SetNull)
+  appeal_document      ScholarDocument? @relation("AppealSupportingDocument", fields: [appeal_document_id], references: [document_id], onDelete: SetNull)
+  appeal_reviewed_by   Employee?        @relation("EmployeeReviewedAppeals", fields: [appeal_reviewed_by_employee_id], references: [employee_id], onDelete: SetNull)
+  term_enrollment      TermEnrollment?  @relation(fields: [term_enrollment_id], references: [enrollment_id], onDelete: SetNull)
   grade_items          GradeItem[]
 
   @@map("grade_reports")
@@ -293,6 +305,7 @@ model ScholarDocument {
   cor_enrollments                 TermEnrollment[]     @relation("EnrollmentCorDocument")
   soa_enrollments                 TermEnrollment[]     @relation("EnrollmentSoaDocument")
   official_receipt_disbursements  Disbursement[]       @relation("DisbursementOfficialReceipt")
+  appeal_grade_reports            GradeReport[]        @relation("AppealSupportingDocument")
 
   @@map("scholar_documents")
 }
@@ -538,6 +551,7 @@ model TermEnrollment {
   soa_document         ScholarDocument? @relation("EnrollmentSoaDocument", fields: [soa_document_id], references: [document_id], onDelete: SetNull)
   reviewed_by_employee Employee?        @relation("EmployeeReviewedEnrollments", fields: [reviewed_by_employee_id], references: [employee_id], onDelete: SetNull)
   disbursement         Disbursement?    @relation(fields: [disbursement_id], references: [disbursement_id], onDelete: SetNull)
+  grade_reports        GradeReport[]
 
   @@unique([scholar_profile_id, academic_year, semester])
   @@index([scholar_profile_id])

@@ -20,6 +20,14 @@ export class ConfirmDocumentDto {
   academic_year?: string;
 
   @ApiPropertyOptional({
+    example: '2nd Semester',
+    description: 'Academic semester or term (e.g. 1st Semester, 2nd Semester, Summer)',
+  })
+  @IsString()
+  @IsOptional()
+  semester?: string;
+
+  @ApiPropertyOptional({
     example: 86.0,
     description:
       'Official General Average / GWA directly extracted or confirmed from report card',

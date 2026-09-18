@@ -26,16 +26,18 @@ export class DocumentsStorageService {
   ) {}
 
   private isHighSchoolDocument(documentType: string): boolean {
-    return /138|137|form\s*9|report\s*card|high\s*school|shs|senior\s*high/i.test(
-      documentType,
-    );
+    return /138|137|form\s*9|report\s*card|high\s*school|shs|senior\s*high/i.test(documentType);
+  }
+
+  private isCollegeGradeDocument(documentType: string): boolean {
+    return /ccg|certified|grades|tor|cog|transcript/i.test(documentType);
   }
 
   private getScholarYearLevel(scholarYearLevel?: number | null): number {
     return scholarYearLevel && scholarYearLevel > 0 ? scholarYearLevel : 1;
   }
 
-  // 1. Scholar Uploads TOR / Form 137 / Form 138 (Supports single or multi-page/multi-file)
+  // 1. Scholar Uploads TOR / Form 137 / Form 138 / CCG
   async uploadDocument(
     userId: number,
     files: Express.Multer.File | Express.Multer.File[],
@@ -44,7 +46,6 @@ export class DocumentsStorageService {
     const scholar = await this.prisma.scholarProfile.findUnique({
       where: { user_id: userId },
     });
-
     if (!scholar) {
       throw new NotFoundException('Scholar profile not found.');
     }
@@ -52,12 +53,12 @@ export class DocumentsStorageService {
     const yearLevel = this.getScholarYearLevel(scholar.current_year_level);
     if (yearLevel >= 2 && this.isHighSchoolDocument(documentType)) {
       throw new BadRequestException(
-        `Scholars in Year Level ${yearLevel} (2nd to 4th year) are required to upload a Transcript of Records (TOR) or Certificate of Grades (COG). Form 138 / Form 9 / High School report cards are only permitted for 1st year students.`,
+        `Scholars in Year Level ${yearLevel} (2nd to 4th year) are required to upload a Certified Copy of Grades (CCG) or Transcript of Records (TOR).`,
       );
     }
-    if (yearLevel === 1 && !this.isHighSchoolDocument(documentType)) {
+    if (yearLevel === 1 && !this.isHighSchoolDocument(documentType) && !this.isCollegeGradeDocument(documentType)) {
       throw new BadRequestException(
-        '1st-year applicants are required to upload their Senior High School Form 138 or Form 9 report card.',
+        '1st-year applicants are required to upload their Senior High School Form 138 or Form 9 report card, or Certified Copy of Grades (CCG).',
       );
     }
 
@@ -66,17 +67,9 @@ export class DocumentsStorageService {
       throw new BadRequestException('At least one file must be uploaded.');
     }
 
-    // Inspect file metadata for digital editing artifacts (Photoshop, Canva, etc.)
-    const metadataForensics =
-      await this.fileForensicsService.inspectFileMetadata(fileList);
+    const metadataForensics = await this.fileForensicsService.inspectFileMetadata(fileList);
+    const processed = await this.pdfMergerService.processAndMergeFiles(fileList, documentType);
 
-    // Merge multiple images/PDFs into a single multi-page PDF if needed
-    const processed = await this.pdfMergerService.processAndMergeFiles(
-      fileList,
-      documentType,
-    );
-
-    // Upload buffer to Cloudinary
     const publicId = processed.fileName.replace(/\.[^/.]+$/, '');
     const cloudinaryResult = await this.cloudinaryService.uploadBuffer(
       processed.buffer,
@@ -87,7 +80,6 @@ export class DocumentsStorageService {
 
     const fileType = processed.isPdf ? 'pdf' : 'image';
 
-    // Create database entry in PENDING state with forensic metadata stored
     const document = await this.prisma.scholarDocument.create({
       data: {
         scholar_profile_id: scholar.profile_id,
@@ -98,9 +90,7 @@ export class DocumentsStorageService {
         file_url: cloudinaryResult.secure_url,
         file_type: fileType,
         status: 'PENDING',
-        extracted_data: {
-          forensic_metadata: metadataForensics,
-        } as unknown as Prisma.InputJsonValue,
+        extracted_data: { forensic_metadata: metadataForensics } as unknown as Prisma.InputJsonValue,
       },
     });
 
@@ -110,7 +100,6 @@ export class DocumentsStorageService {
       `Scholar (User ID: ${userId}) uploaded document (ID: ${document.document_id}, Type: ${documentType}, Files: ${fileList.length})${metadataForensics.is_flagged ? ` [Forensic Flags: ${metadataForensics.flags.join(', ')}]` : ''}.`,
     );
 
-    // Send the document buffer to OCR engine (LlamaExtract or Parseur depending on OCR_PROVIDER)
     void this.documentOcrService
       .processDocumentExtraction(
         document.document_id,
@@ -121,15 +110,13 @@ export class DocumentsStorageService {
         fileList,
       )
       ?.catch((err: Error) => {
-        this.logger.error(
-          `Automated OCR extraction failed for doc ${document.document_id}: ${err.message}`,
-        );
+        this.logger.error(`Automated OCR extraction failed for doc ${document.document_id}: ${err.message}`);
       });
 
     return document;
   }
 
-  // 1b. Scholar replaces / re-uploads document files (Draft & unverified states)
+  // 1b. Scholar replaces / re-uploads document files
   async replaceDocument(
     userId: number,
     documentId: number,
@@ -139,41 +126,12 @@ export class DocumentsStorageService {
       where: { document_id: documentId },
       include: { scholar_profile: true },
     });
-
-    if (!doc) {
-      throw new NotFoundException(`Document ID ${documentId} not found.`);
-    }
-
-    if (doc.scholar_profile.user_id !== userId) {
+    if (!doc || doc.scholar_profile.user_id !== userId) {
       throw new NotFoundException(`Document ID ${documentId} not found.`);
     }
 
     if (doc.status === 'VERIFIED' || doc.status === 'STUDENT_CONFIRMED') {
-      throw new BadRequestException(
-        'Confirmed or verified documents cannot be replaced directly. Please contact a coordinator if corrections are required.',
-      );
-    }
-
-    const yearLevel = this.getScholarYearLevel(
-      doc.scholar_profile.current_year_level,
-    );
-    if (
-      yearLevel >= 2 &&
-      doc.document_type &&
-      this.isHighSchoolDocument(doc.document_type)
-    ) {
-      throw new BadRequestException(
-        `Scholars in Year Level ${yearLevel} (2nd to 4th year) are required to upload a Transcript of Records (TOR) or Certificate of Grades (COG). Form 138 / Form 9 / High School report cards are only permitted for 1st year students.`,
-      );
-    }
-    if (
-      yearLevel === 1 &&
-      doc.document_type &&
-      !this.isHighSchoolDocument(doc.document_type)
-    ) {
-      throw new BadRequestException(
-        '1st-year applicants are required to upload their Senior High School Form 138 or Form 9 report card.',
-      );
+      throw new BadRequestException('Confirmed or verified documents cannot be replaced directly.');
     }
 
     const fileList = Array.isArray(files) ? files : [files];
@@ -181,15 +139,8 @@ export class DocumentsStorageService {
       throw new BadRequestException('No files provided for replacement.');
     }
 
-    // Inspect replacement file metadata for forensic anomalies
-    const metadataForensics =
-      await this.fileForensicsService.inspectFileMetadata(fileList);
-
-    // Merge multiple files if necessary
-    const processed = await this.pdfMergerService.processAndMergeFiles(
-      fileList,
-      doc.document_type || 'document',
-    );
+    const metadataForensics = await this.fileForensicsService.inspectFileMetadata(fileList);
+    const processed = await this.pdfMergerService.processAndMergeFiles(fileList, doc.document_type || 'document');
 
     const publicId = processed.fileName.replace(/\.[^/.]+$/, '');
     const cloudinaryResult = await this.cloudinaryService.uploadBuffer(
@@ -210,9 +161,7 @@ export class DocumentsStorageService {
         file_type: fileType,
         status: 'PENDING',
         rejection_reason: null,
-        extracted_data: {
-          forensic_metadata: metadataForensics,
-        } as unknown as Prisma.InputJsonValue,
+        extracted_data: { forensic_metadata: metadataForensics } as unknown as Prisma.InputJsonValue,
         confirmed_data: Prisma.DbNull,
         verified_at: null,
         reviewed_by_employee_id: null,
@@ -222,10 +171,9 @@ export class DocumentsStorageService {
     await this.auditService.log(
       userId,
       'DOCUMENT_REPLACED',
-      `Scholar (User ID: ${userId}) replaced document (ID: ${documentId}, Type: ${doc.document_type}) with ${fileList.length} file(s)${metadataForensics.is_flagged ? ` [Forensic Flags: ${metadataForensics.flags.join(', ')}]` : ''}.`,
+      `Scholar (User ID: ${userId}) replaced document (ID: ${documentId}, Type: ${doc.document_type}) with ${fileList.length} file(s).`,
     );
 
-    // Re-trigger OCR extraction (LlamaExtract or Parseur depending on OCR_PROVIDER)
     void this.documentOcrService
       .processDocumentExtraction(
         documentId,
@@ -236,9 +184,7 @@ export class DocumentsStorageService {
         fileList,
       )
       ?.catch((err: Error) => {
-        this.logger.error(
-          `Automated OCR extraction failed on replacement for doc ${documentId}: ${err.message}`,
-        );
+        this.logger.error(`Automated OCR extraction failed on replacement for doc ${documentId}: ${err.message}`);
       });
 
     return updated;
@@ -250,32 +196,17 @@ export class DocumentsStorageService {
       where: { document_id: documentId },
       include: { scholar_profile: true },
     });
-
-    if (!doc) {
+    if (!doc || doc.scholar_profile.user_id !== userId) {
       throw new NotFoundException(`Document ID ${documentId} not found.`);
-    }
-
-    if (doc.scholar_profile.user_id !== userId) {
-      throw new NotFoundException(`Document ID ${documentId} not found.`);
-    }
-
-    if (doc.status === 'VERIFIED' || doc.status === 'STUDENT_CONFIRMED') {
-      throw new BadRequestException(
-        'Confirmed or verified documents cannot be deleted. Please contact a coordinator if corrections are required.',
-      );
     }
 
     const approvedReport = await this.prisma.gradeReport.findFirst({
       where: { document_id: documentId, status: 'APPROVED' },
     });
-
     if (approvedReport) {
-      throw new BadRequestException(
-        'This document is linked to an approved Grade Report and cannot be deleted.',
-      );
+      throw new BadRequestException('This document is linked to an approved Grade Report and cannot be deleted.');
     }
 
-    // Discard any draft or non-approved grade reports associated with this document
     await this.prisma.gradeReport.deleteMany({
       where: { document_id: documentId, status: { not: 'APPROVED' } },
     });
@@ -296,12 +227,11 @@ export class DocumentsStorageService {
     };
   }
 
-  // 2. Scholar views their own documents (incl. OCR data & coordinator remarks)
+  // 2. Scholar views their own documents
   async getMyDocuments(userId: number) {
     const scholar = await this.prisma.scholarProfile.findUnique({
       where: { user_id: userId },
     });
-
     if (!scholar) {
       throw new NotFoundException('Scholar profile not found.');
     }
@@ -326,41 +256,52 @@ export class DocumentsStorageService {
     });
   }
 
-  // Staff views the full detail of a single document submission
+  // Staff views document details
   async getDocumentDetail(documentId: number) {
     const doc = await this.prisma.scholarDocument.findUnique({
       where: { document_id: documentId },
       include: {
         scholar_profile: {
-          include: { user: true, applications: true },
+          include: {
+            user: true,
+            applications: true,
+            school_grading_system: true,
+          },
         },
       },
     });
-
     if (!doc) {
       throw new NotFoundException(`Document ID ${documentId} not found.`);
     }
-
     return doc;
   }
 
-  // Coordinator views pending documents for verification
+  // Coordinator views pending documents for verification (Only Grade-related Documents)
   async getPendingDocuments() {
     return this.prisma.scholarDocument.findMany({
       where: {
-        status: {
-          in: [
-            'PENDING',
-            'PASSED_PRECHECK',
-            'NEEDS_REUPLOAD',
-            'STUDENT_CONFIRMED',
+        document_type: {
+          notIn: [
+            'SOA',
+            'COR',
+            'STATEMENT_OF_ACCOUNT',
+            'CERTIFICATE_OF_REGISTRATION',
+            'OFFICIAL_RECEIPT',
+            'RECEIPT',
+            'CONSOLIDATED_ASSESSMENT',
           ],
+        },
+        status: {
+          in: ['PENDING', 'PASSED_PRECHECK', 'NEEDS_REUPLOAD', 'STUDENT_CONFIRMED'],
         },
       },
       orderBy: { uploaded_at: 'asc' },
       include: {
         scholar_profile: {
-          include: { user: true },
+          include: {
+            user: true,
+            school_grading_system: true,
+          },
         },
       },
     });
@@ -371,22 +312,20 @@ export class DocumentsStorageService {
     const scholar = await this.prisma.scholarProfile.findUnique({
       where: { user_id: userId },
     });
-
     if (!scholar) {
       throw new NotFoundException('Scholar profile not found.');
     }
 
     const yearLevel = this.getScholarYearLevel(scholar.current_year_level);
-
     const isYear2Plus = yearLevel >= 2;
 
     const allowedTypes = isYear2Plus
-      ? ['TOR', 'COG', 'Transcript of Records', 'Certificate of Grades']
-      : ['Form 138', 'Form 9', 'Form 137', 'High School Report Card'];
+      ? ['CCG', 'Certified Copy of Grades', 'TOR', 'COG', 'Transcript of Records', 'Certificate of Grades']
+      : ['CCG', 'Certified Copy of Grades', 'Form 138', 'Form 9', 'Form 137', 'High School Report Card', 'TOR'];
 
     const prohibitedTypes = isYear2Plus
       ? ['Form 138', 'Form 9', 'Form 137', 'High School Report Card']
-      : ['TOR', 'COG', 'Transcript of Records', 'Certificate of Grades'];
+      : [];
 
     return {
       current_year_level: yearLevel,
@@ -394,8 +333,8 @@ export class DocumentsStorageService {
       allowed_types: allowedTypes,
       prohibited_types: prohibitedTypes,
       message: isYear2Plus
-        ? 'As a 2nd-4th year scholar, you must submit a Transcript of Records (TOR) or Certificate of Grades (COG).'
-        : 'As a 1st year applicant, you must submit your Senior High School Form 138 or Form 9 report card.',
+        ? 'As a 2nd-4th year scholar, you must submit a Certified Copy of Grades (CCG), TOR, or COG.'
+        : 'Submit your Certified Copy of Grades (CCG) or Senior High School Form 138 report card.',
     };
   }
 }

@@ -114,6 +114,8 @@ export class DocumentOcrService {
         mismatchRejectionReason = `Document type mismatch: As a Year ${scholarYearLevel} scholar, you are required to upload a Transcript of Records (TOR) or Certificate of Grades (COG). A High School Report Card (Form 138/SF9) was detected.`;
       } else if (
         !isUpperclassman &&
+        doc.document_type !== 'CCG' &&
+        documentType !== 'CCG' &&
         (detectedDocType === 'TRANSCRIPT_OF_RECORDS' ||
           detectedDocType === 'CERTIFICATE_OF_GRADES')
       ) {

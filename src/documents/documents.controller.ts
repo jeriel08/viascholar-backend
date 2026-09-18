@@ -1,31 +1,10 @@
-// src/documents/documents.controller.ts
 import {
-  Controller,
-  Get,
-  Post,
-  Put,
-  Delete,
-  Patch,
-  Param,
-  Body,
-  UseGuards,
-  Request,
-  UploadedFiles,
-  UseInterceptors,
-  ParseIntPipe,
-  BadRequestException,
-  Query,
+  Controller, Get, Post, Put, Delete, Patch, Param, Body, UseGuards, Request, UploadedFiles, UseInterceptors, ParseIntPipe, BadRequestException, Query,
 } from '@nestjs/common';
 import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import { AuthGuard } from '@nestjs/passport';
 import { Throttle } from '@nestjs/throttler';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiBearerAuth,
-  ApiConsumes,
-  ApiBody,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { RolesGuard } from '../auth/decorators/roles.guard.js';
 import { DocumentsStorageService } from './documents-storage.service.js';
 import { DocumentOcrService } from './document-ocr.service.js';
@@ -38,6 +17,9 @@ import { ConfirmDocumentDto } from './dto/confirm-document.dto.js';
 import { RequestChangesDto } from './dto/request-changes.dto.js';
 import { QueryGradeReportsDto } from './dto/query-grade-reports.dto.js';
 import { UpdateGradeReportStatusDto } from './dto/update-grade-report-status.dto.js';
+import { SubmitAppealDto } from './dto/submit-appeal.dto.js';
+import { ReviewAppealDto } from './dto/review-appeal.dto.js';
+import { AcademicAppealService } from './academic-appeal.service.js';
 
 interface AuthenticatedRequest {
   user: {
@@ -57,6 +39,7 @@ export class DocumentsController {
     private readonly ocrService: DocumentOcrService,
     private readonly evaluationService: DocumentEvaluationService,
     private readonly gradeReportsService: GradeReportsService,
+    private readonly appealService: AcademicAppealService,
   ) {}
 
   private validateUploadedFiles(files: Express.Multer.File[]) {
@@ -222,6 +205,35 @@ export class DocumentsController {
       id,
       dto,
     );
+  }
+
+  @Post('grade-reports/:id/appeal')
+  @Roles(Role.SCHOLAR)
+  @ApiOperation({ summary: 'Scholar submits a second chance appeal for a flagged grade report' })
+  submitAppeal(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SubmitAppealDto,
+  ) {
+    return this.appealService.submitAppeal(req.user.user_id, id, dto);
+  }
+
+  @Patch('grade-reports/:id/appeal')
+  @Roles(Role.GRANTOR, Role.ADMIN)
+  @ApiOperation({ summary: 'Grantor decides on a second chance appeal (Approve / Deny)' })
+  reviewAppeal(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ReviewAppealDto,
+  ) {
+    return this.appealService.reviewAppeal(req.user.user_id, id, dto);
+  }
+
+  @Get('grade-reports/appeals')
+  @Roles(Role.GRANTOR, Role.ADMIN, Role.COORDINATOR)
+  @ApiOperation({ summary: 'List pending second chance appeals for grantor review' })
+  getPendingAppeals() {
+    return this.appealService.getPendingAppeals();
   }
 
   @Get(':id/extracted-data')

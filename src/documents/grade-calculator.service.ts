@@ -159,18 +159,28 @@ export class GradeCalculatorService {
     rawAcademicYear?: string,
     isForm138 = false,
   ): string {
+    const semStr =
+      typeof extractedSemester === 'string' ? extractedSemester.trim() : '';
     const ay = typeof rawAcademicYear === 'string' ? rawAcademicYear : '';
-    if (typeof extractedSemester === 'string' && extractedSemester.trim()) {
-      return extractedSemester;
-    }
-    if (isForm138 && !/semester|sem/i.test(ay)) {
-      return 'Annual';
-    }
-    if (/2nd/i.test(ay)) {
+    const combined = `${semStr} ${ay}`.trim();
+
+    if (/second|2nd|sem\s*2|2nd\s*sem/i.test(combined)) {
       return '2nd Semester';
     }
-    if (/summer|midyear/i.test(ay)) {
+    if (/first|1st|sem\s*1|1st\s*sem/i.test(combined)) {
+      return '1st Semester';
+    }
+    if (/third|3rd|sem\s*3|3rd\s*sem/i.test(combined)) {
+      return '3rd Semester';
+    }
+    if (/summer|midyear/i.test(combined)) {
       return 'Summer';
+    }
+    if (isForm138 && !/semester|sem/i.test(combined)) {
+      return 'Annual';
+    }
+    if (semStr) {
+      return semStr;
     }
     return '1st Semester';
   }

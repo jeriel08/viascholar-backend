@@ -10,82 +10,54 @@ import { MailService } from '../mail/mail.service.js';
 import { GradeCalculatorService } from './grade-calculator.service.js';
 import { ConfirmDocumentDto } from './dto/confirm-document.dto.js';
 import { VerifyDocumentDto } from './dto/verify-document.dto.js';
-import {
-  Application,
-  Prisma,
-  SchoolGradingSystem,
-} from '../generated/prisma/client.js';
+import { Application, Prisma, SchoolGradingSystem } from '../generated/prisma/client.js';
 import { EventsGateway } from '../events/events.gateway.js';
 
 interface ConfirmedGradeData {
   academic_year?: string;
+  semester?: string;
   general_average?: number;
-  grade_items?: {
-    subject_code?: string;
-    subject_name?: string;
-    units?: number;
-    grade: number;
-  }[];
-}
-
-interface ExtractedGradeItem {
-  subject_code?: string;
-  subject_name?: string;
-  units?: number | string;
-  grade?: number | string;
+  grade_items?: { subject_code?: string; subject_name?: string; units?: number; grade: number }[];
 }
 
 interface ExtractedDocData {
   academic_year?: string;
   semester?: string;
+  school_name?: string;
   general_average?: number | string;
-  grades?: ExtractedGradeItem[];
-  [key: string]: unknown;
+  grades?: { subject_code?: string; subject_name?: string; units?: number | string; grade?: number | string }[];
 }
 
 @Injectable()
 export class DocumentEvaluationService {
   constructor(
-    private prisma: PrismaService,
-    private settingsService: SettingsService,
-    private auditService: AuditService,
-    private mailService: MailService,
-    private gradeCalculatorService: GradeCalculatorService,
-    private eventsGateway: EventsGateway,
+    private readonly prisma: PrismaService,
+    private readonly settingsService: SettingsService,
+    private readonly auditService: AuditService,
+    private readonly mailService: MailService,
+    private readonly gradeCalculatorService: GradeCalculatorService,
+    private readonly eventsGateway: EventsGateway,
   ) {}
 
-  // Scholar confirms/corrects the OCR-extracted fields for review
-  async confirmDocument(
-    userId: number,
-    documentId: number,
-    dto: ConfirmDocumentDto,
-  ) {
+  // 1. Scholar confirms/corrects OCR-extracted fields for coordinator audit
+  async confirmDocument(userId: number, documentId: number, dto: ConfirmDocumentDto) {
     const doc = await this.prisma.scholarDocument.findUnique({
       where: { document_id: documentId },
       include: { scholar_profile: true },
     });
 
-    if (!doc) {
-      throw new NotFoundException(`Document ID ${documentId} not found.`);
-    }
-
-    if (doc.scholar_profile.user_id !== userId) {
+    if (!doc || doc.scholar_profile.user_id !== userId) {
       throw new NotFoundException(`Document ID ${documentId} not found.`);
     }
 
     if (!['PENDING', 'PASSED_PRECHECK'].includes(doc.status)) {
-      throw new BadRequestException(
-        `Document ID ${documentId} cannot be confirmed while in '${doc.status}' status.`,
-      );
+      throw new BadRequestException(`Document ID ${documentId} cannot be confirmed while in '${doc.status}' status.`);
     }
 
     const extracted = (doc.extracted_data ?? {}) as ExtractedDocData;
-    const generalAverage =
-      dto.general_average != null
-        ? Number(dto.general_average)
-        : extracted.general_average != null
-          ? Number(extracted.general_average)
-          : undefined;
+    const generalAverage = dto.general_average != null
+      ? Number(dto.general_average)
+      : extracted.general_average != null ? Number(extracted.general_average) : undefined;
 
     const rawGrades = Array.isArray(extracted.grades) ? extracted.grades : [];
     const gradeItems = dto.grade_items?.length
@@ -106,6 +78,7 @@ export class DocumentEvaluationService {
 
     const confirmedData: ConfirmedGradeData = {
       academic_year: dto.academic_year || extracted.academic_year || undefined,
+      semester: dto.semester || extracted.semester || undefined,
       general_average: generalAverage,
       grade_items: gradeItems,
     };
@@ -122,14 +95,13 @@ export class DocumentEvaluationService {
     await this.auditService.log(
       userId,
       'DOCUMENT_CONFIRMED',
-      `Scholar confirmed document ID ${documentId} (${gradeItems.length} grade items, GA: ${generalAverage ?? 'N/A'}).`,
+      `Scholar confirmed document ID ${documentId} (${gradeItems.length} items, GA: ${generalAverage ?? 'N/A'}).`,
     );
 
     this.eventsGateway.emitToStaff('document:confirmed_by_applicant', {
       documentId,
       scholarProfileId: doc.scholar_profile_id,
-      studentName:
-        `${doc.scholar_profile.first_name} ${doc.scholar_profile.last_name}`.trim(),
+      studentName: `${doc.scholar_profile.first_name} ${doc.scholar_profile.last_name}`.trim(),
       documentType: doc.document_type,
       generalAverage,
       gradeItemsCount: gradeItems.length,
@@ -139,110 +111,53 @@ export class DocumentEvaluationService {
     return updated;
   }
 
-  // Staff requests re-upload / corrections on an unclear document
-  async requestChanges(
-    employeeUserId: number,
-    documentId: number,
-    reason: string,
-  ) {
+  // 2. Staff requests re-upload on unclear/inconsistent document
+  async requestChanges(employeeUserId: number, documentId: number, reason: string) {
     const doc = await this.prisma.scholarDocument.findUnique({
       where: { document_id: documentId },
-      include: {
-        scholar_profile: {
-          include: { user: true },
-        },
-      },
+      include: { scholar_profile: { include: { user: true } } },
     });
 
-    if (!doc) {
-      throw new NotFoundException(`Document ID ${documentId} not found.`);
-    }
+    if (!doc) throw new NotFoundException(`Document ID ${documentId} not found.`);
 
     const updated = await this.prisma.scholarDocument.update({
       where: { document_id: documentId },
-      data: {
-        status: 'NEEDS_REUPLOAD',
-        rejection_reason: reason,
-        verified_at: null,
-      },
+      data: { status: 'NEEDS_REUPLOAD', rejection_reason: reason, verified_at: null },
     });
 
-    await this.auditService.log(
-      employeeUserId,
-      'DOCUMENT_CHANGES_REQUESTED',
-      `Staff requested changes on document ID ${documentId}: ${reason}`,
-    );
+    await this.auditService.log(employeeUserId, 'DOCUMENT_CHANGES_REQUESTED', `Staff requested changes on #${documentId}: ${reason}`);
 
-    // Notify student that document needs re-upload
     const studentEmail = doc.scholar_profile?.user?.email;
-    const studentName =
-      `${doc.scholar_profile?.first_name} ${doc.scholar_profile?.last_name}`.trim() ||
-      'Student';
+    const studentName = `${doc.scholar_profile?.first_name} ${doc.scholar_profile?.last_name}`.trim() || 'Student';
 
     if (studentEmail) {
-      void this.mailService.sendDocumentActionRequired(studentEmail, {
-        studentName,
-        documentType: doc.document_type,
-        reason,
-      });
+      void this.mailService.sendDocumentActionRequired(studentEmail, { studentName, documentType: doc.document_type, reason });
     }
 
-    const changesPayload = {
-      documentId,
-      scholarProfileId: doc.scholar_profile_id,
-      studentName,
-      documentType: doc.document_type,
-      reason,
-      requestedAt: new Date().toISOString(),
-    };
-    this.eventsGateway.emitToStaff(
-      'document:changes_requested',
-      changesPayload,
-    );
+    const payload = { documentId, scholarProfileId: doc.scholar_profile_id, studentName, documentType: doc.document_type, reason, requestedAt: new Date().toISOString() };
+    this.eventsGateway.emitToStaff('document:changes_requested', payload);
     if (doc.scholar_profile?.user_id) {
-      this.eventsGateway.emitToUser(
-        doc.scholar_profile.user_id,
-        'document:changes_requested',
-        changesPayload,
-      );
+      this.eventsGateway.emitToUser(doc.scholar_profile.user_id, 'document:changes_requested', payload);
     }
 
     return updated;
   }
 
-  // Coordinator confirms extracted grades & evaluates against school thresholds
-  async verifyAndEvaluate(
-    coordinatorUserId: number,
-    documentId: number,
-    dto: VerifyDocumentDto,
-  ) {
-    // Resolve the coordinator's employee_id from their user_id
-    const employee = await this.prisma.employee.findUnique({
-      where: { user_id: coordinatorUserId },
-    });
-
-    if (!employee) {
-      throw new NotFoundException(
-        'Employee profile not found for current user.',
-      );
-    }
+  // 3. Coordinator verifies CCG / TOR, calculates GWA, transitions prospectus, and checks retention
+  async verifyAndEvaluate(coordinatorUserId: number, documentId: number, dto: VerifyDocumentDto) {
+    const employee = await this.prisma.employee.findUnique({ where: { user_id: coordinatorUserId } });
+    if (!employee) throw new NotFoundException('Employee profile not found for current user.');
 
     const doc = await this.prisma.scholarDocument.findUnique({
       where: { document_id: documentId },
       include: { scholar_profile: true },
     });
-
-    if (!doc) {
-      throw new NotFoundException(`Document ID ${documentId} not found.`);
-    }
+    if (!doc) throw new NotFoundException(`Document ID ${documentId} not found.`);
 
     if (doc.status !== 'STUDENT_CONFIRMED') {
-      throw new BadRequestException(
-        `Cannot verify document: The applicant must review and confirm this document first (current status: ${doc.status}).`,
-      );
+      throw new BadRequestException(`Cannot verify document: Student must confirm first (status: ${doc.status}).`);
     }
 
-    // Manual entry wins; otherwise fall back to student-confirmed or extracted data
     const confirmed = doc.confirmed_data as ConfirmedGradeData | null;
     const extracted = (doc.extracted_data ?? {}) as ExtractedDocData;
     const rawGrades = Array.isArray(extracted.grades) ? extracted.grades : [];
@@ -260,122 +175,60 @@ export class DocumentEvaluationService {
               grade: Number(i.grade),
             }));
 
-    if (gradeItems.length === 0) {
-      throw new BadRequestException(
-        'No grade items provided and no student-confirmed data available for this document.',
-      );
-    }
+    if (gradeItems.length === 0) throw new BadRequestException('No grade items available for this document.');
 
-    const rawAcademicYear =
-      dto.academic_year ??
-      confirmed?.academic_year ??
-      extracted.academic_year ??
-      '';
-    const academicYear =
-      typeof rawAcademicYear === 'string' ? rawAcademicYear : '';
+    const rawAY = dto.academic_year ?? confirmed?.academic_year ?? extracted.academic_year ?? '';
+    const academicYear = typeof rawAY === 'string' ? rawAY : '';
+    const isForm138 = this.gradeCalculatorService.isForm138(doc.document_type || '', doc.label || '');
 
-    const isForm138 = this.gradeCalculatorService.isForm138(
-      doc.document_type || '',
-      doc.label || '',
-    );
+    const schoolConfig = await this.resolveSchoolConfig(doc, extracted, isForm138);
 
-    // Fetch school grading configuration if not Form 138
-    let schoolConfig: SchoolGradingSystem | null = null;
-    if (!isForm138) {
-      if (doc.scholar_profile.school_id) {
-        schoolConfig = await this.prisma.schoolGradingSystem.findUnique({
-          where: { school_id: doc.scholar_profile.school_id },
-        });
-      }
-      if (!schoolConfig && doc.scholar_profile.school_name) {
-        schoolConfig = await this.prisma.schoolGradingSystem.findFirst({
-          where: {
-            school_name: {
-              equals: doc.scholar_profile.school_name,
-              mode: 'insensitive',
-            },
-          },
-        });
-      }
-      if (!schoolConfig && extracted.school_name) {
-        schoolConfig = await this.prisma.schoolGradingSystem.findFirst({
-          where: {
-            school_name: {
-              equals: String(extracted.school_name),
-              mode: 'insensitive',
-            },
-          },
-        });
-      }
-      // If still not found, fallback to 'University of Mindanao' as standard baseline
-      if (!schoolConfig) {
-        schoolConfig = await this.prisma.schoolGradingSystem.findFirst({
-          where: { school_name: { contains: 'Mindanao', mode: 'insensitive' } },
-        });
-      }
-    }
+    const explicitGeneralAvg = dto.general_average != null
+      ? Number(dto.general_average)
+      : confirmed?.general_average != null ? Number(confirmed.general_average) : undefined;
 
-    // Check for explicit general_average (from dto override, confirmed data, or OCR)
-    const explicitGeneralAvg =
-      dto.general_average != null
-        ? Number(dto.general_average)
-        : confirmed?.general_average != null
-          ? Number(confirmed.general_average)
-          : extracted.general_average != null
-            ? Number(extracted.general_average)
-            : undefined;
+    const { computedGwa, hasFailedGrade } = this.gradeCalculatorService.computeGwa({
+      gradeItems,
+      isForm138,
+      explicitGeneralAvg,
+      schoolConfig,
+    });
 
-    const { computedGwa, hasFailedGrade } =
-      this.gradeCalculatorService.computeGwa({
-        gradeItems,
-        isForm138,
-        explicitGeneralAvg,
-        schoolConfig,
-      });
-
-    const normalizedAcademicYear =
-      this.gradeCalculatorService.normalizeAcademicYear(academicYear);
-
-    const normalizedSemester = this.gradeCalculatorService.normalizeSemester(
-      extracted.semester,
+    const normalizedAY = this.gradeCalculatorService.normalizeAcademicYear(academicYear);
+    const normalizedSem = this.gradeCalculatorService.normalizeSemester(
+      confirmed?.semester ?? extracted.semester,
       academicYear,
       isForm138,
     );
 
-    // Evaluate GWA against retention threshold with scale awareness
     const globalSettings = await this.settingsService.getSettings();
-    const meetsThreshold = this.settingsService.evaluateGwaThreshold(
-      computedGwa,
-      Number(globalSettings.grade_threshold),
-      schoolConfig,
-    );
-
-    const normalizedPercentage =
-      this.gradeCalculatorService.normalizeGwaToPercentage(
-        computedGwa,
-        schoolConfig,
-        isForm138,
-      );
+    const meetsThreshold = this.settingsService.evaluateGwaThreshold(computedGwa, Number(globalSettings.grade_threshold), schoolConfig);
 
     const isEligible = !hasFailedGrade && meetsThreshold;
-    const evalFlag = !meetsThreshold
-      ? 'BELOW_PASSING_MARK'
-      : hasFailedGrade
-        ? 'ACADEMIC_FAILURE'
-        : 'CLEARED';
+    const evalFlag = !meetsThreshold ? 'BELOW_PASSING_MARK' : hasFailedGrade ? 'ACADEMIC_FAILURE' : 'CLEARED';
 
-    // Save GradeReport & Items
+    // Find active term enrollment for this academic term
+    const termEnrollment = await this.prisma.termEnrollment.findFirst({
+      where: {
+        scholar_profile_id: doc.scholar_profile_id,
+        academic_year: normalizedAY,
+        semester: normalizedSem,
+      },
+    });
+
+    // Create GradeReport record
     const report = await this.prisma.gradeReport.create({
       data: {
         scholar_profile_id: doc.scholar_profile_id,
         document_id: doc.document_id,
-        academic_year: normalizedAcademicYear,
-        semester: normalizedSemester,
+        academic_year: normalizedAY,
+        semester: normalizedSem,
         gpa: Number(computedGwa.toFixed(2)),
         status: isEligible ? 'APPROVED' : 'FLAGGED',
         is_eligible: isEligible,
         evaluation_flag: evalFlag,
         reviewed_by_employee_id: employee.employee_id,
+        term_enrollment_id: termEnrollment?.enrollment_id,
         grade_items: {
           create: gradeItems.map((i) => ({
             subject_code: String(i.subject_code || i.subject_name || 'N/A'),
@@ -388,53 +241,33 @@ export class DocumentEvaluationService {
       include: { grade_items: true },
     });
 
-    // Mark document as VERIFIED with reviewer info
+    // Mark document as VERIFIED
     await this.prisma.scholarDocument.update({
       where: { document_id: documentId },
-      data: {
-        status: 'VERIFIED',
-        verified_at: new Date(),
-        reviewed_by_employee_id: employee.employee_id,
-      },
+      data: { status: 'VERIFIED', verified_at: new Date(), reviewed_by_employee_id: employee.employee_id },
     });
 
-    // Lifecycle check: Only auto-progress Application if the user is an APPLICANT in onboarding
-    const scholarUser = await this.prisma.user.findUnique({
-      where: { user_id: doc.scholar_profile.user_id },
-    });
+    // Prospectus State Transition: Transition ENROLLED/UNTAKEN subjects to PASSED or FAILED
+    await this.transitionProspectusSubjects(doc.scholar_profile_id, gradeItems, normalizedAY, normalizedSem, schoolConfig);
 
-    let updatedApplication: Application | null = null;
-
-    if (scholarUser?.role === 'APPLICANT') {
-      const application = await this.prisma.application.findFirst({
-        where: { scholar_profile_id: doc.scholar_profile_id },
-        orderBy: { submitted_at: 'desc' },
+    // If eligible, update TermEnrollment status to COMPLETED (clearing pipeline for next term)
+    if (termEnrollment && isEligible) {
+      await this.prisma.termEnrollment.update({
+        where: { enrollment_id: termEnrollment.enrollment_id },
+        data: {
+          status: 'COMPLETED',
+          coordinator_notes: `Term grades verified (GWA: ${computedGwa.toFixed(2)}). Cleared for subsequent semester.`,
+        },
       });
-
-      if (
-        application &&
-        ['PENDING', 'UNDER_REVIEW'].includes(application.status)
-      ) {
-        updatedApplication = await this.prisma.application.update({
-          where: { application_id: application.application_id },
-          data: {
-            status: 'UNDER_REVIEW',
-            stage: isEligible
-              ? 'Document Verification Complete'
-              : 'Flagged for Review',
-            stage_updated_at: new Date(),
-          },
-        });
-      }
     }
+
+    // Auto-progress application if in onboarding
+    const updatedApplication = await this.checkOnboardingApplication(doc.scholar_profile_id, isEligible);
 
     await this.auditService.log(
       coordinatorUserId,
       'DOCUMENT_VERIFIED',
-      `Coordinator verified document ID ${documentId}. Computed GWA: ${computedGwa.toFixed(2)}, Eligible: ${isEligible}` +
-        (updatedApplication
-          ? `; Application ID ${updatedApplication.application_id} moved to '${updatedApplication.stage}'`
-          : ''),
+      `Coordinator approved grades for doc #${documentId}. GWA: ${computedGwa.toFixed(2)}, Eligible: ${isEligible}`,
     );
 
     const verifyPayload = {
@@ -447,37 +280,108 @@ export class DocumentEvaluationService {
       verifiedAt: new Date().toISOString(),
     };
     this.eventsGateway.emitToStaff('document:verified', verifyPayload);
+    this.eventsGateway.emitToStaff('grade_report:verified', verifyPayload);
     if (doc.scholar_profile?.user_id) {
-      this.eventsGateway.emitToUser(
-        doc.scholar_profile.user_id,
-        'document:verified',
-        verifyPayload,
-      );
+      this.eventsGateway.emitToUser(doc.scholar_profile.user_id, 'document:verified', verifyPayload);
+      this.eventsGateway.emitToUser(doc.scholar_profile.user_id, 'grade_report:verified', verifyPayload);
+      this.eventsGateway.emitToUser(doc.scholar_profile.user_id, 'baseline:prospectus_processed', verifyPayload);
     }
 
-    if (updatedApplication) {
-      const stagePayload = {
-        applicationId: updatedApplication.application_id,
-        scholarProfileId: updatedApplication.scholar_profile_id,
-        stage: updatedApplication.stage,
-        status: updatedApplication.status,
-        updatedAt: new Date().toISOString(),
-      };
-      this.eventsGateway.emitToStaff('application:stage_updated', stagePayload);
-      if (doc.scholar_profile?.user_id) {
-        this.eventsGateway.emitToUser(
-          doc.scholar_profile.user_id,
-          'application:stage_updated',
-          stagePayload,
-        );
+    return { report, isEligible, evaluationFlag: evalFlag, application: updatedApplication };
+  }
+
+  private async resolveSchoolConfig(doc: any, extracted: ExtractedDocData, isForm138: boolean): Promise<SchoolGradingSystem | null> {
+    if (isForm138) return null;
+    if (doc.scholar_profile.school_id) {
+      return this.prisma.schoolGradingSystem.findUnique({ where: { school_id: doc.scholar_profile.school_id } });
+    }
+    if (doc.scholar_profile.school_name) {
+      return this.prisma.schoolGradingSystem.findFirst({
+        where: { school_name: { equals: doc.scholar_profile.school_name, mode: 'insensitive' } },
+      });
+    }
+    if (extracted.school_name) {
+      return this.prisma.schoolGradingSystem.findFirst({
+        where: { school_name: { equals: String(extracted.school_name), mode: 'insensitive' } },
+      });
+    }
+    return this.prisma.schoolGradingSystem.findFirst({
+      where: { school_name: { contains: 'Mindanao', mode: 'insensitive' } },
+    });
+  }
+
+  private async transitionProspectusSubjects(
+    scholarProfileId: number,
+    gradeItems: { subject_code?: string; subject_name?: string; grade: number }[],
+    academicYear: string,
+    semester: string,
+    schoolConfig: SchoolGradingSystem | null,
+  ) {
+    const prospectus = await this.prisma.scholarProspectus.findUnique({
+      where: { scholar_profile_id: scholarProfileId },
+      include: { subjects: true },
+    });
+
+    if (!prospectus || !prospectus.subjects?.length) return;
+
+    const clean = (s?: string | null) => (s || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
+
+    for (const item of gradeItems) {
+      const normCode = clean(item.subject_code);
+      const normName = clean(item.subject_name);
+
+      const match = prospectus.subjects.find((ps) => {
+        const psCode = clean(ps.subject_code);
+        const psTitle = clean(ps.descriptive_title);
+        if (normCode && psCode && (psCode === normCode || psCode.includes(normCode) || normCode.includes(psCode))) return true;
+        if (normName && psTitle && (psTitle === normName || psTitle.includes(normName) || normName.includes(psTitle))) return true;
+        if (normCode && psTitle && (psTitle === normCode || psTitle.includes(normCode))) return true;
+        return false;
+      });
+
+      if (match) {
+        const numGrade = Number(item.grade);
+        const isPassing = schoolConfig
+          ? this.settingsService.evaluateStudentGrade(item.grade, schoolConfig).isPassing
+          : !isNaN(numGrade) && (numGrade <= 3.0 || numGrade >= 75.0);
+
+        await this.prisma.prospectusSubject.update({
+          where: { subject_id: match.subject_id },
+          data: {
+            status: isPassing ? 'PASSED' : 'FAILED',
+            grade: isNaN(numGrade) ? null : numGrade,
+            credited_term: `${academicYear} ${semester}`,
+            remarks: `${isPassing ? 'Passed' : 'Failed'} in AY ${academicYear} ${semester}`,
+          },
+        });
       }
     }
+  }
 
-    return {
-      report,
-      isEligible,
-      evaluationFlag: evalFlag,
-      application: updatedApplication,
-    };
+  private async checkOnboardingApplication(scholarProfileId: number, isEligible: boolean): Promise<Application | null> {
+    const profile = await this.prisma.scholarProfile.findUnique({
+      where: { profile_id: scholarProfileId },
+      include: { user: true },
+    });
+
+    if (profile?.user?.role !== 'APPLICANT') return null;
+
+    const application = await this.prisma.application.findFirst({
+      where: { scholar_profile_id: scholarProfileId },
+      orderBy: { submitted_at: 'desc' },
+    });
+
+    if (application && ['PENDING', 'UNDER_REVIEW'].includes(application.status)) {
+      return this.prisma.application.update({
+        where: { application_id: application.application_id },
+        data: {
+          status: 'UNDER_REVIEW',
+          stage: isEligible ? 'Document Verification Complete' : 'Flagged for Review',
+          stage_updated_at: new Date(),
+        },
+      });
+    }
+
+    return null;
   }
 }

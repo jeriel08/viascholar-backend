@@ -48,6 +48,8 @@ export class ScholarEnrollmentService {
     if (academicYear && semester) {
       whereClause.academic_year = academicYear;
       whereClause.semester = semester;
+    } else {
+      whereClause.status = { not: 'COMPLETED' };
     }
 
     const enrollment = await this.prisma.termEnrollment.findFirst({
@@ -60,9 +62,21 @@ export class ScholarEnrollmentService {
       },
     });
 
+    const completedEnrollment = await this.prisma.termEnrollment.findFirst({
+      where: {
+        scholar_profile_id: scholar.profile_id,
+        status: 'COMPLETED',
+      },
+      orderBy: { updated_at: 'desc' },
+      include: {
+        disbursement: true,
+      },
+    });
+
     return {
       scholar,
       enrollment,
+      completed_previous_enrollment: completedEnrollment,
       prospectus_frozen: scholar.prospectus?.is_frozen ?? false,
     };
   }
