@@ -40,7 +40,13 @@ export class CoordinatorBaselineService {
           include: {
             document: true,
             frozen_by_employee: {
-              select: { first_name: true, last_name: true },
+              select: {
+                employee_id: true,
+                first_name: true,
+                last_name: true,
+                title: true,
+                user: { select: { role: true } },
+              },
             },
           },
         },
@@ -66,7 +72,15 @@ export class CoordinatorBaselineService {
                 { subject_code: 'asc' },
               ],
             },
-            frozen_by_employee: true,
+            frozen_by_employee: {
+              select: {
+                employee_id: true,
+                first_name: true,
+                last_name: true,
+                title: true,
+                user: { select: { role: true } },
+              },
+            },
           },
         },
         documents: {
@@ -260,7 +274,13 @@ export class CoordinatorBaselineService {
           ],
         },
         frozen_by_employee: {
-          select: { first_name: true, last_name: true, title: true },
+          select: {
+            employee_id: true,
+            first_name: true,
+            last_name: true,
+            title: true,
+            user: { select: { role: true } },
+          },
         },
       },
     });
@@ -300,10 +320,18 @@ export class CoordinatorBaselineService {
     const studentName =
       `${prospectus.scholar_profile.first_name} ${prospectus.scholar_profile.last_name}`.trim();
 
+    const userRecord = await this.prisma.user.findUnique({
+      where: { user_id: employeeUserId },
+      select: { role: true },
+    });
+    const roleLabel = userRecord?.role
+      ? userRecord.role.charAt(0) + userRecord.role.slice(1).toLowerCase()
+      : 'Staff';
+
     await this.auditService.log(
       employeeUserId,
       'BASELINE_FROZEN',
-      `Coordinator ${employee.first_name} ${employee.last_name} froze academic baseline for scholar ${studentName} (Prospectus ID: ${prospectusId}). Remarks: ${dto?.remarks || 'None'}`,
+      `${roleLabel} ${employee.first_name} ${employee.last_name} (${employee.title || roleLabel}) froze academic baseline for scholar ${studentName} (Prospectus ID: ${prospectusId}). Remarks: ${dto?.remarks || 'None'}`,
     );
 
     const payload = {
@@ -313,6 +341,8 @@ export class CoordinatorBaselineService {
       isFrozen: true,
       frozenAt: frozenAt.toISOString(),
       frozenBy: `${employee.first_name} ${employee.last_name}`.trim(),
+      frozenByRole: userRecord?.role || 'COORDINATOR',
+      frozenByTitle: employee.title || null,
       academic_baseline_status: 'BASELINE_FROZEN',
     };
 

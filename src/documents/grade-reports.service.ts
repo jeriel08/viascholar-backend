@@ -46,6 +46,11 @@ export class GradeReportsService {
             title: true,
           },
         },
+        scholar_profile: {
+          include: {
+            school_grading_system: true,
+          },
+        },
       },
     });
   }

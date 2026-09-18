@@ -442,21 +442,31 @@ export class LlamaExtractService implements IDocumentExtractor {
 
     let currentJob = job;
     let attempts = 0;
-    const maxAttempts = 90; // 90 * 2000ms = 180 seconds
+    const pollIntervalMs = 3000;
+    const maxAttempts = 200; // 200 * 3000ms = 600 seconds (10 minutes)
 
     while (
       !['COMPLETED', 'FAILED', 'CANCELLED'].includes(currentJob.status) &&
       attempts < maxAttempts
     ) {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
       currentJob = await client.extract.get(job.id);
       attempts++;
+
+      if (attempts % 10 === 0) {
+        this.logger.log(
+          `LlamaExtract job ${job.id} still in progress (status: ${currentJob.status}, ${Math.round((attempts * pollIntervalMs) / 1000)}s elapsed)...`,
+        );
+      }
     }
 
     if (currentJob.status !== 'COMPLETED') {
-      const errorMsg =
-        currentJob.error_message ||
-        `LlamaExtract job ${job.id} ended with status ${currentJob.status}`;
+      const isTimeout =
+        currentJob.status === 'RUNNING' || currentJob.status === 'PENDING';
+      const errorMsg = isTimeout
+        ? `LlamaExtract job ${job.id} timed out after ${Math.round((attempts * pollIntervalMs) / 1000)}s while still processing on LlamaCloud.`
+        : currentJob.error_message ||
+          `LlamaExtract job ${job.id} ended with status ${currentJob.status}`;
       this.logger.error(errorMsg);
       throw new Error(errorMsg);
     }

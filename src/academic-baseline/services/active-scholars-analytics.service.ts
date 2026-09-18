@@ -151,15 +151,15 @@ export class ActiveScholarsAnalyticsService {
       let disbText = 'None';
       if (latestDisb) {
         const amountStr = `₱${Number(latestDisb.amount).toLocaleString()}`;
-        const isPaid =
-          latestDisb.status === 'CLAIMED' || latestDisb.status === 'RELEASED';
-        disbText = `${amountStr} ${
-          isPaid
-            ? 'Paid'
-            : latestDisb.status === 'PENDING'
-              ? 'Pending'
-              : 'On hold'
-        }`;
+        const statusLabel =
+          latestDisb.status === 'SETTLED'
+            ? 'Settled'
+            : latestDisb.status === 'CLAIMED' || latestDisb.status === 'RELEASED'
+              ? 'Paid'
+              : latestDisb.status === 'CANCELLED'
+                ? 'On hold'
+                : 'Pending';
+        disbText = `${amountStr} ${statusLabel}`;
       }
 
       // 4. Health determination
@@ -189,12 +189,14 @@ export class ActiveScholarsAnalyticsService {
             term: `${latestDisb.academic_year} ${latestDisb.semester}`,
             amount: Number(latestDisb.amount),
             status:
-              latestDisb.status === 'CLAIMED' ||
-              latestDisb.status === 'RELEASED'
-                ? 'Paid'
-                : latestDisb.status === 'PENDING'
-                  ? 'Pending'
-                  : 'On hold',
+              latestDisb.status === 'SETTLED'
+                ? ('Settled' as const)
+                : latestDisb.status === 'CLAIMED' ||
+                    latestDisb.status === 'RELEASED'
+                  ? ('Paid' as const)
+                  : latestDisb.status === 'CANCELLED'
+                    ? ('On hold' as const)
+                    : ('Pending' as const),
           }
         : {
             term: 'Current Term',
@@ -220,11 +222,13 @@ export class ActiveScholarsAnalyticsService {
               })
             : 'Pending',
         status:
-          d.status === 'CLAIMED' || d.status === 'RELEASED'
-            ? 'Paid'
-            : d.status === 'PENDING'
-              ? 'Pending'
-              : 'On hold',
+          d.status === 'SETTLED'
+            ? ('Settled' as const)
+            : d.status === 'CLAIMED' || d.status === 'RELEASED'
+              ? ('Paid' as const)
+              : d.status === 'CANCELLED'
+                ? ('On hold' as const)
+                : ('Pending' as const),
       }));
 
       // 7. Grade history

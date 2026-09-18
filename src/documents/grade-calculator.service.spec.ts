@@ -90,12 +90,15 @@ describe('GradeCalculatorService & SettingsService Evaluation', () => {
     });
 
     it('should correctly evaluate 90% retention threshold for UM scale (where 2.0 is passing, 4.0 is max)', () => {
-      // 90% threshold translates to 3.20 on UM scale
+      // 90% threshold translates to 3.00 on UM scale
       expect(settingsService.evaluateGwaThreshold(3.5, 90.0, umConfig)).toBe(
         true,
       );
-      expect(settingsService.evaluateGwaThreshold(3.2, 90.0, umConfig)).toBe(
+      expect(settingsService.evaluateGwaThreshold(3.0, 90.0, umConfig)).toBe(
         true,
+      );
+      expect(settingsService.evaluateGwaThreshold(2.9, 90.0, umConfig)).toBe(
+        false,
       );
       expect(settingsService.evaluateGwaThreshold(2.5, 90.0, umConfig)).toBe(
         false,

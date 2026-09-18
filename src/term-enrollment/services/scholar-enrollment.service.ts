@@ -52,7 +52,7 @@ export class ScholarEnrollmentService {
       whereClause.status = { not: 'COMPLETED' };
     }
 
-    const enrollment = await this.prisma.termEnrollment.findFirst({
+    let enrollment = await this.prisma.termEnrollment.findFirst({
       where: whereClause,
       orderBy: { created_at: 'desc' },
       include: {
@@ -61,6 +61,40 @@ export class ScholarEnrollmentService {
         disbursement: true,
       },
     });
+
+    // If an existing enrollment was APPROVED or SUBMITTED, but the scholar has already confirmed or verified
+    // their CCG grades, that semester has ended. Transition it to COMPLETED so the new term enrollment can start.
+    if (enrollment && (enrollment.status === 'APPROVED' || enrollment.status === 'SUBMITTED' || enrollment.status === 'PENDING_REVIEW')) {
+      const hasConfirmedCcg = await this.prisma.scholarDocument.findFirst({
+        where: {
+          scholar_profile_id: scholar.profile_id,
+          document_type: 'CCG',
+          status: { in: ['STUDENT_CONFIRMED', 'VERIFIED'] },
+        },
+      });
+      const hasGradeReport = await this.prisma.gradeReport.findFirst({
+        where: {
+          scholar_profile_id: scholar.profile_id,
+          OR: [
+            { term_enrollment_id: enrollment.enrollment_id },
+            { academic_year: enrollment.academic_year, semester: enrollment.semester },
+          ],
+        },
+      });
+
+      if (hasConfirmedCcg || hasGradeReport) {
+        await this.prisma.termEnrollment.update({
+          where: { enrollment_id: enrollment.enrollment_id },
+          data: {
+            status: 'COMPLETED',
+            coordinator_notes: enrollment.coordinator_notes
+              ? `${enrollment.coordinator_notes} | Term concluded with CCG submission.`
+              : 'Term concluded with CCG submission. Cleared for next term enrollment.',
+          },
+        });
+        enrollment = null;
+      }
+    }
 
     const completedEnrollment = await this.prisma.termEnrollment.findFirst({
       where: {

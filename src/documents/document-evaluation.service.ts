@@ -98,15 +98,52 @@ export class DocumentEvaluationService {
       `Scholar confirmed document ID ${documentId} (${gradeItems.length} items, GA: ${generalAverage ?? 'N/A'}).`,
     );
 
-    this.eventsGateway.emitToStaff('document:confirmed_by_applicant', {
+    const studentName = `${doc.scholar_profile.first_name} ${doc.scholar_profile.last_name}`.trim();
+    const confirmedPayload = {
       documentId,
       scholarProfileId: doc.scholar_profile_id,
-      studentName: `${doc.scholar_profile.first_name} ${doc.scholar_profile.last_name}`.trim(),
+      studentName,
       documentType: doc.document_type,
       generalAverage,
       gradeItemsCount: gradeItems.length,
       confirmedAt: new Date().toISOString(),
-    });
+    };
+
+    this.eventsGateway.emitToStaff('document:confirmed_by_applicant', confirmedPayload);
+
+    const isGradeDoc = ['CCG', 'GRADE_REPORT', 'TOR', 'GRADE_SLIP', 'CERTIFIED_COPY_OF_GRADES'].includes(doc.document_type);
+    if (isGradeDoc) {
+      this.eventsGateway.emitToStaff('grade_report:submitted', confirmedPayload);
+    }
+
+    // Submitting CCG signifies the previous semester has completed.
+    // Transition any active/endorsed enrollment to COMPLETED so the scholar can enroll for the next semester.
+    if (doc.document_type === 'CCG') {
+      const activeEnrollment = await this.prisma.termEnrollment.findFirst({
+        where: {
+          scholar_profile_id: doc.scholar_profile_id,
+          status: { in: ['APPROVED', 'SUBMITTED', 'PENDING_REVIEW'] },
+        },
+        orderBy: { created_at: 'desc' },
+      });
+
+      if (activeEnrollment) {
+        await this.prisma.termEnrollment.update({
+          where: { enrollment_id: activeEnrollment.enrollment_id },
+          data: {
+            status: 'COMPLETED',
+            coordinator_notes: activeEnrollment.coordinator_notes
+              ? `${activeEnrollment.coordinator_notes} | Semester concluded with CCG submission.`
+              : 'Semester concluded with CCG submission. Ready for next term enrollment.',
+          },
+        });
+
+        this.eventsGateway.emitToUser(doc.scholar_profile.user_id, 'enrollment:updated', {
+          enrollment_id: activeEnrollment.enrollment_id,
+          status: 'COMPLETED',
+        });
+      }
+    }
 
     return updated;
   }
