@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { SchoolGradingSystem } from '../generated/prisma/client.js';
-import { SettingsService } from '../settings/settings.service.js';
+import { SchoolGradingSystem } from '../../generated/prisma/client.js';
+import { SettingsService } from '../../settings/settings.service.js';
 
 export interface EvaluatedGradeItem {
   subject_code?: string;
@@ -187,9 +187,6 @@ export class GradeCalculatorService {
 
   /**
    * Normalizes any school-specific GWA to a universal 0-100% equivalent.
-   * - DepEd / Form 138 (75-100%): Direct value.
-   * - Inverse 5-point (USEP/UP/ADDU: 1.00 highest, 3.00 passing=75%): Linear map to 100-75%.
-   * - Direct 4-point (UM: 4.00 highest, 2.00 passing=75%, 1.00 failing=50%): Linear map to 100-75%.
    */
   normalizeGwaToPercentage(
     gwa: number,

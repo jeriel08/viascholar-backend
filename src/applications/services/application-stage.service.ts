@@ -4,11 +4,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service.js';
-import { AuditService } from '../audit/audit.service.js';
-import { MailService } from '../mail/mail.service.js';
-import { UpdateApplicationStageDto } from './dto/update-stage.dto.js';
-import { EventsGateway } from '../events/events.gateway.js';
+import { PrismaService } from '../../prisma/prisma.service.js';
+import { AuditService } from '../../audit/audit.service.js';
+import { MailService } from '../../mail/mail.service.js';
+import { UpdateApplicationStageDto } from '../dto/update-stage.dto.js';
+import { EventsGateway } from '../../events/events.gateway.js';
 
 @Injectable()
 export class ApplicationStageService {

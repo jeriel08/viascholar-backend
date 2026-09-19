@@ -1,4 +1,4 @@
-import { GradeCalculatorService } from './grade-calculator.service.js';
+import { GradeCalculatorService } from './services/grade-calculator.service.js';
 import { SettingsService } from '../settings/settings.service.js';
 
 describe('GradeCalculatorService & SettingsService Evaluation', () => {

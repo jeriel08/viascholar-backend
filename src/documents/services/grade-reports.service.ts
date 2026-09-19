@@ -1,10 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service.js';
-import { AuditService } from '../audit/audit.service.js';
-import { MailService } from '../mail/mail.service.js';
-import { QueryGradeReportsDto } from './dto/query-grade-reports.dto.js';
-import { UpdateGradeReportStatusDto } from './dto/update-grade-report-status.dto.js';
-import { Prisma } from '../generated/prisma/client.js';
+import { PrismaService } from '../../prisma/prisma.service.js';
+import { AuditService } from '../../audit/audit.service.js';
+import { MailService } from '../../mail/mail.service.js';
+import { QueryGradeReportsDto } from '../dto/query-grade-reports.dto.js';
+import { UpdateGradeReportStatusDto } from '../dto/update-grade-report-status.dto.js';
+import { Prisma } from '../../generated/prisma/client.js';
 
 @Injectable()
 export class GradeReportsService {

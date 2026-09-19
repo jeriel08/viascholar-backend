@@ -1,8 +1,10 @@
+import { jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ApplicationsService } from './applications.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { MailService } from '../mail/mail.service.js';
+import { EventsGateway } from '../events/events.gateway.js';
 
 describe('ApplicationsService', () => {
   let service: ApplicationsService;
@@ -18,6 +20,13 @@ describe('ApplicationsService', () => {
           useValue: {
             sendApplicationSubmittedStudent: jest.fn(),
             getStaffEmails: jest.fn().mockResolvedValue([]),
+          },
+        },
+        {
+          provide: EventsGateway,
+          useValue: {
+            emitToStaff: jest.fn(),
+            emitToUser: jest.fn(),
           },
         },
       ],

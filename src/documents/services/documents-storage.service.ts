@@ -4,13 +4,13 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service.js';
-import { CloudinaryService } from '../cloudinary/cloudinary.service.js';
-import { AuditService } from '../audit/audit.service.js';
+import { PrismaService } from '../../prisma/prisma.service.js';
+import { CloudinaryService } from '../../cloudinary/cloudinary.service.js';
+import { AuditService } from '../../audit/audit.service.js';
 import { PdfMergerService } from './pdf-merger.service.js';
 import { FileForensicsService } from './file-forensics.service.js';
 import { DocumentOcrService } from './document-ocr.service.js';
-import { Prisma } from '../generated/prisma/client.js';
+import { Prisma } from '../../generated/prisma/client.js';
 
 @Injectable()
 export class DocumentsStorageService {
@@ -26,7 +26,9 @@ export class DocumentsStorageService {
   ) {}
 
   private isHighSchoolDocument(documentType: string): boolean {
-    return /138|137|form\s*9|report\s*card|high\s*school|shs|senior\s*high/i.test(documentType);
+    return /138|137|form\s*9|report\s*card|high\s*school|shs|senior\s*high/i.test(
+      documentType,
+    );
   }
 
   private isCollegeGradeDocument(documentType: string): boolean {
@@ -56,7 +58,11 @@ export class DocumentsStorageService {
         `Scholars in Year Level ${yearLevel} (2nd to 4th year) are required to upload a Certified Copy of Grades (CCG) or Transcript of Records (TOR).`,
       );
     }
-    if (yearLevel === 1 && !this.isHighSchoolDocument(documentType) && !this.isCollegeGradeDocument(documentType)) {
+    if (
+      yearLevel === 1 &&
+      !this.isHighSchoolDocument(documentType) &&
+      !this.isCollegeGradeDocument(documentType)
+    ) {
       throw new BadRequestException(
         '1st-year applicants are required to upload their Senior High School Form 138 or Form 9 report card, or Certified Copy of Grades (CCG).',
       );
@@ -67,8 +73,12 @@ export class DocumentsStorageService {
       throw new BadRequestException('At least one file must be uploaded.');
     }
 
-    const metadataForensics = await this.fileForensicsService.inspectFileMetadata(fileList);
-    const processed = await this.pdfMergerService.processAndMergeFiles(fileList, documentType);
+    const metadataForensics =
+      await this.fileForensicsService.inspectFileMetadata(fileList);
+    const processed = await this.pdfMergerService.processAndMergeFiles(
+      fileList,
+      documentType,
+    );
 
     const publicId = processed.fileName.replace(/\.[^/.]+$/, '');
     const cloudinaryResult = await this.cloudinaryService.uploadBuffer(
@@ -90,7 +100,9 @@ export class DocumentsStorageService {
         file_url: cloudinaryResult.secure_url,
         file_type: fileType,
         status: 'PENDING',
-        extracted_data: { forensic_metadata: metadataForensics } as unknown as Prisma.InputJsonValue,
+        extracted_data: {
+          forensic_metadata: metadataForensics,
+        } as unknown as Prisma.InputJsonValue,
       },
     });
 
@@ -110,7 +122,9 @@ export class DocumentsStorageService {
         fileList,
       )
       ?.catch((err: Error) => {
-        this.logger.error(`Automated OCR extraction failed for doc ${document.document_id}: ${err.message}`);
+        this.logger.error(
+          `Automated OCR extraction failed for doc ${document.document_id}: ${err.message}`,
+        );
       });
 
     return document;
@@ -131,7 +145,9 @@ export class DocumentsStorageService {
     }
 
     if (doc.status === 'VERIFIED' || doc.status === 'STUDENT_CONFIRMED') {
-      throw new BadRequestException('Confirmed or verified documents cannot be replaced directly.');
+      throw new BadRequestException(
+        'Confirmed or verified documents cannot be replaced directly.',
+      );
     }
 
     const fileList = Array.isArray(files) ? files : [files];
@@ -139,8 +155,12 @@ export class DocumentsStorageService {
       throw new BadRequestException('No files provided for replacement.');
     }
 
-    const metadataForensics = await this.fileForensicsService.inspectFileMetadata(fileList);
-    const processed = await this.pdfMergerService.processAndMergeFiles(fileList, doc.document_type || 'document');
+    const metadataForensics =
+      await this.fileForensicsService.inspectFileMetadata(fileList);
+    const processed = await this.pdfMergerService.processAndMergeFiles(
+      fileList,
+      doc.document_type || 'document',
+    );
 
     const publicId = processed.fileName.replace(/\.[^/.]+$/, '');
     const cloudinaryResult = await this.cloudinaryService.uploadBuffer(
@@ -161,7 +181,9 @@ export class DocumentsStorageService {
         file_type: fileType,
         status: 'PENDING',
         rejection_reason: null,
-        extracted_data: { forensic_metadata: metadataForensics } as unknown as Prisma.InputJsonValue,
+        extracted_data: {
+          forensic_metadata: metadataForensics,
+        } as unknown as Prisma.InputJsonValue,
         confirmed_data: Prisma.DbNull,
         verified_at: null,
         reviewed_by_employee_id: null,
@@ -184,7 +206,9 @@ export class DocumentsStorageService {
         fileList,
       )
       ?.catch((err: Error) => {
-        this.logger.error(`Automated OCR extraction failed on replacement for doc ${documentId}: ${err.message}`);
+        this.logger.error(
+          `Automated OCR extraction failed on replacement for doc ${documentId}: ${err.message}`,
+        );
       });
 
     return updated;
@@ -204,7 +228,9 @@ export class DocumentsStorageService {
       where: { document_id: documentId, status: 'APPROVED' },
     });
     if (approvedReport) {
-      throw new BadRequestException('This document is linked to an approved Grade Report and cannot be deleted.');
+      throw new BadRequestException(
+        'This document is linked to an approved Grade Report and cannot be deleted.',
+      );
     }
 
     await this.prisma.gradeReport.deleteMany({
@@ -276,7 +302,7 @@ export class DocumentsStorageService {
     return doc;
   }
 
-  // Coordinator views pending documents for verification (Only Grade-related Documents)
+  // Coordinator views pending documents for verification
   async getPendingDocuments() {
     return this.prisma.scholarDocument.findMany({
       where: {
@@ -292,7 +318,12 @@ export class DocumentsStorageService {
           ],
         },
         status: {
-          in: ['PENDING', 'PASSED_PRECHECK', 'NEEDS_REUPLOAD', 'STUDENT_CONFIRMED'],
+          in: [
+            'PENDING',
+            'PASSED_PRECHECK',
+            'NEEDS_REUPLOAD',
+            'STUDENT_CONFIRMED',
+          ],
         },
       },
       orderBy: { uploaded_at: 'asc' },
@@ -320,8 +351,23 @@ export class DocumentsStorageService {
     const isYear2Plus = yearLevel >= 2;
 
     const allowedTypes = isYear2Plus
-      ? ['CCG', 'Certified Copy of Grades', 'TOR', 'COG', 'Transcript of Records', 'Certificate of Grades']
-      : ['CCG', 'Certified Copy of Grades', 'Form 138', 'Form 9', 'Form 137', 'High School Report Card', 'TOR'];
+      ? [
+          'CCG',
+          'Certified Copy of Grades',
+          'TOR',
+          'COG',
+          'Transcript of Records',
+          'Certificate of Grades',
+        ]
+      : [
+          'CCG',
+          'Certified Copy of Grades',
+          'Form 138',
+          'Form 9',
+          'Form 137',
+          'High School Report Card',
+          'TOR',
+        ];
 
     const prohibitedTypes = isYear2Plus
       ? ['Form 138', 'Form 9', 'Form 137', 'High School Report Card']

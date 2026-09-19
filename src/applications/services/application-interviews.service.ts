@@ -3,15 +3,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service.js';
-import { AuditService } from '../audit/audit.service.js';
-import { GoogleCalendarService } from '../google-calendar/google-calendar.service.js';
-import { MailService } from '../mail/mail.service.js';
-import { ScheduleInterviewDto } from './dto/schedule-interview.dto.js';
-import { RequestRescheduleDto } from './dto/request-reschedule.dto.js';
-import { RescheduleInterviewDto } from './dto/reschedule-interview.dto.js';
-import { CancelInterviewDto } from './dto/cancel-interview.dto.js';
-import { EventsGateway } from '../events/events.gateway.js';
+import { PrismaService } from '../../prisma/prisma.service.js';
+import { AuditService } from '../../audit/audit.service.js';
+import { GoogleCalendarService } from '../../google-calendar/google-calendar.service.js';
+import { MailService } from '../../mail/mail.service.js';
+import { ScheduleInterviewDto } from '../dto/schedule-interview.dto.js';
+import { RequestRescheduleDto } from '../dto/request-reschedule.dto.js';
+import { RescheduleInterviewDto } from '../dto/reschedule-interview.dto.js';
+import { CancelInterviewDto } from '../dto/cancel-interview.dto.js';
+import { EventsGateway } from '../../events/events.gateway.js';
 
 // meetings.meeting_date is a DATE column — strip the time portion in UTC.
 function toDateOnly(d: Date): Date {

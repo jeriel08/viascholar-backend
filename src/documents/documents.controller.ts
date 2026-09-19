@@ -6,10 +6,10 @@ import { AuthGuard } from '@nestjs/passport';
 import { Throttle } from '@nestjs/throttler';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { RolesGuard } from '../auth/decorators/roles.guard.js';
-import { DocumentsStorageService } from './documents-storage.service.js';
-import { DocumentOcrService } from './document-ocr.service.js';
-import { DocumentEvaluationService } from './document-evaluation.service.js';
-import { GradeReportsService } from './grade-reports.service.js';
+import { DocumentsStorageService } from './services/documents-storage.service.js';
+import { DocumentOcrService } from './services/document-ocr.service.js';
+import { DocumentEvaluationService } from './services/document-evaluation.service.js';
+import { GradeReportsService } from './services/grade-reports.service.js';
 import { Roles } from '../auth/decorators/roles.decorator.js';
 import { Role } from '../generated/prisma/enums.js';
 import { VerifyDocumentDto } from './dto/verify-document.dto.js';
@@ -19,7 +19,7 @@ import { QueryGradeReportsDto } from './dto/query-grade-reports.dto.js';
 import { UpdateGradeReportStatusDto } from './dto/update-grade-report-status.dto.js';
 import { SubmitAppealDto } from './dto/submit-appeal.dto.js';
 import { ReviewAppealDto } from './dto/review-appeal.dto.js';
-import { AcademicAppealService } from './academic-appeal.service.js';
+import { AcademicAppealService } from './services/academic-appeal.service.js';
 
 interface AuthenticatedRequest {
   user: {

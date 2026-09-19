@@ -89,7 +89,6 @@ export class FileForensicsService {
             const diffDays =
               Math.abs(modDate.getTime() - creationDate.getTime()) /
               (1000 * 60 * 60 * 24);
-            // If modified > 14 days after creation, flag potential post-issuance tampering
             if (diffDays > 14) {
               hasModificationGap = true;
               flags.push('PDF_MODIFIED_LONG_AFTER_CREATION');

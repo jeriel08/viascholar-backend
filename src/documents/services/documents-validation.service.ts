@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service.js';
-import { DocumentStatus } from '../generated/prisma/enums.js';
+import { PrismaService } from '../../prisma/prisma.service.js';
+import { DocumentStatus } from '../../generated/prisma/enums.js';
 
 @Injectable()
 export class DocumentValidationService {

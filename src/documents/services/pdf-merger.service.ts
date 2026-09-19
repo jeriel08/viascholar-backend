@@ -1,4 +1,3 @@
-// src/documents/pdf-merger.service.ts
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { PDFDocument } from 'pdf-lib';
 
@@ -33,7 +32,6 @@ export class PdfMergerService {
 
   /**
    * Merges multiple files (images and/or PDFs) into a single unified multi-page PDF.
-   * If a single file is provided, it processes it as-is without unnecessary conversions.
    */
   async processAndMergeFiles(
     files: Express.Multer.File[],
@@ -43,7 +41,6 @@ export class PdfMergerService {
       throw new BadRequestException('At least one file must be provided.');
     }
 
-    // Single file optimization
     if (files.length === 1) {
       const single = files[0];
       const isPdf = single.mimetype.includes('pdf');
@@ -74,7 +71,6 @@ export class PdfMergerService {
         }
 
         if (mime.includes('pdf')) {
-          // Merge pages from existing PDF
           const sourceDoc = await PDFDocument.load(buffer, {
             ignoreEncryption: true,
           });
@@ -82,7 +78,6 @@ export class PdfMergerService {
           const copiedPages = await mergedPdf.copyPages(sourceDoc, pageIndices);
           copiedPages.forEach((page) => mergedPdf.addPage(page));
         } else if (mime.includes('jpeg') || mime.includes('jpg')) {
-          // Embed JPEG image
           const embeddedImage = await mergedPdf.embedJpg(buffer);
           const page = mergedPdf.addPage([
             embeddedImage.width,
@@ -95,7 +90,6 @@ export class PdfMergerService {
             height: embeddedImage.height,
           });
         } else if (mime.includes('png')) {
-          // Embed PNG image
           const embeddedImage = await mergedPdf.embedPng(buffer);
           const page = mergedPdf.addPage([
             embeddedImage.width,

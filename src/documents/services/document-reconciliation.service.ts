@@ -102,7 +102,7 @@ export class DocumentReconciliationService {
         ? Number(reportedGwaRaw)
         : undefined;
 
-    // Check for explicit 1st & 2nd semester averages (from Parseur fields or computed from semester-tagged subjects)
+    // Check for explicit 1st & 2nd semester averages
     const sem1Raw =
       extractedData.first_sem_average ??
       extractedData.first_semester_average ??
@@ -119,7 +119,7 @@ export class DocumentReconciliationService {
     let sem2 =
       sem2Raw != null && !isNaN(Number(sem2Raw)) ? Number(sem2Raw) : null;
 
-    // Fallback: If not explicitly extracted, calculate sem1 and sem2 averages from semester-tagged subjects
+    // Fallback: calculate sem1 and sem2 averages from semester-tagged subjects
     if (sem1 == null || sem2 == null) {
       const sem1Items = grades.filter((g) =>
         /1st|first/i.test(g.semester || ''),
@@ -163,7 +163,6 @@ export class DocumentReconciliationService {
       ) {
         let diff = Math.abs(reportedGwa - computedGwa);
 
-        // Check if reported GWA matches the mean of the 2 semestral averages (with DepEd rounding)
         if (sem1 != null && sem2 != null) {
           const semMean = (sem1 + sem2) / 2;
           const semDiff = Math.abs(reportedGwa - semMean);
@@ -172,9 +171,6 @@ export class DocumentReconciliationService {
           }
         }
 
-        // Calibrated Tolerances:
-        // On 100% scale: <= 1.5 pts is normal (DepEd semestral rounding or minor quarter averaging).
-        // On 5.0 scale: <= 0.15 is normal.
         const isNumericScale = computedGwa <= 5.0 && computedGwa > 0;
         const normalTolerance = isNumericScale ? 0.15 : 1.5;
         const moderateTolerance = isNumericScale ? 0.35 : 3.5;
@@ -223,7 +219,6 @@ export class DocumentReconciliationService {
         }
       }
 
-      // Only check course mismatch for College TOR / Grade Slips (Skip for High School Form 138)
       if (!isForm138 && profile.course_of_study && extractedData.course_name) {
         const extractedCourse = String(extractedData.course_name).toLowerCase();
         const registeredCourse = profile.course_of_study.toLowerCase();
@@ -272,7 +267,7 @@ export class DocumentReconciliationService {
       riskLevel = 'MEDIUM';
     }
 
-    // Friendly human-readable summary for Coordinators
+    // Human-readable summary for Coordinators
     let summary =
       'Document passed forensic baseline check with zero tampering indicators.';
     const detectedSoft = initialMetadataForensics?.detected_software || [];

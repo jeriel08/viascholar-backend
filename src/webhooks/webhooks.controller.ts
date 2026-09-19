@@ -11,8 +11,8 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { Prisma } from '../generated/prisma/client.js';
-import { DocumentReconciliationService } from '../documents/document-reconciliation.service.js';
-import { ForensicMetadataResult } from '../documents/file-forensics.service.js';
+import { DocumentReconciliationService } from '../documents/services/document-reconciliation.service.js';
+import { ForensicMetadataResult } from '../documents/services/file-forensics.service.js';
 import { EventsGateway } from '../events/events.gateway.js';
 
 type ParseurFieldSet = { grades?: unknown[] } & Record<string, unknown>;

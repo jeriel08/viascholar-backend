@@ -5,12 +5,12 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service.js';
-import { AuditService } from '../audit/audit.service.js';
-import { MailService } from '../mail/mail.service.js';
-import { EventsGateway } from '../events/events.gateway.js';
-import { SubmitAppealDto } from './dto/submit-appeal.dto.js';
-import { ReviewAppealDto } from './dto/review-appeal.dto.js';
+import { PrismaService } from '../../prisma/prisma.service.js';
+import { AuditService } from '../../audit/audit.service.js';
+import { MailService } from '../../mail/mail.service.js';
+import { EventsGateway } from '../../events/events.gateway.js';
+import { SubmitAppealDto } from '../dto/submit-appeal.dto.js';
+import { ReviewAppealDto } from '../dto/review-appeal.dto.js';
 
 @Injectable()
 export class AcademicAppealService {
