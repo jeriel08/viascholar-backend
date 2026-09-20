@@ -124,7 +124,16 @@ export class EnrollmentAuditEngineService {
     remarks?: string | null;
   }): boolean {
     const statusUpper = (sub.status || '').toUpperCase().trim();
-    if (['PASSED', 'CREDITED', 'TAKEN', 'COMPLETED', 'CREDIT', 'ENROLLED'].includes(statusUpper)) {
+    if (
+      [
+        'PASSED',
+        'CREDITED',
+        'TAKEN',
+        'COMPLETED',
+        'CREDIT',
+        'ENROLLED',
+      ].includes(statusUpper)
+    ) {
       return true;
     }
 
@@ -143,7 +152,10 @@ export class EnrollmentAuditEngineService {
       return true;
     }
 
-    if (sub.remarks && /passed|credited|cleared|equivalent|enrolled/i.test(sub.remarks)) {
+    if (
+      sub.remarks &&
+      /passed|credited|cleared|equivalent|enrolled/i.test(sub.remarks)
+    ) {
       return true;
     }
 
@@ -171,7 +183,10 @@ export class EnrollmentAuditEngineService {
     });
 
     const curriculumSubjects = prospectus?.subjects || [];
-    const normalizedCurriculumMap = new Map<string, (typeof curriculumSubjects)[0]>();
+    const normalizedCurriculumMap = new Map<
+      string,
+      (typeof curriculumSubjects)[0]
+    >();
 
     for (const sub of curriculumSubjects) {
       const normCode = this.normalizeSubjectCode(sub.subject_code);
@@ -227,7 +242,9 @@ export class EnrollmentAuditEngineService {
       }
 
       // Check prerequisites
-      const prereqTokens = this.parsePrerequisiteTokens(matchedCurriculumSub.prerequisites);
+      const prereqTokens = this.parsePrerequisiteTokens(
+        matchedCurriculumSub.prerequisites,
+      );
 
       const unmetPrereqs: string[] = [];
       for (const p of prereqTokens) {
@@ -242,7 +259,9 @@ export class EnrollmentAuditEngineService {
         flags.push(`MISSING_PREREQUISITE:${enrolled.subject_code}`);
         subjectsAudit.push({
           subject_code: enrolled.subject_code,
-          descriptive_title: matchedCurriculumSub.descriptive_title || enrolled.descriptive_title,
+          descriptive_title:
+            matchedCurriculumSub.descriptive_title ||
+            enrolled.descriptive_title,
           units: units,
           section: enrolled.section,
           schedule: enrolled.schedule,
@@ -255,7 +274,9 @@ export class EnrollmentAuditEngineService {
       } else {
         subjectsAudit.push({
           subject_code: enrolled.subject_code,
-          descriptive_title: matchedCurriculumSub.descriptive_title || enrolled.descriptive_title,
+          descriptive_title:
+            matchedCurriculumSub.descriptive_title ||
+            enrolled.descriptive_title,
           units: units,
           section: enrolled.section,
           schedule: enrolled.schedule,
@@ -280,7 +301,12 @@ export class EnrollmentAuditEngineService {
 
     // 4. Cross-document reconciliation
     let crossDocReconciliation: CrossDocReconciliationResult | undefined;
-    if (meta?.corStudentId || meta?.soaStudentId || meta?.corStudentName || meta?.soaStudentName) {
+    if (
+      meta?.corStudentId ||
+      meta?.soaStudentId ||
+      meta?.corStudentName ||
+      meta?.soaStudentName
+    ) {
       const scholar = await this.prisma.scholarProfile.findUnique({
         where: { profile_id: scholarProfileId },
       });
@@ -288,7 +314,9 @@ export class EnrollmentAuditEngineService {
       const mismatches: string[] = [];
       let score = 100;
 
-      const profileStudentId = (scholar?.student_number || '').trim().toLowerCase();
+      const profileStudentId = (scholar?.student_number || '')
+        .trim()
+        .toLowerCase();
       const corId = (meta.corStudentId || '').trim().toLowerCase();
       const soaId = (meta.soaStudentId || '').trim().toLowerCase();
 
@@ -299,16 +327,26 @@ export class EnrollmentAuditEngineService {
         score -= 40;
       } else if (corId && profileStudentId && corId !== profileStudentId) {
         idMatch = false;
-        mismatches.push('Document Student ID does not match Profile Student Number');
+        mismatches.push(
+          'Document Student ID does not match Profile Student Number',
+        );
         score -= 30;
       }
 
-      const profileName = `${scholar?.first_name || ''} ${scholar?.last_name || ''}`.trim().toLowerCase();
+      const profileName =
+        `${scholar?.first_name || ''} ${scholar?.last_name || ''}`
+          .trim()
+          .toLowerCase();
       const corName = (meta.corStudentName || '').trim().toLowerCase();
       const soaName = (meta.soaStudentName || '').trim().toLowerCase();
 
       let nameMatch = true;
-      if (corName && soaName && !corName.includes(soaName) && !soaName.includes(corName)) {
+      if (
+        corName &&
+        soaName &&
+        !corName.includes(soaName) &&
+        !soaName.includes(corName)
+      ) {
         nameMatch = false;
         mismatches.push('COR and SOA Student Name mismatch');
         score -= 30;
@@ -327,9 +365,7 @@ export class EnrollmentAuditEngineService {
       }
     }
 
-    const blockingFlags = flags.filter(
-      (f) => !f.startsWith('UNDERLOAD_UNITS'),
-    );
+    const blockingFlags = flags.filter((f) => !f.startsWith('UNDERLOAD_UNITS'));
     const allCleared = blockingFlags.length === 0;
 
     return {

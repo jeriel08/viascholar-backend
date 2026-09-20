@@ -187,7 +187,11 @@ export class ChatService {
     return this.messagesService.getMessages(userId, conversationId, query);
   }
 
-  sendMessage(senderUserId: number, conversationId: number, dto: SendMessageDto) {
+  sendMessage(
+    senderUserId: number,
+    conversationId: number,
+    dto: SendMessageDto,
+  ) {
     return this.messagesService.sendMessage(senderUserId, conversationId, dto);
   }
 

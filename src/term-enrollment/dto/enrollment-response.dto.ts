@@ -5,7 +5,8 @@ export interface SubjectAuditDetail {
   section?: string;
   schedule?: string;
   room?: string;
-  status: 'ON_TRACK' | 'OFF_TRACK' | 'PREREQUISITE_CLEARED' | 'MISSING_PREREQUISITE';
+  status:
+    'ON_TRACK' | 'OFF_TRACK' | 'PREREQUISITE_CLEARED' | 'MISSING_PREREQUISITE';
   curriculum_subject_id?: number;
   unmet_prerequisites?: string[];
   remarks?: string;

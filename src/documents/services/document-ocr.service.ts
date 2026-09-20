@@ -243,7 +243,10 @@ export class DocumentOcrService {
               errorPayload,
             );
           }
-          this.eventsGateway.emitToStaff('document:ocr_completed', errorPayload);
+          this.eventsGateway.emitToStaff(
+            'document:ocr_completed',
+            errorPayload,
+          );
         }
       } catch (dbErr: any) {
         this.logger.error(
@@ -342,12 +345,12 @@ export class DocumentOcrService {
   }
 
   // Retrieve OCR-extracted fields and smart warnings for a document
-  getExtractedData(
-    userId: number,
-    documentId: number,
-    callerRole: string,
-  ) {
-    return this.documentDataQueryService.getExtractedData(userId, documentId, callerRole);
+  getExtractedData(userId: number, documentId: number, callerRole: string) {
+    return this.documentDataQueryService.getExtractedData(
+      userId,
+      documentId,
+      callerRole,
+    );
   }
 
   // Delegated Parseur sync methods

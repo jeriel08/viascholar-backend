@@ -44,17 +44,26 @@ export class DisbursementsController {
 
   @Get('grantor/consolidated-report')
   @Roles(Role.GRANTOR, Role.ADMIN)
-  @ApiOperation({ summary: 'Get consolidated billing report of coordinator-approved SOAs grouped by university' })
+  @ApiOperation({
+    summary:
+      'Get consolidated billing report of coordinator-approved SOAs grouped by university',
+  })
   async getConsolidatedBillingReport(
     @Query('academic_year') academicYear?: string,
     @Query('semester') semester?: string,
   ) {
-    return this.grantorService.getConsolidatedBillingReport(academicYear, semester);
+    return this.grantorService.getConsolidatedBillingReport(
+      academicYear,
+      semester,
+    );
   }
 
   @Post('grantor/authorize-batch')
   @Roles(Role.GRANTOR, Role.ADMIN)
-  @ApiOperation({ summary: 'Grantor authorizes release of funds and generates Disbursement Voucher (DV-YYYY-XXXX)' })
+  @ApiOperation({
+    summary:
+      'Grantor authorizes release of funds and generates Disbursement Voucher (DV-YYYY-XXXX)',
+  })
   async authorizeBatch(
     @Request() req: any,
     @Body() dto: AuthorizeDisbursementBatchDto,
@@ -94,24 +103,38 @@ export class DisbursementsController {
 
   @Post('coordinator/:id/issue-check')
   @Roles(Role.COORDINATOR, Role.ADMIN)
-  @ApiOperation({ summary: 'Record physical check metadata with payee locked to university name' })
+  @ApiOperation({
+    summary:
+      'Record physical check metadata with payee locked to university name',
+  })
   async recordCheckIssuance(
     @Request() req: any,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: RecordCheckIssuanceDto,
   ) {
-    return this.coordinatorService.recordCheckIssuance(req.user.user_id, id, dto);
+    return this.coordinatorService.recordCheckIssuance(
+      req.user.user_id,
+      id,
+      dto,
+    );
   }
 
   @Post('coordinator/:id/settle-or')
   @Roles(Role.COORDINATOR, Role.ADMIN)
-  @ApiOperation({ summary: 'Coordinator verifies uploaded Official Receipt and settles transaction' })
+  @ApiOperation({
+    summary:
+      'Coordinator verifies uploaded Official Receipt and settles transaction',
+  })
   async settleOfficialReceipt(
     @Request() req: any,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: SettleOfficialReceiptDto,
   ) {
-    return this.coordinatorService.settleOfficialReceipt(req.user.user_id, id, dto);
+    return this.coordinatorService.settleOfficialReceipt(
+      req.user.user_id,
+      id,
+      dto,
+    );
   }
 
   // ==========================================
@@ -121,7 +144,9 @@ export class DisbursementsController {
   @Post('scholar/upload-receipt')
   @Roles(Role.SCHOLAR)
   @UseInterceptors(AnyFilesInterceptor())
-  @ApiOperation({ summary: 'Scholar uploads and scans Official Receipt (Cloudinary + OCR)' })
+  @ApiOperation({
+    summary: 'Scholar uploads and scans Official Receipt (Cloudinary + OCR)',
+  })
   async uploadReceipt(
     @Request() req: any,
     @UploadedFiles() files: Express.Multer.File[],
@@ -131,14 +156,18 @@ export class DisbursementsController {
 
   @Get('scholar/my-disbursements')
   @Roles(Role.SCHOLAR)
-  @ApiOperation({ summary: 'Get personal tuition disbursement timeline for scholar' })
+  @ApiOperation({
+    summary: 'Get personal tuition disbursement timeline for scholar',
+  })
   async getMyDisbursements(@Request() req: any) {
     return this.scholarService.getMyDisbursements(req.user.user_id);
   }
 
   @Post('scholar/:id/submit-or')
   @Roles(Role.SCHOLAR)
-  @ApiOperation({ summary: 'Scholar submits university Official Receipt photo and details' })
+  @ApiOperation({
+    summary: 'Scholar submits university Official Receipt photo and details',
+  })
   async submitOfficialReceipt(
     @Request() req: any,
     @Param('id', ParseIntPipe) id: number,

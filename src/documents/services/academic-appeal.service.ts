@@ -24,11 +24,7 @@ export class AcademicAppealService {
   ) {}
 
   // 1. Scholar submits a Second Chance Academic Appeal for a flagged Grade Report
-  async submitAppeal(
-    userId: number,
-    reportId: number,
-    dto: SubmitAppealDto,
-  ) {
+  async submitAppeal(userId: number, reportId: number, dto: SubmitAppealDto) {
     const scholar = await this.prisma.scholarProfile.findUnique({
       where: { user_id: userId },
       include: { user: true },
@@ -51,11 +47,15 @@ export class AcademicAppealService {
     }
 
     if (report.scholar_profile_id !== scholar.profile_id) {
-      throw new ForbiddenException('You cannot appeal a grade report that is not yours.');
+      throw new ForbiddenException(
+        'You cannot appeal a grade report that is not yours.',
+      );
     }
 
     if (report.appeal_status === 'PENDING_GRANTOR') {
-      throw new BadRequestException('An academic appeal is already under review for this term.');
+      throw new BadRequestException(
+        'An academic appeal is already under review for this term.',
+      );
     }
 
     // Update GradeReport with appeal details
@@ -104,7 +104,8 @@ export class AcademicAppealService {
           });
         }
 
-        const appealMsgText = `📢 [ACADEMIC SECOND CHANCE APPEAL SUBMITTED]\n\n` +
+        const appealMsgText =
+          `📢 [ACADEMIC SECOND CHANCE APPEAL SUBMITTED]\n\n` +
           `Scholar: ${scholar.first_name} ${scholar.last_name} (${scholar.student_number || 'ID Pending'})\n` +
           `Term: ${report.academic_year} • ${report.semester}\n` +
           `Term GWA: ${Number(report.gpa).toFixed(2)} (Retention Status: ${report.evaluation_flag || 'FLAGGED'})\n\n` +
@@ -208,6 +209,37 @@ export class AcademicAppealService {
       },
     });
 
+    // If appeal is DENIED: terminate contract, update profile standing, and cancel pending disbursements
+    if (!isApproved) {
+      await this.prisma.contract.updateMany({
+        where: {
+          scholar_profile_id: report.scholar_profile_id,
+          status: { in: ['SIGNED', 'PENDING'] },
+        },
+        data: {
+          status: 'TERMINATED',
+        },
+      });
+
+      await this.prisma.scholarProfile.update({
+        where: { profile_id: report.scholar_profile_id },
+        data: {
+          academic_baseline_status: 'DISCONTINUED',
+        },
+      });
+
+      await this.prisma.disbursement.updateMany({
+        where: {
+          scholar_profile_id: report.scholar_profile_id,
+          status: { in: ['PENDING', 'AUTHORIZED'] },
+        },
+        data: {
+          status: 'CANCELLED',
+          remarks: `Scholarship discontinued: Academic appeal denied for ${report.academic_year} ${report.semester}.`,
+        },
+      });
+    }
+
     // Post verdict message in conversation
     try {
       const convo = await this.prisma.conversation.findUnique({
@@ -244,14 +276,16 @@ export class AcademicAppealService {
 
     // Send email notification
     const studentEmail = report.scholar_profile.user?.email;
-    const studentName = `${report.scholar_profile.first_name} ${report.scholar_profile.last_name}`.trim();
+    const studentName =
+      `${report.scholar_profile.first_name} ${report.scholar_profile.last_name}`.trim();
     if (studentEmail) {
       void this.mailService.sendGradeReportStatusUpdated(studentEmail, {
         studentName,
         academicYear: report.academic_year,
         semester: report.semester,
         status: isApproved ? 'APPROVED' : 'FLAGGED',
-        remarks: `Appeal Verdict: ${dto.decision}. ${dto.decision_notes || ''}`.trim(),
+        remarks:
+          `Appeal Verdict: ${dto.decision}. ${dto.decision_notes || ''}`.trim(),
       });
     }
 
@@ -264,7 +298,11 @@ export class AcademicAppealService {
     };
 
     this.eventsGateway.emitToStaff('grade_report:appeal_decided', payload);
-    this.eventsGateway.emitToUser(report.scholar_profile.user_id, 'grade_report:appeal_decided', payload);
+    this.eventsGateway.emitToUser(
+      report.scholar_profile.user_id,
+      'grade_report:appeal_decided',
+      payload,
+    );
 
     return updated;
   }

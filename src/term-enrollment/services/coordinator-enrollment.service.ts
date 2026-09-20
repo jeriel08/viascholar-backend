@@ -109,7 +109,9 @@ export class CoordinatorEnrollmentService {
     });
 
     if (!enrollment) {
-      throw new NotFoundException(`Term enrollment #${enrollmentId} not found.`);
+      throw new NotFoundException(
+        `Term enrollment #${enrollmentId} not found.`,
+      );
     }
 
     return enrollment;
@@ -134,11 +136,14 @@ export class CoordinatorEnrollmentService {
     });
 
     if (!enrollment) {
-      throw new NotFoundException(`Term enrollment #${enrollmentId} not found.`);
+      throw new NotFoundException(
+        `Term enrollment #${enrollmentId} not found.`,
+      );
     }
 
     if (dto.action === EnrollmentReviewAction.APPROVE) {
-      const approvedAmount = dto.approved_amount ?? Number(enrollment.total_assessment);
+      const approvedAmount =
+        dto.approved_amount ?? Number(enrollment.total_assessment);
 
       // Create Disbursement in transaction
       const result = await this.prisma.$transaction(async (tx) => {
@@ -151,7 +156,8 @@ export class CoordinatorEnrollmentService {
             amount: approvedAmount,
             status: 'PENDING',
             approved_by_employee_id: coordinator.employee_id,
-            remarks: `Tuition & fees disbursement endorsed from Start-of-Term Enrollment Audit. ${dto.coordinator_notes || ''}`.trim(),
+            remarks:
+              `Tuition & fees disbursement endorsed from Start-of-Term Enrollment Audit. ${dto.coordinator_notes || ''}`.trim(),
           },
         });
 
@@ -164,19 +170,31 @@ export class CoordinatorEnrollmentService {
             reviewed_at: new Date(),
             coordinator_notes: dto.coordinator_notes,
             disbursement_id: disbursement.disbursement_id,
-            enrolled_subjects: (dto.adjusted_subjects ?? enrollment.enrolled_subjects) as any,
+            enrolled_subjects: (dto.adjusted_subjects ??
+              enrollment.enrolled_subjects) as any,
           },
         });
 
         // 3. Transition enrolled subjects to ENROLLED in scholar's prospectus
-        const enrolledSubs = (dto.adjusted_subjects ?? enrollment.enrolled_subjects) as any[];
-        if (Array.isArray(enrolledSubs) && enrollment.scholar_profile.prospectus) {
-          const prospectusId = enrollment.scholar_profile.prospectus.prospectus_id;
+        const enrolledSubs = (dto.adjusted_subjects ??
+          enrollment.enrolled_subjects) as any[];
+        if (
+          Array.isArray(enrolledSubs) &&
+          enrollment.scholar_profile.prospectus
+        ) {
+          const prospectusId =
+            enrollment.scholar_profile.prospectus.prospectus_id;
           for (const sub of enrolledSubs) {
-            const normCode = this.enrollmentOcrService.normalizeSubjectCode(sub.subject_code);
-            const matchingSubject = enrollment.scholar_profile.prospectus.subjects.find(
-              (ps) => this.enrollmentOcrService.normalizeSubjectCode(ps.subject_code) === normCode,
+            const normCode = this.enrollmentOcrService.normalizeSubjectCode(
+              sub.subject_code,
             );
+            const matchingSubject =
+              enrollment.scholar_profile.prospectus.subjects.find(
+                (ps) =>
+                  this.enrollmentOcrService.normalizeSubjectCode(
+                    ps.subject_code,
+                  ) === normCode,
+              );
 
             if (matchingSubject && matchingSubject.status === 'UNTAKEN') {
               await tx.prospectusSubject.update({
@@ -201,7 +219,10 @@ export class CoordinatorEnrollmentService {
             },
           });
         }
-        if (enrollment.soa_document_id && enrollment.soa_document_id !== enrollment.cor_document_id) {
+        if (
+          enrollment.soa_document_id &&
+          enrollment.soa_document_id !== enrollment.cor_document_id
+        ) {
           await tx.scholarDocument.update({
             where: { document_id: enrollment.soa_document_id },
             data: {
@@ -230,11 +251,15 @@ export class CoordinatorEnrollmentService {
         semester: enrollment.semester,
       });
 
-      this.eventsGateway.emitToUser(enrollment.scholar_profile.user_id, 'enrollment:approved', {
-        enrollment_id: enrollmentId,
-        scholar_id: enrollment.scholar_profile_id,
-        disbursement_id: result.disbursement.disbursement_id,
-      });
+      this.eventsGateway.emitToUser(
+        enrollment.scholar_profile.user_id,
+        'enrollment:approved',
+        {
+          enrollment_id: enrollmentId,
+          scholar_id: enrollment.scholar_profile_id,
+          disbursement_id: result.disbursement.disbursement_id,
+        },
+      );
       this.eventsGateway.emitToStaff('enrollment:approved', {
         enrollment_id: enrollmentId,
         scholar_id: enrollment.scholar_profile_id,
@@ -242,7 +267,8 @@ export class CoordinatorEnrollmentService {
       });
 
       return {
-        message: 'Term enrollment approved and endorsed to Grantor disbursement queue.',
+        message:
+          'Term enrollment approved and endorsed to Grantor disbursement queue.',
         enrollment: result.updatedEnrollment,
         disbursement: result.disbursement,
       };
@@ -263,11 +289,15 @@ export class CoordinatorEnrollmentService {
         `Requested changes for enrollment #${enrollmentId}: ${dto.coordinator_notes || 'No notes'}`,
       );
 
-      this.eventsGateway.emitToUser(enrollment.scholar_profile.user_id, 'enrollment:changes_requested', {
-        enrollment_id: enrollmentId,
-        scholar_id: enrollment.scholar_profile_id,
-        notes: dto.coordinator_notes,
-      });
+      this.eventsGateway.emitToUser(
+        enrollment.scholar_profile.user_id,
+        'enrollment:changes_requested',
+        {
+          enrollment_id: enrollmentId,
+          scholar_id: enrollment.scholar_profile_id,
+          notes: dto.coordinator_notes,
+        },
+      );
       this.eventsGateway.emitToStaff('enrollment:changes_requested', {
         enrollment_id: enrollmentId,
         scholar_id: enrollment.scholar_profile_id,
@@ -295,11 +325,15 @@ export class CoordinatorEnrollmentService {
         `Rejected enrollment #${enrollmentId}: ${dto.coordinator_notes || 'No notes'}`,
       );
 
-      this.eventsGateway.emitToUser(enrollment.scholar_profile.user_id, 'enrollment:rejected', {
-        enrollment_id: enrollmentId,
-        scholar_id: enrollment.scholar_profile_id,
-        notes: dto.coordinator_notes,
-      });
+      this.eventsGateway.emitToUser(
+        enrollment.scholar_profile.user_id,
+        'enrollment:rejected',
+        {
+          enrollment_id: enrollmentId,
+          scholar_id: enrollment.scholar_profile_id,
+          notes: dto.coordinator_notes,
+        },
+      );
       this.eventsGateway.emitToStaff('enrollment:rejected', {
         enrollment_id: enrollmentId,
         scholar_id: enrollment.scholar_profile_id,
@@ -328,11 +362,15 @@ export class CoordinatorEnrollmentService {
     });
 
     if (!enrollment) {
-      throw new NotFoundException(`Term enrollment #${enrollmentId} not found.`);
+      throw new NotFoundException(
+        `Term enrollment #${enrollmentId} not found.`,
+      );
     }
 
     if (!enrollment.disbursement_id || !enrollment.disbursement) {
-      throw new BadRequestException('No pending disbursement found for this enrollment.');
+      throw new BadRequestException(
+        'No pending disbursement found for this enrollment.',
+      );
     }
 
     const updatedDisbursement = await this.prisma.disbursement.update({
@@ -359,11 +397,15 @@ export class CoordinatorEnrollmentService {
       status: 'RELEASED',
       scholar_id: enrollment.scholar_profile_id,
     });
-    this.eventsGateway.emitToUser(enrollment.scholar_profile.user_id, 'disbursement:updated', {
-      disbursement_id: updatedDisbursement.disbursement_id,
-      status: 'RELEASED',
-      amount: updatedDisbursement.amount,
-    });
+    this.eventsGateway.emitToUser(
+      enrollment.scholar_profile.user_id,
+      'disbursement:updated',
+      {
+        disbursement_id: updatedDisbursement.disbursement_id,
+        status: 'RELEASED',
+        amount: updatedDisbursement.amount,
+      },
+    );
 
     return {
       message: 'Disbursement authorized and marked as released.',

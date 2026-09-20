@@ -88,11 +88,13 @@ export class ScholarDisbursementService {
     // 2. Extract OCR data with LlamaParse
     let extractedData: any = null;
     try {
-      extractedData = await this.llamaExtractService.extractOfficialReceiptData({
-        buffer: file.buffer,
-        fileName: file.originalname,
-        mimeType: file.mimetype,
-      });
+      extractedData = await this.llamaExtractService.extractOfficialReceiptData(
+        {
+          buffer: file.buffer,
+          fileName: file.originalname,
+          mimeType: file.mimetype,
+        },
+      );
     } catch (err: any) {
       this.logger.warn(
         `Failed to OCR Official Receipt "${file.originalname}": ${err?.message || err}`,
@@ -124,11 +126,20 @@ export class ScholarDisbursementService {
     }
 
     if (disbursement.scholar_profile_id !== profile.profile_id) {
-      throw new BadRequestException('You are not authorized to submit receipt for this disbursement.');
+      throw new BadRequestException(
+        'You are not authorized to submit receipt for this disbursement.',
+      );
     }
 
-    if (disbursement.status !== 'CHECK_ISSUED' && disbursement.status !== 'OR_SUBMITTED' && disbursement.status !== 'AUTHORIZED' && disbursement.status !== 'RELEASED') {
-      throw new BadRequestException(`Cannot submit Official Receipt when disbursement status is "${disbursement.status}".`);
+    if (
+      disbursement.status !== 'CHECK_ISSUED' &&
+      disbursement.status !== 'OR_SUBMITTED' &&
+      disbursement.status !== 'AUTHORIZED' &&
+      disbursement.status !== 'RELEASED'
+    ) {
+      throw new BadRequestException(
+        `Cannot submit Official Receipt when disbursement status is "${disbursement.status}".`,
+      );
     }
 
     // Save Official Receipt document & update disbursement in transaction
@@ -191,7 +202,8 @@ export class ScholarDisbursementService {
     });
 
     return {
-      message: 'Official Receipt successfully submitted for coordinator verification.',
+      message:
+        'Official Receipt successfully submitted for coordinator verification.',
       disbursement: result.updatedDisbursement,
     };
   }

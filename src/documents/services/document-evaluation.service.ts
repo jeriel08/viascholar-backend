@@ -58,7 +58,11 @@ export class DocumentEvaluationService {
 
   // Staff requests re-upload on unclear/inconsistent document
   requestChanges(employeeUserId: number, documentId: number, reason: string) {
-    return this.confirmationService.requestChanges(employeeUserId, documentId, reason);
+    return this.confirmationService.requestChanges(
+      employeeUserId,
+      documentId,
+      reason,
+    );
   }
 
   // Coordinator verifies CCG / TOR, calculates GWA, transitions prospectus, and checks retention
@@ -71,7 +75,9 @@ export class DocumentEvaluationService {
       where: { user_id: coordinatorUserId },
     });
     if (!employee) {
-      throw new NotFoundException('Employee profile not found for current user.');
+      throw new NotFoundException(
+        'Employee profile not found for current user.',
+      );
     }
 
     const doc = await this.prisma.scholarDocument.findUnique({
@@ -106,18 +112,27 @@ export class DocumentEvaluationService {
             }));
 
     if (gradeItems.length === 0) {
-      throw new BadRequestException('No grade items available for this document.');
+      throw new BadRequestException(
+        'No grade items available for this document.',
+      );
     }
 
     const rawAY =
-      dto.academic_year ?? confirmed?.academic_year ?? extracted.academic_year ?? '';
+      dto.academic_year ??
+      confirmed?.academic_year ??
+      extracted.academic_year ??
+      '';
     const academicYear = typeof rawAY === 'string' ? rawAY : '';
     const isForm138 = this.gradeCalculatorService.isForm138(
       doc.document_type || '',
       doc.label || '',
     );
 
-    const schoolConfig = await this.resolveSchoolConfig(doc, extracted, isForm138);
+    const schoolConfig = await this.resolveSchoolConfig(
+      doc,
+      extracted,
+      isForm138,
+    );
 
     const explicitGeneralAvg =
       dto.general_average != null
@@ -126,14 +141,16 @@ export class DocumentEvaluationService {
           ? Number(confirmed.general_average)
           : undefined;
 
-    const { computedGwa, hasFailedGrade } = this.gradeCalculatorService.computeGwa({
-      gradeItems,
-      isForm138,
-      explicitGeneralAvg,
-      schoolConfig,
-    });
+    const { computedGwa, hasFailedGrade } =
+      this.gradeCalculatorService.computeGwa({
+        gradeItems,
+        isForm138,
+        explicitGeneralAvg,
+        schoolConfig,
+      });
 
-    const normalizedAY = this.gradeCalculatorService.normalizeAcademicYear(academicYear);
+    const normalizedAY =
+      this.gradeCalculatorService.normalizeAcademicYear(academicYear);
     const normalizedSem = this.gradeCalculatorService.normalizeSemester(
       confirmed?.semester ?? extracted.semester,
       academicYear,

@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class ReviewAppealDto {
   @ApiProperty({
@@ -14,7 +20,8 @@ export class ReviewAppealDto {
 
   @ApiPropertyOptional({
     description: 'Grantor comments, conditions, or termination remarks',
-    example: 'Second chance granted on probationary status. Must achieve minimum 2.0 GWA next term.',
+    example:
+      'Second chance granted on probationary status. Must achieve minimum 2.0 GWA next term.',
   })
   @IsString()
   @IsOptional()

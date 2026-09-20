@@ -367,10 +367,6 @@ export class MailService {
     },
   ) {
     const html = buildPasswordResetHtml(data);
-    await this.sendEmail(
-      email,
-      'Reset Your Password - ViaScholar',
-      html,
-    );
+    await this.sendEmail(email, 'Reset Your Password - ViaScholar', html);
   }
 }

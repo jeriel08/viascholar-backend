@@ -1,10 +1,30 @@
 import {
-  Controller, Get, Post, Put, Delete, Patch, Param, Body, UseGuards, Request, UploadedFiles, UseInterceptors, ParseIntPipe, BadRequestException, Query,
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Patch,
+  Param,
+  Body,
+  UseGuards,
+  Request,
+  UploadedFiles,
+  UseInterceptors,
+  ParseIntPipe,
+  BadRequestException,
+  Query,
 } from '@nestjs/common';
 import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import { AuthGuard } from '@nestjs/passport';
 import { Throttle } from '@nestjs/throttler';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiConsumes,
+  ApiBody,
+} from '@nestjs/swagger';
 import { RolesGuard } from '../auth/decorators/roles.guard.js';
 import { DocumentsStorageService } from './services/documents-storage.service.js';
 import { DocumentOcrService } from './services/document-ocr.service.js';
@@ -209,7 +229,10 @@ export class DocumentsController {
 
   @Post('grade-reports/:id/appeal')
   @Roles(Role.SCHOLAR)
-  @ApiOperation({ summary: 'Scholar submits a second chance appeal for a flagged grade report' })
+  @ApiOperation({
+    summary:
+      'Scholar submits a second chance appeal for a flagged grade report',
+  })
   submitAppeal(
     @Request() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
@@ -220,7 +243,9 @@ export class DocumentsController {
 
   @Patch('grade-reports/:id/appeal')
   @Roles(Role.GRANTOR, Role.ADMIN)
-  @ApiOperation({ summary: 'Grantor decides on a second chance appeal (Approve / Deny)' })
+  @ApiOperation({
+    summary: 'Grantor decides on a second chance appeal (Approve / Deny)',
+  })
   reviewAppeal(
     @Request() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
@@ -231,7 +256,9 @@ export class DocumentsController {
 
   @Get('grade-reports/appeals')
   @Roles(Role.GRANTOR, Role.ADMIN, Role.COORDINATOR)
-  @ApiOperation({ summary: 'List pending second chance appeals for grantor review' })
+  @ApiOperation({
+    summary: 'List pending second chance appeals for grantor review',
+  })
   getPendingAppeals() {
     return this.appealService.getPendingAppeals();
   }

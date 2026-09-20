@@ -35,13 +35,19 @@ export class ScholarEnrollmentService {
       },
     });
     if (!scholar) {
-      throw new NotFoundException('Scholar profile not found for current user.');
+      throw new NotFoundException(
+        'Scholar profile not found for current user.',
+      );
     }
     return scholar;
   }
 
   // 1. Get current or latest enrollment draft/submission
-  async getCurrentEnrollment(userId: number, academicYear?: string, semester?: string) {
+  async getCurrentEnrollment(
+    userId: number,
+    academicYear?: string,
+    semester?: string,
+  ) {
     const scholar = await this.getScholarProfile(userId);
 
     const whereClause: any = { scholar_profile_id: scholar.profile_id };
@@ -64,7 +70,12 @@ export class ScholarEnrollmentService {
 
     // If an existing enrollment was APPROVED or SUBMITTED, but the scholar has already confirmed or verified
     // their CCG grades, that semester has ended. Transition it to COMPLETED so the new term enrollment can start.
-    if (enrollment && (enrollment.status === 'APPROVED' || enrollment.status === 'SUBMITTED' || enrollment.status === 'PENDING_REVIEW')) {
+    if (
+      enrollment &&
+      (enrollment.status === 'APPROVED' ||
+        enrollment.status === 'SUBMITTED' ||
+        enrollment.status === 'PENDING_REVIEW')
+    ) {
       const hasConfirmedCcg = await this.prisma.scholarDocument.findFirst({
         where: {
           scholar_profile_id: scholar.profile_id,
@@ -77,7 +88,10 @@ export class ScholarEnrollmentService {
           scholar_profile_id: scholar.profile_id,
           OR: [
             { term_enrollment_id: enrollment.enrollment_id },
-            { academic_year: enrollment.academic_year, semester: enrollment.semester },
+            {
+              academic_year: enrollment.academic_year,
+              semester: enrollment.semester,
+            },
           ],
         },
       });
@@ -121,7 +135,10 @@ export class ScholarEnrollmentService {
     if (!file) throw new BadRequestException('No COR file uploaded.');
 
     // Upload to Cloudinary
-    const uploadRes = await this.cloudinaryService.uploadDocument(file, 'viascholar/enrollment/cor');
+    const uploadRes = await this.cloudinaryService.uploadDocument(
+      file,
+      'viascholar/enrollment/cor',
+    );
 
     // Parse via OCR
     const extractedData = await this.enrollmentOcrService.parseCor({
@@ -148,9 +165,11 @@ export class ScholarEnrollmentService {
         where: { document_id: existingDraft.cor_document_id },
       });
       if (oldDoc && oldDoc.status !== 'VERIFIED') {
-        await this.prisma.scholarDocument.delete({
-          where: { document_id: existingDraft.cor_document_id },
-        }).catch(() => {});
+        await this.prisma.scholarDocument
+          .delete({
+            where: { document_id: existingDraft.cor_document_id },
+          })
+          .catch(() => {});
       }
     }
 
@@ -171,7 +190,7 @@ export class ScholarEnrollmentService {
 
     const auditResult = await this.auditEngineService.runAudit(
       scholar.profile_id,
-      (extractedData.subjects || []) as any,
+      extractedData.subjects || [],
       {
         corStudentId: extractedData.student_number,
         corStudentName: extractedData.student_name,
@@ -230,7 +249,10 @@ export class ScholarEnrollmentService {
     const scholar = await this.getScholarProfile(userId);
     if (!file) throw new BadRequestException('No SOA file uploaded.');
 
-    const uploadRes = await this.cloudinaryService.uploadDocument(file, 'viascholar/enrollment/soa');
+    const uploadRes = await this.cloudinaryService.uploadDocument(
+      file,
+      'viascholar/enrollment/soa',
+    );
 
     const extractedData = await this.enrollmentOcrService.parseSoa({
       buffer: file.buffer,
@@ -251,14 +273,19 @@ export class ScholarEnrollmentService {
         status: 'DRAFT',
       },
     });
-    if (existingDraft?.soa_document_id && existingDraft.soa_document_id !== existingDraft.cor_document_id) {
+    if (
+      existingDraft?.soa_document_id &&
+      existingDraft.soa_document_id !== existingDraft.cor_document_id
+    ) {
       const oldDoc = await this.prisma.scholarDocument.findUnique({
         where: { document_id: existingDraft.soa_document_id },
       });
       if (oldDoc && oldDoc.status !== 'VERIFIED') {
-        await this.prisma.scholarDocument.delete({
-          where: { document_id: existingDraft.soa_document_id },
-        }).catch(() => {});
+        await this.prisma.scholarDocument
+          .delete({
+            where: { document_id: existingDraft.soa_document_id },
+          })
+          .catch(() => {});
       }
     }
 
@@ -283,7 +310,8 @@ export class ScholarEnrollmentService {
       other_fees: extractedData.other_fees,
       previous_balance: extractedData.previous_balance,
       discounts: extractedData.discounts,
-      net_balance_due: extractedData.net_balance_due ?? extractedData.total_assessment,
+      net_balance_due:
+        extractedData.net_balance_due ?? extractedData.total_assessment,
     };
 
     const existingEnrollment = await this.prisma.termEnrollment.findFirst({
@@ -293,7 +321,8 @@ export class ScholarEnrollmentService {
         semester: sem,
       },
     });
-    const subjectsToAudit = (existingEnrollment?.enrolled_subjects as any) || [];
+    const subjectsToAudit =
+      (existingEnrollment?.enrolled_subjects as any) || [];
 
     const auditResult = await this.auditEngineService.runAudit(
       scholar.profile_id,
@@ -323,7 +352,9 @@ export class ScholarEnrollmentService {
         soa_document_id: doc.document_id,
         total_units: 0,
         total_assessment: extractedData.total_assessment || 0,
-        assessment_date: extractedData.assessment_date ? new Date(extractedData.assessment_date) : null,
+        assessment_date: extractedData.assessment_date
+          ? new Date(extractedData.assessment_date)
+          : null,
         status: 'DRAFT',
         audit_flags: auditResult.flags as any,
         billing_breakdown: billingBreakdown as any,
@@ -332,7 +363,9 @@ export class ScholarEnrollmentService {
       update: {
         soa_document_id: doc.document_id,
         total_assessment: extractedData.total_assessment || 0,
-        assessment_date: extractedData.assessment_date ? new Date(extractedData.assessment_date) : null,
+        assessment_date: extractedData.assessment_date
+          ? new Date(extractedData.assessment_date)
+          : null,
         audit_flags: auditResult.flags as any,
         billing_breakdown: billingBreakdown as any,
         cross_doc_reconciliation: auditResult.cross_doc_reconciliation as any,
@@ -357,7 +390,10 @@ export class ScholarEnrollmentService {
     const scholar = await this.getScholarProfile(userId);
     if (!file) throw new BadRequestException('No consolidated file uploaded.');
 
-    const uploadRes = await this.cloudinaryService.uploadDocument(file, 'viascholar/enrollment/consolidated');
+    const uploadRes = await this.cloudinaryService.uploadDocument(
+      file,
+      'viascholar/enrollment/consolidated',
+    );
 
     const extractedData = await this.enrollmentOcrService.parseConsolidated({
       buffer: file.buffer,
@@ -383,9 +419,11 @@ export class ScholarEnrollmentService {
         where: { document_id: existingDraft.cor_document_id },
       });
       if (oldDoc && oldDoc.status !== 'VERIFIED') {
-        await this.prisma.scholarDocument.delete({
-          where: { document_id: existingDraft.cor_document_id },
-        }).catch(() => {});
+        await this.prisma.scholarDocument
+          .delete({
+            where: { document_id: existingDraft.cor_document_id },
+          })
+          .catch(() => {});
       }
     }
 
@@ -410,12 +448,13 @@ export class ScholarEnrollmentService {
       other_fees: extractedData.other_fees,
       previous_balance: extractedData.previous_balance,
       discounts: extractedData.discounts,
-      net_balance_due: extractedData.net_balance_due ?? extractedData.total_assessment,
+      net_balance_due:
+        extractedData.net_balance_due ?? extractedData.total_assessment,
     };
 
     const auditResult = await this.auditEngineService.runAudit(
       scholar.profile_id,
-      (extractedData.subjects || []) as any,
+      extractedData.subjects || [],
       {
         corStudentId: extractedData.student_number,
         corStudentName: extractedData.student_name,
@@ -444,7 +483,9 @@ export class ScholarEnrollmentService {
         soa_document_id: doc.document_id,
         total_units: extractedData.total_units || 0,
         total_assessment: extractedData.total_assessment || 0,
-        assessment_date: extractedData.assessment_date ? new Date(extractedData.assessment_date) : null,
+        assessment_date: extractedData.assessment_date
+          ? new Date(extractedData.assessment_date)
+          : null,
         status: 'DRAFT',
         audit_flags: auditResult.flags as any,
         enrolled_subjects: extractedData.subjects as any,
@@ -457,7 +498,9 @@ export class ScholarEnrollmentService {
         soa_document_id: doc.document_id,
         total_units: extractedData.total_units || 0,
         total_assessment: extractedData.total_assessment || 0,
-        assessment_date: extractedData.assessment_date ? new Date(extractedData.assessment_date) : null,
+        assessment_date: extractedData.assessment_date
+          ? new Date(extractedData.assessment_date)
+          : null,
         audit_flags: auditResult.flags as any,
         enrolled_subjects: extractedData.subjects as any,
         billing_breakdown: billingBreakdown as any,
@@ -502,12 +545,14 @@ export class ScholarEnrollmentService {
         soa_document_id: dto.soa_document_id,
         total_units: dto.total_units,
         total_assessment: dto.total_assessment,
-        assessment_date: dto.assessment_date ? new Date(dto.assessment_date) : null,
+        assessment_date: dto.assessment_date
+          ? new Date(dto.assessment_date)
+          : null,
         status,
-        audit_flags: auditResult.flags as any,
+        audit_flags: auditResult.flags,
         enrolled_subjects: dto.enrolled_subjects as any,
         billing_breakdown: dto.billing_breakdown as any,
-        cross_doc_reconciliation: auditResult.cross_doc_reconciliation as any,
+        cross_doc_reconciliation: auditResult.cross_doc_reconciliation,
       },
       update: {
         year_level: dto.year_level,
@@ -516,12 +561,14 @@ export class ScholarEnrollmentService {
         soa_document_id: dto.soa_document_id,
         total_units: dto.total_units,
         total_assessment: dto.total_assessment,
-        assessment_date: dto.assessment_date ? new Date(dto.assessment_date) : null,
+        assessment_date: dto.assessment_date
+          ? new Date(dto.assessment_date)
+          : null,
         status,
-        audit_flags: auditResult.flags as any,
+        audit_flags: auditResult.flags,
         enrolled_subjects: dto.enrolled_subjects as any,
         billing_breakdown: dto.billing_breakdown as any,
-        cross_doc_reconciliation: auditResult.cross_doc_reconciliation as any,
+        cross_doc_reconciliation: auditResult.cross_doc_reconciliation,
       },
       include: {
         cor_document: true,
@@ -538,7 +585,12 @@ export class ScholarEnrollmentService {
       dto.enrolled_subjects,
       { academicYear: dto.academic_year, semester: dto.semester },
     );
-    const draft = await this.upsertEnrollment(scholar.profile_id, dto, 'DRAFT', auditResult);
+    const draft = await this.upsertEnrollment(
+      scholar.profile_id,
+      dto,
+      'DRAFT',
+      auditResult,
+    );
     return {
       message: 'Draft enrollment saved successfully.',
       enrollment: draft,
@@ -595,10 +647,14 @@ export class ScholarEnrollmentService {
   // 7. Pre-audit calculation before final submission
   async runPreAudit(userId: number, dto: SubmitEnrollmentDto) {
     const scholar = await this.getScholarProfile(userId);
-    return this.auditEngineService.runAudit(scholar.profile_id, dto.enrolled_subjects, {
-      academicYear: dto.academic_year,
-      semester: dto.semester,
-    });
+    return this.auditEngineService.runAudit(
+      scholar.profile_id,
+      dto.enrolled_subjects,
+      {
+        academicYear: dto.academic_year,
+        semester: dto.semester,
+      },
+    );
   }
 
   // 8. Submit final term enrollment for review
@@ -609,7 +665,12 @@ export class ScholarEnrollmentService {
       dto.enrolled_subjects,
       { academicYear: dto.academic_year, semester: dto.semester },
     );
-    const enrollment = await this.upsertEnrollment(scholar.profile_id, dto, 'PENDING_REVIEW', auditResult);
+    const enrollment = await this.upsertEnrollment(
+      scholar.profile_id,
+      dto,
+      'PENDING_REVIEW',
+      auditResult,
+    );
 
     await this.auditService.log(
       userId,

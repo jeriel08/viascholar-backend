@@ -154,7 +154,8 @@ export class ActiveScholarsAnalyticsService {
         const statusLabel =
           latestDisb.status === 'SETTLED'
             ? 'Settled'
-            : latestDisb.status === 'CLAIMED' || latestDisb.status === 'RELEASED'
+            : latestDisb.status === 'CLAIMED' ||
+                latestDisb.status === 'RELEASED'
               ? 'Paid'
               : latestDisb.status === 'CANCELLED'
                 ? 'On hold'

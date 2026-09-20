@@ -80,7 +80,10 @@ export class TermEnrollmentController {
 
   @Get('current')
   @Roles(Role.SCHOLAR, Role.ADMIN, Role.COORDINATOR)
-  @ApiOperation({ summary: 'Get current term enrollment status and draft for the logged-in scholar' })
+  @ApiOperation({
+    summary:
+      'Get current term enrollment status and draft for the logged-in scholar',
+  })
   async getCurrentEnrollment(
     @Request() req: AuthenticatedRequest,
     @Query('academic_year') academicYear?: string,
@@ -98,7 +101,10 @@ export class TermEnrollmentController {
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @UseInterceptors(AnyFilesInterceptor())
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({ summary: 'Upload Certificate of Registration (COR) / Form 1 and extract subjects' })
+  @ApiOperation({
+    summary:
+      'Upload Certificate of Registration (COR) / Form 1 and extract subjects',
+  })
   @ApiBody({
     schema: {
       type: 'object',
@@ -120,7 +126,10 @@ export class TermEnrollmentController {
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @UseInterceptors(AnyFilesInterceptor())
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({ summary: 'Upload Statement of Account (SOA) / Student Ledger and extract billing' })
+  @ApiOperation({
+    summary:
+      'Upload Statement of Account (SOA) / Student Ledger and extract billing',
+  })
   @ApiBody({
     schema: {
       type: 'object',
@@ -142,7 +151,10 @@ export class TermEnrollmentController {
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @UseInterceptors(AnyFilesInterceptor())
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({ summary: 'Upload single consolidated COR + SOA document (e.g. UM Certificate of Matriculation)' })
+  @ApiOperation({
+    summary:
+      'Upload single consolidated COR + SOA document (e.g. UM Certificate of Matriculation)',
+  })
   @ApiBody({
     schema: {
       type: 'object',
@@ -156,12 +168,17 @@ export class TermEnrollmentController {
     @UploadedFiles() files: Express.Multer.File[],
   ) {
     this.validateUploadedFiles(files);
-    return this.scholarService.uploadAndParseConsolidated(req.user.user_id, files[0]);
+    return this.scholarService.uploadAndParseConsolidated(
+      req.user.user_id,
+      files[0],
+    );
   }
 
   @Post('draft')
   @Roles(Role.SCHOLAR)
-  @ApiOperation({ summary: 'Save or update draft term enrollment without submitting' })
+  @ApiOperation({
+    summary: 'Save or update draft term enrollment without submitting',
+  })
   async saveDraft(
     @Request() req: AuthenticatedRequest,
     @Body() dto: SubmitEnrollmentDto,
@@ -171,7 +188,10 @@ export class TermEnrollmentController {
 
   @Post('pre-audit')
   @Roles(Role.SCHOLAR)
-  @ApiOperation({ summary: 'Run live pre-audit checks on enrolled subjects against frozen baseline' })
+  @ApiOperation({
+    summary:
+      'Run live pre-audit checks on enrolled subjects against frozen baseline',
+  })
   async preAudit(
     @Request() req: AuthenticatedRequest,
     @Body() dto: SubmitEnrollmentDto,
@@ -181,7 +201,10 @@ export class TermEnrollmentController {
 
   @Post('submit')
   @Roles(Role.SCHOLAR)
-  @ApiOperation({ summary: 'Submit start-of-term enrollment credentials for coordinator endorsement' })
+  @ApiOperation({
+    summary:
+      'Submit start-of-term enrollment credentials for coordinator endorsement',
+  })
   async submitEnrollment(
     @Request() req: AuthenticatedRequest,
     @Body() dto: SubmitEnrollmentDto,
@@ -210,7 +233,9 @@ export class TermEnrollmentController {
 
   @Get('coordinator/pending')
   @Roles(Role.COORDINATOR, Role.ADMIN, Role.GRANTOR)
-  @ApiOperation({ summary: 'Get queue of term enrollments pending review or disbursement' })
+  @ApiOperation({
+    summary: 'Get queue of term enrollments pending review or disbursement',
+  })
   async getPendingEnrollments(
     @Query('search') search?: string,
     @Query('status') status?: string,
@@ -220,14 +245,19 @@ export class TermEnrollmentController {
 
   @Get('coordinator/:id')
   @Roles(Role.COORDINATOR, Role.ADMIN, Role.GRANTOR)
-  @ApiOperation({ summary: 'Get full enrollment detail for side-by-side quick audit' })
+  @ApiOperation({
+    summary: 'Get full enrollment detail for side-by-side quick audit',
+  })
   async getEnrollmentDetails(@Param('id', ParseIntPipe) id: number) {
     return this.coordinatorService.getEnrollmentDetails(id);
   }
 
   @Post('coordinator/:id/review')
   @Roles(Role.COORDINATOR, Role.ADMIN)
-  @ApiOperation({ summary: 'Approve & endorse to grantor, request changes, or reject enrollment' })
+  @ApiOperation({
+    summary:
+      'Approve & endorse to grantor, request changes, or reject enrollment',
+  })
   async reviewEnrollment(
     @Request() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
@@ -238,12 +268,20 @@ export class TermEnrollmentController {
 
   @Post('grantor/:id/authorize-disbursement')
   @Roles(Role.GRANTOR, Role.ADMIN)
-  @ApiOperation({ summary: 'Grantor authorizes and releases tuition disbursement for approved enrollment' })
+  @ApiOperation({
+    summary:
+      'Grantor authorizes and releases tuition disbursement for approved enrollment',
+  })
   async authorizeDisbursement(
     @Request() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: { remarks?: string; check_number?: string; payment_method?: string },
+    @Body()
+    dto: { remarks?: string; check_number?: string; payment_method?: string },
   ) {
-    return this.coordinatorService.grantorAuthorizeDisbursement(req.user.user_id, id, dto);
+    return this.coordinatorService.grantorAuthorizeDisbursement(
+      req.user.user_id,
+      id,
+      dto,
+    );
   }
 }

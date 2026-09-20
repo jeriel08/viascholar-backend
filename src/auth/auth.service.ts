@@ -390,8 +390,12 @@ export class AuthService {
           picture = data.picture || '';
         }
       } catch (err) {
-        this.logger.error(`Google authentication error: ${(err as Error)?.message}`);
-        throw new UnauthorizedException('Google authentication failed. Please try again.');
+        this.logger.error(
+          `Google authentication error: ${(err as Error)?.message}`,
+        );
+        throw new UnauthorizedException(
+          'Google authentication failed. Please try again.',
+        );
       }
     }
 

@@ -32,7 +32,16 @@ export class GrantorDisbursementService {
   // 1. Consolidated billing report of coordinator-approved SOAs grouped by university
   async getConsolidatedBillingReport(academicYear?: string, semester?: string) {
     const where: any = {
-      status: { in: ['PENDING', 'AUTHORIZED', 'RELEASED', 'CHECK_ISSUED', 'OR_SUBMITTED', 'SETTLED'] },
+      status: {
+        in: [
+          'PENDING',
+          'AUTHORIZED',
+          'RELEASED',
+          'CHECK_ISSUED',
+          'OR_SUBMITTED',
+          'SETTLED',
+        ],
+      },
     };
     if (academicYear) where.academic_year = academicYear;
     if (semester) where.semester = semester;
@@ -54,25 +63,34 @@ export class GrantorDisbursementService {
         },
         or_document: true,
         approved_by_employee: {
-          select: { employee_id: true, first_name: true, last_name: true, title: true },
+          select: {
+            employee_id: true,
+            first_name: true,
+            last_name: true,
+            title: true,
+          },
         },
       },
     });
 
     // Group by school name
-    const grouped = new Map<string, {
-      school_name: string;
-      total_amount: number;
-      pending_amount: number;
-      authorized_amount: number;
-      settled_amount: number;
-      total_scholars: number;
-      pending_count: number;
-      disbursements: typeof disbursements;
-    }>();
+    const grouped = new Map<
+      string,
+      {
+        school_name: string;
+        total_amount: number;
+        pending_amount: number;
+        authorized_amount: number;
+        settled_amount: number;
+        total_scholars: number;
+        pending_count: number;
+        disbursements: typeof disbursements;
+      }
+    >();
 
     for (const d of disbursements) {
-      const schoolName = d.scholar_profile?.school_name || 'Unassigned University';
+      const schoolName =
+        d.scholar_profile?.school_name || 'Unassigned University';
       if (!grouped.has(schoolName)) {
         grouped.set(schoolName, {
           school_name: schoolName,
@@ -108,7 +126,9 @@ export class GrantorDisbursementService {
   // 2. Authorize batch of disbursements and generate Disbursement Voucher (DV-YYYY-XXXX)
   async authorizeBatch(userId: number, dto: AuthorizeDisbursementBatchDto) {
     if (!dto.disbursement_ids || dto.disbursement_ids.length === 0) {
-      throw new BadRequestException('No disbursements selected for authorization.');
+      throw new BadRequestException(
+        'No disbursements selected for authorization.',
+      );
     }
 
     const grantor = await this.getGrantorEmployee(userId);
@@ -134,12 +154,15 @@ export class GrantorDisbursementService {
       });
 
       if (targetDisbursements.length === 0) {
-        throw new BadRequestException('No pending disbursements found matching the provided IDs.');
+        throw new BadRequestException(
+          'No pending disbursements found matching the provided IDs.',
+        );
       }
 
       const updatedRecords: any[] = [];
       for (const d of targetDisbursements) {
-        const schoolPayee = d.scholar_profile?.school_name || 'University Cashier';
+        const schoolPayee =
+          d.scholar_profile?.school_name || 'University Cashier';
         const rec = await tx.disbursement.update({
           where: { disbursement_id: d.disbursement_id },
           data: {
@@ -160,7 +183,10 @@ export class GrantorDisbursementService {
       return updatedRecords;
     });
 
-    const totalBatchAmount = updated.reduce((sum, item) => sum + Number(item.amount), 0);
+    const totalBatchAmount = updated.reduce(
+      (sum, item) => sum + Number(item.amount),
+      0,
+    );
 
     await this.auditService.log(
       userId,
@@ -177,13 +203,17 @@ export class GrantorDisbursementService {
     });
 
     for (const item of updated) {
-      this.eventsGateway.emitToUser(item.scholar_profile.user_id, 'disbursement:updated', {
-        disbursement_id: item.disbursement_id,
-        status: 'AUTHORIZED',
-        voucher_number: voucherNumber,
-        amount: item.amount,
-        message: `Tuition disbursement of PHP ${item.amount} authorized under Voucher ${voucherNumber}. Check is being prepared.`,
-      });
+      this.eventsGateway.emitToUser(
+        item.scholar_profile.user_id,
+        'disbursement:updated',
+        {
+          disbursement_id: item.disbursement_id,
+          status: 'AUTHORIZED',
+          voucher_number: voucherNumber,
+          amount: item.amount,
+          message: `Tuition disbursement of PHP ${item.amount} authorized under Voucher ${voucherNumber}. Check is being prepared.`,
+        },
+      );
     }
 
     return {
@@ -205,7 +235,9 @@ export class GrantorDisbursementService {
     });
 
     if (items.length === 0) {
-      throw new NotFoundException(`Disbursement Voucher ${voucherNumber} not found.`);
+      throw new NotFoundException(
+        `Disbursement Voucher ${voucherNumber} not found.`,
+      );
     }
 
     const totalAmount = items.reduce((sum, i) => sum + Number(i.amount), 0);
@@ -217,7 +249,8 @@ export class GrantorDisbursementService {
       authorized_by: firstItem.approved_by_employee
         ? `${firstItem.approved_by_employee.first_name} ${firstItem.approved_by_employee.last_name}`
         : 'Grantor Office',
-      payee_school: firstItem.check_payee || firstItem.scholar_profile?.school_name,
+      payee_school:
+        firstItem.check_payee || firstItem.scholar_profile?.school_name,
       total_amount: totalAmount,
       item_count: items.length,
       items,

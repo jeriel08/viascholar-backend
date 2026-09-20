@@ -73,13 +73,16 @@ export class EnrollmentOcrService {
     if (!sem) return '1st Semester';
     const lower = sem.toLowerCase();
     if (lower.includes('summer') || lower.includes('midyear')) return 'Summer';
-    if (lower.includes('2nd') || lower.includes('second')) return '2nd Semester';
-    if (lower.includes('3rd') || lower.includes('third')) return '3rd Trimester';
+    if (lower.includes('2nd') || lower.includes('second'))
+      return '2nd Semester';
+    if (lower.includes('3rd') || lower.includes('third'))
+      return '3rd Trimester';
     return '1st Semester';
   }
 
   normalizeYearLevel(year: any): number {
-    if (typeof year === 'number' && year >= 1 && year <= 6) return Math.floor(year);
+    if (typeof year === 'number' && year >= 1 && year <= 6)
+      return Math.floor(year);
     if (typeof year === 'string') {
       const match = year.match(/\d/);
       if (match) {
@@ -95,22 +98,27 @@ export class EnrollmentOcrService {
     return 1;
   }
 
-  async parseCor(input: InputDocumentFile | InputDocumentFile[]): Promise<ExtractedCorData> {
+  async parseCor(
+    input: InputDocumentFile | InputDocumentFile[],
+  ): Promise<ExtractedCorData> {
     this.logger.log('Dispatching COR document to LlamaExtract...');
     const raw = await this.llamaExtractService.extractEnrollmentCorData(input);
 
-    const subjects: ExtractedCorSubject[] = (raw.subjects || []).map((s: any) => ({
-      subject_code: (s.subject_code || '').trim().toUpperCase(),
-      descriptive_title: (s.descriptive_title || s.subject_code || '').trim(),
-      section: s.section ? String(s.section).trim() : undefined,
-      schedule: s.schedule ? String(s.schedule).trim() : undefined,
-      room: s.room ? String(s.room).trim() : undefined,
-      units: Number(s.units) > 0 ? Number(s.units) : 3.0,
-    })).filter((s: ExtractedCorSubject) => Boolean(s.subject_code));
+    const subjects: ExtractedCorSubject[] = (raw.subjects || [])
+      .map((s: any) => ({
+        subject_code: (s.subject_code || '').trim().toUpperCase(),
+        descriptive_title: (s.descriptive_title || s.subject_code || '').trim(),
+        section: s.section ? String(s.section).trim() : undefined,
+        schedule: s.schedule ? String(s.schedule).trim() : undefined,
+        room: s.room ? String(s.room).trim() : undefined,
+        units: Number(s.units) > 0 ? Number(s.units) : 3.0,
+      }))
+      .filter((s: ExtractedCorSubject) => Boolean(s.subject_code));
 
-    const totalUnits = Number(raw.total_units) > 0
-      ? Number(raw.total_units)
-      : subjects.reduce((sum, s) => sum + s.units, 0);
+    const totalUnits =
+      Number(raw.total_units) > 0
+        ? Number(raw.total_units)
+        : subjects.reduce((sum, s) => sum + s.units, 0);
 
     return {
       student_name: raw.student_name,
@@ -125,7 +133,9 @@ export class EnrollmentOcrService {
     };
   }
 
-  async parseSoa(input: InputDocumentFile | InputDocumentFile[]): Promise<ExtractedSoaData> {
+  async parseSoa(
+    input: InputDocumentFile | InputDocumentFile[],
+  ): Promise<ExtractedSoaData> {
     this.logger.log('Dispatching SOA document to LlamaExtract...');
     const raw = await this.llamaExtractService.extractEnrollmentSoaData(input);
 
@@ -137,32 +147,45 @@ export class EnrollmentOcrService {
       semester: this.normalizeSemester(raw.semester),
       assessment_date: raw.assessment_date,
       total_assessment: Number(raw.total_assessment) || 0,
-      tuition_fee: raw.tuition_fee != null ? Number(raw.tuition_fee) : undefined,
+      tuition_fee:
+        raw.tuition_fee != null ? Number(raw.tuition_fee) : undefined,
       lab_fees: raw.lab_fees != null ? Number(raw.lab_fees) : undefined,
       misc_fees: raw.misc_fees != null ? Number(raw.misc_fees) : undefined,
       other_fees: raw.other_fees != null ? Number(raw.other_fees) : undefined,
-      previous_balance: raw.previous_balance != null ? Number(raw.previous_balance) : undefined,
+      previous_balance:
+        raw.previous_balance != null ? Number(raw.previous_balance) : undefined,
       discounts: raw.discounts != null ? Number(raw.discounts) : undefined,
-      net_balance_due: raw.net_balance_due != null ? Number(raw.net_balance_due) : Number(raw.total_assessment) || 0,
+      net_balance_due:
+        raw.net_balance_due != null
+          ? Number(raw.net_balance_due)
+          : Number(raw.total_assessment) || 0,
     };
   }
 
-  async parseConsolidated(input: InputDocumentFile | InputDocumentFile[]): Promise<ExtractedConsolidatedData> {
-    this.logger.log('Dispatching Consolidated COR+SOA document to LlamaExtract...');
-    const raw = await this.llamaExtractService.extractConsolidatedEnrollmentData(input);
+  async parseConsolidated(
+    input: InputDocumentFile | InputDocumentFile[],
+  ): Promise<ExtractedConsolidatedData> {
+    this.logger.log(
+      'Dispatching Consolidated COR+SOA document to LlamaExtract...',
+    );
+    const raw =
+      await this.llamaExtractService.extractConsolidatedEnrollmentData(input);
 
-    const subjects: ExtractedCorSubject[] = (raw.subjects || []).map((s: any) => ({
-      subject_code: (s.subject_code || '').trim().toUpperCase(),
-      descriptive_title: (s.descriptive_title || s.subject_code || '').trim(),
-      section: s.section ? String(s.section).trim() : undefined,
-      schedule: s.schedule ? String(s.schedule).trim() : undefined,
-      room: s.room ? String(s.room).trim() : undefined,
-      units: Number(s.units) > 0 ? Number(s.units) : 3.0,
-    })).filter((s: ExtractedCorSubject) => Boolean(s.subject_code));
+    const subjects: ExtractedCorSubject[] = (raw.subjects || [])
+      .map((s: any) => ({
+        subject_code: (s.subject_code || '').trim().toUpperCase(),
+        descriptive_title: (s.descriptive_title || s.subject_code || '').trim(),
+        section: s.section ? String(s.section).trim() : undefined,
+        schedule: s.schedule ? String(s.schedule).trim() : undefined,
+        room: s.room ? String(s.room).trim() : undefined,
+        units: Number(s.units) > 0 ? Number(s.units) : 3.0,
+      }))
+      .filter((s: ExtractedCorSubject) => Boolean(s.subject_code));
 
-    const totalUnits = Number(raw.total_units) > 0
-      ? Number(raw.total_units)
-      : subjects.reduce((sum, s) => sum + s.units, 0);
+    const totalUnits =
+      Number(raw.total_units) > 0
+        ? Number(raw.total_units)
+        : subjects.reduce((sum, s) => sum + s.units, 0);
 
     return {
       student_name: raw.student_name,
@@ -175,13 +198,18 @@ export class EnrollmentOcrService {
       total_units: totalUnits,
       assessment_date: raw.assessment_date,
       total_assessment: Number(raw.total_assessment) || 0,
-      tuition_fee: raw.tuition_fee != null ? Number(raw.tuition_fee) : undefined,
+      tuition_fee:
+        raw.tuition_fee != null ? Number(raw.tuition_fee) : undefined,
       lab_fees: raw.lab_fees != null ? Number(raw.lab_fees) : undefined,
       misc_fees: raw.misc_fees != null ? Number(raw.misc_fees) : undefined,
       other_fees: raw.other_fees != null ? Number(raw.other_fees) : undefined,
-      previous_balance: raw.previous_balance != null ? Number(raw.previous_balance) : undefined,
+      previous_balance:
+        raw.previous_balance != null ? Number(raw.previous_balance) : undefined,
       discounts: raw.discounts != null ? Number(raw.discounts) : undefined,
-      net_balance_due: raw.net_balance_due != null ? Number(raw.net_balance_due) : Number(raw.total_assessment) || 0,
+      net_balance_due:
+        raw.net_balance_due != null
+          ? Number(raw.net_balance_due)
+          : Number(raw.total_assessment) || 0,
       subjects,
     };
   }

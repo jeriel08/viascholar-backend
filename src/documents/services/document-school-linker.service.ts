@@ -135,7 +135,9 @@ export class DocumentSchoolLinkerService {
           where: { profile_id: scholarProfileId },
           data: {
             ...(schoolIdToLink ? { school_id: schoolIdToLink } : {}),
-            ...(!currentScholarSchoolName ? { school_name: trimmedSchool } : {}),
+            ...(!currentScholarSchoolName
+              ? { school_name: trimmedSchool }
+              : {}),
           },
         });
       }

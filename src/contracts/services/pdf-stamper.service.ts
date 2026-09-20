@@ -61,9 +61,7 @@ export class PdfStamperService {
     'scholarship-agreement-template.pdf',
   );
 
-  constructor(
-    private readonly pdfCertificateService: PdfCertificateService,
-  ) {}
+  constructor(private readonly pdfCertificateService: PdfCertificateService) {}
 
   // Load the company's official template PDF from assets
   private async loadBaseTemplate(customBuffer?: Buffer): Promise<PDFDocument> {
@@ -349,7 +347,8 @@ export class PdfStamperService {
 
     // 4. Generate Verification QR Code
     const verificationUrl = `${params.verificationBaseUrl}/${certificateId}`;
-    const qrBuffer = await this.pdfCertificateService.generateQrBuffer(verificationUrl);
+    const qrBuffer =
+      await this.pdfCertificateService.generateQrBuffer(verificationUrl);
     const embeddedQr = await pdfDoc.embedPng(qrBuffer);
 
     // 5. Draw Cryptographic Audit Certificate Box
@@ -372,7 +371,8 @@ export class PdfStamperService {
     const stampedPdfBuffer = Buffer.from(stampedBytes);
 
     // 6. Compute SHA-256 Document Integrity Checksum
-    const documentHash = this.pdfCertificateService.computeHash(stampedPdfBuffer);
+    const documentHash =
+      this.pdfCertificateService.computeHash(stampedPdfBuffer);
 
     return {
       stampedPdfBuffer,

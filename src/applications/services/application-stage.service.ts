@@ -26,16 +26,17 @@ export class ApplicationStageService {
     dto: UpdateApplicationStageDto,
     callerRole: string,
   ) {
-    const canDecide = ['ADMIN', 'GRANTOR'].includes(callerRole);
-    if (!canDecide && ['APPROVED', 'REJECTED'].includes(dto.status)) {
+    const canApprove = ['ADMIN', 'GRANTOR'].includes(callerRole);
+    if (!canApprove && dto.status === 'APPROVED') {
       throw new ForbiddenException(
-        'Only grantors can approve or reject applications.',
+        'Only grantors and administrators can approve applications.',
       );
     }
 
-    if (dto.status === 'REJECTED' && !dto.rejection_reason) {
-      throw new BadRequestException(
-        'A rejection reason is required when rejecting an application.',
+    const canReject = ['ADMIN', 'GRANTOR', 'COORDINATOR'].includes(callerRole);
+    if (!canReject && dto.status === 'REJECTED') {
+      throw new ForbiddenException(
+        'You do not have permission to reject applications.',
       );
     }
 
@@ -124,11 +125,14 @@ export class ApplicationStageService {
         interview_calendar_event_id: dto.interview_calendar_event_id,
         reschedule_reason: dto.reschedule_reason,
         provider_notes: dto.provider_notes,
-        rejection_reason: dto.rejection_reason,
+        rejection_reason:
+          dto.status === 'REJECTED'
+            ? dto.rejection_reason?.trim() || null
+            : null,
         reviewed_by_employee_id: employee.employee_id,
         decision_at: ['APPROVED', 'REJECTED'].includes(dto.status)
           ? new Date()
-          : undefined,
+          : null,
       },
     });
 

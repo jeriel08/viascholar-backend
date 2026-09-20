@@ -61,9 +61,21 @@ export class CoordinatorDisbursementService {
         { check_number: { contains: search, mode: 'insensitive' } },
         { voucher_number: { contains: search, mode: 'insensitive' } },
         { or_number: { contains: search, mode: 'insensitive' } },
-        { scholar_profile: { first_name: { contains: search, mode: 'insensitive' } } },
-        { scholar_profile: { last_name: { contains: search, mode: 'insensitive' } } },
-        { scholar_profile: { student_number: { contains: search, mode: 'insensitive' } } },
+        {
+          scholar_profile: {
+            first_name: { contains: search, mode: 'insensitive' },
+          },
+        },
+        {
+          scholar_profile: {
+            last_name: { contains: search, mode: 'insensitive' },
+          },
+        },
+        {
+          scholar_profile: {
+            student_number: { contains: search, mode: 'insensitive' },
+          },
+        },
       ];
     }
 
@@ -84,10 +96,20 @@ export class CoordinatorDisbursementService {
         },
         or_document: true,
         approved_by_employee: {
-          select: { employee_id: true, first_name: true, last_name: true, title: true },
+          select: {
+            employee_id: true,
+            first_name: true,
+            last_name: true,
+            title: true,
+          },
         },
         settled_by_employee: {
-          select: { employee_id: true, first_name: true, last_name: true, title: true },
+          select: {
+            employee_id: true,
+            first_name: true,
+            last_name: true,
+            title: true,
+          },
         },
       },
     });
@@ -96,7 +118,11 @@ export class CoordinatorDisbursementService {
   }
 
   // 2. Record physical check issuance with Payee locked to registered institutional entity
-  async recordCheckIssuance(userId: number, disbursementId: number, dto: RecordCheckIssuanceDto) {
+  async recordCheckIssuance(
+    userId: number,
+    disbursementId: number,
+    dto: RecordCheckIssuanceDto,
+  ) {
     const coordinator = await this.getCoordinatorEmployee(userId);
 
     const disbursement = await this.prisma.disbursement.findUnique({
@@ -112,12 +138,20 @@ export class CoordinatorDisbursementService {
       throw new NotFoundException(`Disbursement #${disbursementId} not found.`);
     }
 
-    if (disbursement.status !== 'AUTHORIZED' && disbursement.status !== 'RELEASED' && disbursement.status !== 'PENDING') {
-      throw new BadRequestException(`Cannot issue check for disbursement with status "${disbursement.status}".`);
+    if (
+      disbursement.status !== 'AUTHORIZED' &&
+      disbursement.status !== 'RELEASED' &&
+      disbursement.status !== 'PENDING'
+    ) {
+      throw new BadRequestException(
+        `Cannot issue check for disbursement with status "${disbursement.status}".`,
+      );
     }
 
     // Payee is locked strictly to the registered institutional school entity
-    const lockedSchoolPayee = disbursement.scholar_profile?.school_name || 'Registered University Cashier';
+    const lockedSchoolPayee =
+      disbursement.scholar_profile?.school_name ||
+      'Registered University Cashier';
 
     const updated = await this.prisma.disbursement.update({
       where: { disbursement_id: disbursementId },
@@ -126,7 +160,9 @@ export class CoordinatorDisbursementService {
         check_payee: lockedSchoolPayee,
         check_number: dto.check_number.trim(),
         bank_name: dto.bank_name.trim(),
-        voucher_number: dto.voucher_number ? dto.voucher_number.trim() : disbursement.voucher_number,
+        voucher_number: dto.voucher_number
+          ? dto.voucher_number.trim()
+          : disbursement.voucher_number,
         date_issued: new Date(dto.date_issued),
         payment_method: dto.payment_method || 'DIRECT_TO_SCHOOL_CHECK',
         remarks: dto.remarks
@@ -152,15 +188,19 @@ export class CoordinatorDisbursementService {
       bank_name: updated.bank_name,
     });
 
-    this.eventsGateway.emitToUser(updated.scholar_profile.user_id, 'disbursement:updated', {
-      disbursement_id: updated.disbursement_id,
-      status: 'CHECK_ISSUED',
-      check_number: updated.check_number,
-      bank_name: updated.bank_name,
-      check_payee: updated.check_payee,
-      amount: updated.amount,
-      message: `Your crossed tuition check (#${updated.check_number}) is ready. Please claim it and hand it over to the university cashier to receive your Official Receipt.`,
-    });
+    this.eventsGateway.emitToUser(
+      updated.scholar_profile.user_id,
+      'disbursement:updated',
+      {
+        disbursement_id: updated.disbursement_id,
+        status: 'CHECK_ISSUED',
+        check_number: updated.check_number,
+        bank_name: updated.bank_name,
+        check_payee: updated.check_payee,
+        amount: updated.amount,
+        message: `Your crossed tuition check (#${updated.check_number}) is ready. Please claim it and hand it over to the university cashier to receive your Official Receipt.`,
+      },
+    );
 
     return {
       message: 'Check issuance details successfully recorded.',
@@ -169,7 +209,11 @@ export class CoordinatorDisbursementService {
   }
 
   // 3. Coordinator audits uploaded Official Receipt and marks transaction as SETTLED
-  async settleOfficialReceipt(userId: number, disbursementId: number, dto: SettleOfficialReceiptDto) {
+  async settleOfficialReceipt(
+    userId: number,
+    disbursementId: number,
+    dto: SettleOfficialReceiptDto,
+  ) {
     const coordinator = await this.getCoordinatorEmployee(userId);
 
     const disbursement = await this.prisma.disbursement.findUnique({
@@ -184,8 +228,13 @@ export class CoordinatorDisbursementService {
       throw new NotFoundException(`Disbursement #${disbursementId} not found.`);
     }
 
-    if (disbursement.status !== 'OR_SUBMITTED' && disbursement.status !== 'CHECK_ISSUED') {
-      throw new BadRequestException(`Cannot settle disbursement with status "${disbursement.status}".`);
+    if (
+      disbursement.status !== 'OR_SUBMITTED' &&
+      disbursement.status !== 'CHECK_ISSUED'
+    ) {
+      throw new BadRequestException(
+        `Cannot settle disbursement with status "${disbursement.status}".`,
+      );
     }
 
     if (dto.approved) {
@@ -233,11 +282,16 @@ export class CoordinatorDisbursementService {
         status: 'SETTLED',
       });
 
-      this.eventsGateway.emitToUser(updated.scholar_profile.user_id, 'disbursement:updated', {
-        disbursement_id: updated.disbursement_id,
-        status: 'SETTLED',
-        message: 'Your university Official Receipt has been verified. Tuition disbursement is fully settled!',
-      });
+      this.eventsGateway.emitToUser(
+        updated.scholar_profile.user_id,
+        'disbursement:updated',
+        {
+          disbursement_id: updated.disbursement_id,
+          status: 'SETTLED',
+          message:
+            'Your university Official Receipt has been verified. Tuition disbursement is fully settled!',
+        },
+      );
 
       return {
         message: 'Disbursement successfully settled and verified.',
@@ -251,7 +305,9 @@ export class CoordinatorDisbursementService {
             where: { document_id: disbursement.or_document_id },
             data: {
               status: 'NEEDS_REUPLOAD',
-              rejection_reason: dto.rejection_reason || 'Official Receipt photo is unclear or amount does not match.',
+              rejection_reason:
+                dto.rejection_reason ||
+                'Official Receipt photo is unclear or amount does not match.',
               reviewed_by_employee_id: coordinator.employee_id,
             },
           });
@@ -261,17 +317,22 @@ export class CoordinatorDisbursementService {
           where: { disbursement_id: disbursementId },
           data: {
             status: 'CHECK_ISSUED',
-            remarks: `${disbursement.remarks || ''}\nOR Rejected: ${dto.rejection_reason || 'Please re-upload receipt photo.'}`.trim(),
+            remarks:
+              `${disbursement.remarks || ''}\nOR Rejected: ${dto.rejection_reason || 'Please re-upload receipt photo.'}`.trim(),
           },
           include: { scholar_profile: true },
         });
       });
 
-      this.eventsGateway.emitToUser(updated.scholar_profile.user_id, 'disbursement:updated', {
-        disbursement_id: updated.disbursement_id,
-        status: 'CHECK_ISSUED',
-        message: `Official Receipt rejected: ${dto.rejection_reason || 'Please re-upload a clear photo.'}`,
-      });
+      this.eventsGateway.emitToUser(
+        updated.scholar_profile.user_id,
+        'disbursement:updated',
+        {
+          disbursement_id: updated.disbursement_id,
+          status: 'CHECK_ISSUED',
+          message: `Official Receipt rejected: ${dto.rejection_reason || 'Please re-upload a clear photo.'}`,
+        },
+      );
 
       return {
         message: 'Official Receipt marked for re-upload.',

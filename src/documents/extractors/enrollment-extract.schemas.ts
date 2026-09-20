@@ -132,8 +132,7 @@ export const ENROLLMENT_SOA_DATA_SCHEMA = {
     },
     previous_balance: {
       type: 'number',
-      description:
-        'Outstanding balance carried over from previous semesters.',
+      description: 'Outstanding balance carried over from previous semesters.',
     },
     discounts: {
       type: 'number',

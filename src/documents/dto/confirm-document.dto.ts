@@ -21,7 +21,8 @@ export class ConfirmDocumentDto {
 
   @ApiPropertyOptional({
     example: '2nd Semester',
-    description: 'Academic semester or term (e.g. 1st Semester, 2nd Semester, Summer)',
+    description:
+      'Academic semester or term (e.g. 1st Semester, 2nd Semester, Summer)',
   })
   @IsString()
   @IsOptional()

@@ -40,7 +40,9 @@ describe('TermEnrollment Services', () => {
     }).compile();
 
     ocrService = module.get<EnrollmentOcrService>(EnrollmentOcrService);
-    auditEngine = module.get<EnrollmentAuditEngineService>(EnrollmentAuditEngineService);
+    auditEngine = module.get<EnrollmentAuditEngineService>(
+      EnrollmentAuditEngineService,
+    );
     prisma = module.get<PrismaService>(PrismaService);
   });
 
@@ -53,7 +55,9 @@ describe('TermEnrollment Services', () => {
 
     it('should normalize semester names', () => {
       expect(ocrService.normalizeSemester('1st Sem')).toBe('1st Semester');
-      expect(ocrService.normalizeSemester('2nd Semester 2026')).toBe('2nd Semester');
+      expect(ocrService.normalizeSemester('2nd Semester 2026')).toBe(
+        '2nd Semester',
+      );
       expect(ocrService.normalizeSemester('Summer Term')).toBe('Summer');
     });
 
@@ -70,14 +74,39 @@ describe('TermEnrollment Services', () => {
         prospectus_id: 1,
         scholar_profile_id: 10,
         subjects: [
-          { subject_id: 101, subject_code: 'IT 101', descriptive_title: 'Intro to IT', units: 3.0, status: 'PASSED', prerequisites: [] },
-          { subject_id: 102, subject_code: 'IT 102', descriptive_title: 'Prog 1', units: 3.0, status: 'PASSED', prerequisites: ['IT 101'] },
-          { subject_id: 103, subject_code: 'IT 201', descriptive_title: 'Data Structures', units: 3.0, status: 'UNTAKEN', prerequisites: ['IT 102'] },
+          {
+            subject_id: 101,
+            subject_code: 'IT 101',
+            descriptive_title: 'Intro to IT',
+            units: 3.0,
+            status: 'PASSED',
+            prerequisites: [],
+          },
+          {
+            subject_id: 102,
+            subject_code: 'IT 102',
+            descriptive_title: 'Prog 1',
+            units: 3.0,
+            status: 'PASSED',
+            prerequisites: ['IT 101'],
+          },
+          {
+            subject_id: 103,
+            subject_code: 'IT 201',
+            descriptive_title: 'Data Structures',
+            units: 3.0,
+            status: 'UNTAKEN',
+            prerequisites: ['IT 102'],
+          },
         ],
       });
 
       const audit = await auditEngine.runAudit(10, [
-        { subject_code: 'IT 201', descriptive_title: 'Data Structures', units: 15.0 },
+        {
+          subject_code: 'IT 201',
+          descriptive_title: 'Data Structures',
+          units: 15.0,
+        },
       ]);
 
       expect(audit.all_cleared).toBe(true);
@@ -90,8 +119,22 @@ describe('TermEnrollment Services', () => {
         prospectus_id: 1,
         scholar_profile_id: 10,
         subjects: [
-          { subject_id: 101, subject_code: 'IT 101', descriptive_title: 'Intro to IT', units: 3.0, status: 'UNTAKEN', prerequisites: [] },
-          { subject_id: 102, subject_code: 'IT 102', descriptive_title: 'Prog 1', units: 3.0, status: 'UNTAKEN', prerequisites: ['IT 101'] },
+          {
+            subject_id: 101,
+            subject_code: 'IT 101',
+            descriptive_title: 'Intro to IT',
+            units: 3.0,
+            status: 'UNTAKEN',
+            prerequisites: [],
+          },
+          {
+            subject_id: 102,
+            subject_code: 'IT 102',
+            descriptive_title: 'Prog 1',
+            units: 3.0,
+            status: 'UNTAKEN',
+            prerequisites: ['IT 101'],
+          },
         ],
       });
 
@@ -109,13 +152,31 @@ describe('TermEnrollment Services', () => {
         prospectus_id: 1,
         scholar_profile_id: 10,
         subjects: [
-          { subject_id: 201, subject_code: 'GE 101', descriptive_title: 'Understanding Self', units: 3.0, status: 'UNTAKEN', prerequisites: ['None'] },
-          { subject_id: 202, subject_code: 'IT 401', descriptive_title: 'Capstone 1', units: 3.0, status: 'UNTAKEN', prerequisites: ['4th Year Standing', 'N/A'] },
+          {
+            subject_id: 201,
+            subject_code: 'GE 101',
+            descriptive_title: 'Understanding Self',
+            units: 3.0,
+            status: 'UNTAKEN',
+            prerequisites: ['None'],
+          },
+          {
+            subject_id: 202,
+            subject_code: 'IT 401',
+            descriptive_title: 'Capstone 1',
+            units: 3.0,
+            status: 'UNTAKEN',
+            prerequisites: ['4th Year Standing', 'N/A'],
+          },
         ],
       });
 
       const audit = await auditEngine.runAudit(10, [
-        { subject_code: 'GE 101', descriptive_title: 'Understanding Self', units: 6.0 },
+        {
+          subject_code: 'GE 101',
+          descriptive_title: 'Understanding Self',
+          units: 6.0,
+        },
         { subject_code: 'IT 401', descriptive_title: 'Capstone 1', units: 6.0 },
       ]);
 
@@ -130,13 +191,32 @@ describe('TermEnrollment Services', () => {
         prospectus_id: 1,
         scholar_profile_id: 10,
         subjects: [
-          { subject_id: 101, subject_code: 'MATH 101', descriptive_title: 'Calculus 1', units: 3.0, status: 'CREDITED', grade: 1.5, prerequisites: [] },
-          { subject_id: 102, subject_code: 'MATH 102', descriptive_title: 'Calculus 2', units: 3.0, status: 'UNTAKEN', prerequisites: ['MATH 101'] },
+          {
+            subject_id: 101,
+            subject_code: 'MATH 101',
+            descriptive_title: 'Calculus 1',
+            units: 3.0,
+            status: 'CREDITED',
+            grade: 1.5,
+            prerequisites: [],
+          },
+          {
+            subject_id: 102,
+            subject_code: 'MATH 102',
+            descriptive_title: 'Calculus 2',
+            units: 3.0,
+            status: 'UNTAKEN',
+            prerequisites: ['MATH 101'],
+          },
         ],
       });
 
       const audit = await auditEngine.runAudit(10, [
-        { subject_code: 'MATH 102', descriptive_title: 'Calculus 2', units: 15.0 },
+        {
+          subject_code: 'MATH 102',
+          descriptive_title: 'Calculus 2',
+          units: 15.0,
+        },
       ]);
 
       expect(audit.all_cleared).toBe(true);
@@ -149,16 +229,54 @@ describe('TermEnrollment Services', () => {
         prospectus_id: 1,
         scholar_profile_id: 10,
         subjects: [
-          { subject_id: 101, subject_code: 'PHYS 101', descriptive_title: 'Physics 1', units: 3.0, status: 'CREDITED', grade: 3.5, prerequisites: [] },
-          { subject_id: 102, subject_code: 'IT 11', descriptive_title: 'Networking 2', units: 3.0, status: 'CREDITED', grade: 4.0, prerequisites: [] },
-          { subject_id: 103, subject_code: 'PHYS 102', descriptive_title: 'Physics 2', units: 4.0, status: 'UNTAKEN', prerequisites: ['PHYS 101/L'] },
-          { subject_id: 104, subject_code: 'IT 15', descriptive_title: 'Integrative Prog', units: 3.0, status: 'UNTAKEN', prerequisites: ['IT 11/L'] },
+          {
+            subject_id: 101,
+            subject_code: 'PHYS 101',
+            descriptive_title: 'Physics 1',
+            units: 3.0,
+            status: 'CREDITED',
+            grade: 3.5,
+            prerequisites: [],
+          },
+          {
+            subject_id: 102,
+            subject_code: 'IT 11',
+            descriptive_title: 'Networking 2',
+            units: 3.0,
+            status: 'CREDITED',
+            grade: 4.0,
+            prerequisites: [],
+          },
+          {
+            subject_id: 103,
+            subject_code: 'PHYS 102',
+            descriptive_title: 'Physics 2',
+            units: 4.0,
+            status: 'UNTAKEN',
+            prerequisites: ['PHYS 101/L'],
+          },
+          {
+            subject_id: 104,
+            subject_code: 'IT 15',
+            descriptive_title: 'Integrative Prog',
+            units: 3.0,
+            status: 'UNTAKEN',
+            prerequisites: ['IT 11/L'],
+          },
         ],
       });
 
       const audit = await auditEngine.runAudit(10, [
-        { subject_code: 'PHYS 102', descriptive_title: 'Physics 2', units: 8.0 },
-        { subject_code: 'IT 15', descriptive_title: 'Integrative Prog', units: 7.0 },
+        {
+          subject_code: 'PHYS 102',
+          descriptive_title: 'Physics 2',
+          units: 8.0,
+        },
+        {
+          subject_code: 'IT 15',
+          descriptive_title: 'Integrative Prog',
+          units: 7.0,
+        },
       ]);
 
       expect(audit.all_cleared).toBe(true);

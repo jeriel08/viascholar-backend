@@ -178,7 +178,11 @@ export class ContractsService {
     contractId: number,
     options: SignContractOptions,
   ) {
-    return this.contractSigningService.signContract(userId, contractId, options);
+    return this.contractSigningService.signContract(
+      userId,
+      contractId,
+      options,
+    );
   }
 
   // 5. Public Certificate & Contract Verification (QR Code Scan Lookup)

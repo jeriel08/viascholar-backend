@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { SettingsService } from '../../settings/settings.service.js';
-import { Application, SchoolGradingSystem } from '../../generated/prisma/client.js';
+import {
+  Application,
+  SchoolGradingSystem,
+} from '../../generated/prisma/client.js';
 
 @Injectable()
 export class ProspectusTransitionService {
@@ -15,7 +18,11 @@ export class ProspectusTransitionService {
    */
   async transitionProspectusSubjects(
     scholarProfileId: number,
-    gradeItems: { subject_code?: string; subject_name?: string; grade: number }[],
+    gradeItems: {
+      subject_code?: string;
+      subject_name?: string;
+      grade: number;
+    }[],
     academicYear: string,
     semester: string,
     schoolConfig: SchoolGradingSystem | null,
