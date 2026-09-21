@@ -367,4 +367,370 @@ export class ScholarBaselineService {
       academic_baseline_status: updated.academic_baseline_status,
     };
   }
+
+  // Fast aggregated summary endpoint for Scholar Dashboard
+  async getScholarDashboardSummary(userId: number) {
+    const scholar = await this.prisma.scholarProfile.findUnique({
+      where: { user_id: userId },
+      include: {
+        user: {
+          select: {
+            user_id: true,
+            email: true,
+            role: true,
+            is_active: true,
+          },
+        },
+        school_grading_system: true,
+        prospectus: {
+          include: {
+            subjects: {
+              orderBy: [
+                { year_level: 'asc' },
+                { semester: 'asc' },
+                { subject_code: 'asc' },
+              ],
+            },
+            frozen_by_employee: {
+              select: {
+                first_name: true,
+                last_name: true,
+                title: true,
+              },
+            },
+          },
+        },
+        grade_reports: {
+          orderBy: { submitted_at: 'desc' },
+          take: 5,
+          include: {
+            grade_items: true,
+          },
+        },
+        enrollments: {
+          orderBy: { created_at: 'desc' },
+          take: 3,
+        },
+        disbursements: {
+          orderBy: { disbursement_id: 'desc' },
+          take: 5,
+        },
+        documents: {
+          orderBy: { uploaded_at: 'desc' },
+          take: 5,
+        },
+        meetings: {
+          where: {
+            meeting_date: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+          },
+          orderBy: { meeting_date: 'asc' },
+          take: 3,
+          include: {
+            employee: {
+              select: {
+                first_name: true,
+                last_name: true,
+                title: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!scholar) {
+      throw new NotFoundException('Scholar profile not found.');
+    }
+
+    // Settings for grade threshold
+    const systemSettings = await this.prisma.systemSetting.findFirst();
+    const threshold = systemSettings?.grade_threshold
+      ? Number(systemSettings.grade_threshold)
+      : 90.0;
+
+    // 1. Prospectus & Curriculum Metrics
+    const subjects = scholar.prospectus?.subjects || [];
+    let totalUnits = Number(scholar.prospectus?.total_units) || 0;
+    if (totalUnits === 0 && subjects.length > 0) {
+      totalUnits = subjects.reduce(
+        (acc, s) => acc + (Number(s.units) || 0),
+        0,
+      );
+    }
+    const passedSubjects = subjects.filter(
+      (s) => s.status === 'PASSED' || s.status === 'CREDITED',
+    );
+    const passedUnits = passedSubjects.reduce(
+      (acc, s) => acc + (Number(s.units) || 0),
+      0,
+    );
+    const curriculumPercentage =
+      totalUnits > 0
+        ? Math.min(100, Math.round((passedUnits / totalUnits) * 100))
+        : 0;
+
+    // 2. GWA Calculation
+    let currentGwa = 0;
+    const latestGradeReport = scholar.grade_reports[0] || null;
+    if (latestGradeReport) {
+      currentGwa = Number(latestGradeReport.gpa);
+    } else if (passedSubjects.length > 0) {
+      const graded = passedSubjects.filter(
+        (s) => s.grade != null && !isNaN(Number(s.grade)),
+      );
+      if (graded.length > 0) {
+        const totalWeighted = graded.reduce(
+          (acc, s) => acc + Number(s.grade) * (Number(s.units) || 3),
+          0,
+        );
+        const gradedUnits = graded.reduce(
+          (acc, s) => acc + (Number(s.units) || 3),
+          0,
+        );
+        currentGwa =
+          gradedUnits > 0
+            ? Number((totalWeighted / gradedUnits).toFixed(2))
+            : Number(graded[0].grade);
+      } else {
+        currentGwa = threshold;
+      }
+    } else {
+      currentGwa = threshold;
+    }
+
+    // 3. Academic Standing Alert & Flag
+    const isOnProbation =
+      scholar.academic_baseline_status === 'ON_PROBATION' ||
+      scholar.grade_reports.some((gr) => gr.appeal_status === 'APPROVED');
+    const hasPendingAppeal =
+      latestGradeReport?.appeal_status === 'PENDING_GRANTOR';
+    const isAppealDenied = latestGradeReport?.appeal_status === 'DENIED';
+    const isFlagged =
+      latestGradeReport &&
+      (!latestGradeReport.is_eligible || latestGradeReport.status === 'FLAGGED');
+
+    let standingType:
+      | 'GOOD_STANDING'
+      | 'PROBATION'
+      | 'ACTION_REQUIRED'
+      | 'PENDING_REVIEW' = 'GOOD_STANDING';
+    if (isOnProbation) {
+      standingType = 'PROBATION';
+    } else if (hasPendingAppeal) {
+      standingType = 'PENDING_REVIEW';
+    } else if (isFlagged || isAppealDenied) {
+      standingType = 'ACTION_REQUIRED';
+    }
+
+    // 4. Term Enrollment
+    const latestEnrollment = scholar.enrollments[0] || null;
+
+    // 5. Disbursements
+    const totalDisbursedAmount = scholar.disbursements
+      .filter(
+        (d) =>
+          d.status === 'CLAIMED' ||
+          d.status === 'SETTLED' ||
+          d.status === 'RELEASED',
+      )
+      .reduce((acc, d) => acc + Number(d.amount), 0);
+    const pendingOrCount = scholar.disbursements.filter(
+      (d) =>
+        (d.status === 'CLAIMED' || d.status === 'RELEASED') &&
+        !d.or_document_id,
+    ).length;
+
+    // 6. Unread Messages & Active Conversation
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { scholar_user_id: userId },
+      include: {
+        coordinator: {
+          include: {
+            employee: {
+              select: {
+                first_name: true,
+                last_name: true,
+                title: true,
+              },
+            },
+          },
+        },
+        messages: {
+          orderBy: { sent_at: 'desc' },
+          take: 5,
+        },
+      },
+    });
+
+    const unreadMessagesCount = conversation
+      ? await this.prisma.message.count({
+          where: {
+            conversation_id: conversation.conversation_id,
+            sender_user_id: { not: userId },
+            is_read: false,
+          },
+        })
+      : 0;
+
+    // 7. Pinned Forum Announcements
+    const announcements = await this.prisma.forumPost.findMany({
+      where: {
+        OR: [{ is_pinned: true }, { category: 'ANNOUNCEMENT' }],
+      },
+      orderBy: { created_at: 'desc' },
+      take: 3,
+      include: {
+        author: {
+          select: {
+            email: true,
+            role: true,
+            employee: {
+              select: {
+                first_name: true,
+                last_name: true,
+                title: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return {
+      profile: {
+        profile_id: scholar.profile_id,
+        user_id: scholar.user_id,
+        first_name: scholar.first_name,
+        last_name: scholar.last_name,
+        email: scholar.user.email,
+        phone_number: scholar.phone_number,
+        student_number: scholar.student_number,
+        school_name:
+          scholar.school_name || scholar.school_grading_system?.school_name,
+        course_of_study: scholar.course_of_study,
+        current_year_level: scholar.current_year_level || 1,
+        academic_baseline_status: scholar.academic_baseline_status,
+        avatar_url: scholar.avatar_url,
+        banner_url: scholar.banner_url,
+      },
+      school_grading_system: scholar.school_grading_system,
+      academic_standing: {
+        standing_type: standingType,
+        gwa: Number(currentGwa.toFixed(2)),
+        threshold: Number(threshold.toFixed(2)),
+        is_on_probation: isOnProbation,
+        is_flagged: Boolean(isFlagged),
+        has_pending_appeal: Boolean(hasPendingAppeal),
+        latest_report: latestGradeReport
+          ? {
+              report_id: latestGradeReport.report_id,
+              academic_year: latestGradeReport.academic_year,
+              semester: latestGradeReport.semester,
+              gpa: Number(latestGradeReport.gpa),
+              status: latestGradeReport.status,
+              evaluation_flag: latestGradeReport.evaluation_flag,
+              appeal_status: latestGradeReport.appeal_status,
+              appeal_notes: latestGradeReport.appeal_notes,
+              appeal_decision_notes: latestGradeReport.appeal_decision_notes,
+            }
+          : null,
+      },
+      curriculum: {
+        total_units: Number(totalUnits.toFixed(1)),
+        passed_units: Number(passedUnits.toFixed(1)),
+        percentage: curriculumPercentage,
+        total_subjects: subjects.length,
+        passed_subjects_count: passedSubjects.length,
+        is_frozen: scholar.prospectus?.is_frozen || false,
+        prospectus_status: scholar.prospectus?.status || 'DRAFT',
+      },
+      latest_enrollment: latestEnrollment
+        ? {
+            enrollment_id: latestEnrollment.enrollment_id,
+            academic_year: latestEnrollment.academic_year,
+            semester: latestEnrollment.semester,
+            year_level: latestEnrollment.year_level,
+            status: latestEnrollment.status,
+            total_units: Number(latestEnrollment.total_units),
+            total_assessment: Number(latestEnrollment.total_assessment),
+            enrolled_subjects: latestEnrollment.enrolled_subjects,
+            audit_flags: latestEnrollment.audit_flags,
+            cor_document_id: latestEnrollment.cor_document_id,
+            soa_document_id: latestEnrollment.soa_document_id,
+            coordinator_notes: latestEnrollment.coordinator_notes,
+            created_at: latestEnrollment.created_at,
+          }
+        : null,
+      disbursements: {
+        latest: scholar.disbursements[0]
+          ? {
+              disbursement_id: scholar.disbursements[0].disbursement_id,
+              academic_year: scholar.disbursements[0].academic_year,
+              semester: scholar.disbursements[0].semester,
+              amount: Number(scholar.disbursements[0].amount),
+              status: scholar.disbursements[0].status,
+              date_issued: scholar.disbursements[0].date_issued,
+              date_claimed: scholar.disbursements[0].date_claimed,
+              voucher_number: scholar.disbursements[0].voucher_number,
+              check_number: scholar.disbursements[0].check_number,
+              or_number: scholar.disbursements[0].or_number,
+              or_document_id: scholar.disbursements[0].or_document_id,
+            }
+          : null,
+        history: scholar.disbursements.map((d) => ({
+          disbursement_id: d.disbursement_id,
+          academic_year: d.academic_year,
+          semester: d.semester,
+          amount: Number(d.amount),
+          status: d.status,
+          date_claimed: d.date_claimed,
+          date_issued: d.date_issued,
+          or_document_id: d.or_document_id,
+        })),
+        total_disbursed_amount: totalDisbursedAmount,
+        pending_or_count: pendingOrCount,
+      },
+      communication: {
+        unread_messages_count: unreadMessagesCount,
+        coordinator: conversation?.coordinator?.employee
+          ? {
+              name: `${conversation.coordinator.employee.first_name} ${conversation.coordinator.employee.last_name}`.trim(),
+              title:
+                conversation.coordinator.employee.title ||
+                'Scholarship Coordinator',
+            }
+          : null,
+        recent_messages: (conversation?.messages || []).map((m) => ({
+          message_id: m.message_id,
+          sender_user_id: m.sender_user_id,
+          message_text: m.message_text,
+          message_type: m.message_type,
+          sent_at: m.sent_at,
+          is_read: m.is_read,
+        })),
+      },
+      upcoming_meetings: scholar.meetings.map((m) => ({
+        meeting_id: m.meeting_id,
+        title: m.title,
+        meeting_date: m.meeting_date,
+        meeting_time: m.meeting_time,
+        meeting_link: m.meeting_link,
+        status: m.status,
+        coordinator_name: m.employee
+          ? `${m.employee.first_name} ${m.employee.last_name}`
+          : 'Coordinator',
+      })),
+      announcements: announcements.map((a) => ({
+        post_id: a.post_id,
+        title: a.title,
+        content: a.content,
+        category: a.category,
+        is_pinned: a.is_pinned,
+        created_at: a.created_at,
+        author_name: a.author.employee
+          ? `${a.author.employee.first_name} ${a.author.employee.last_name}`
+          : 'ViaScholar Staff',
+      })),
+    };
+  }
 }

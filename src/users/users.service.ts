@@ -219,9 +219,10 @@ export class UsersService {
           role: { in: ['SCHOLAR', 'APPLICANT'] },
         },
       }),
-      this.prisma.scholarProfile.count({
+      this.prisma.user.count({
         where: {
-          academic_baseline_status: { in: ['ACTIVE', 'ON_PROBATION'] },
+          role: 'SCHOLAR',
+          is_active: true,
         },
       }),
       this.prisma.user.count({

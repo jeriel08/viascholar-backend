@@ -86,6 +86,16 @@ export class AcademicBaselineController {
     return this.baselineService.getScholarBaselineState(req.user.user_id);
   }
 
+  @Get('scholar/dashboard-summary')
+  @Roles(Role.SCHOLAR, Role.COORDINATOR, Role.GRANTOR, Role.ADMIN)
+  @ApiOperation({
+    summary:
+      'Aggregated summary data for the Scholar Dashboard (KPIs, Prospectus, Standing, Disbursements, Communications)',
+  })
+  getScholarDashboardSummary(@Request() req: AuthenticatedRequest) {
+    return this.baselineService.getScholarDashboardSummary(req.user.user_id);
+  }
+
   @Post('select-school')
   @Roles(Role.SCHOLAR, Role.APPLICANT)
   @ApiOperation({
