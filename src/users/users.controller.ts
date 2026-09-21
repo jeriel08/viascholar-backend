@@ -53,6 +53,15 @@ export class UsersController {
     return this.usersService.getAdminDashboardSummary();
   }
 
+  @Get('coordinator/dashboard')
+  @Roles(Role.COORDINATOR, Role.ADMIN)
+  @ApiOperation({
+    summary: 'Get aggregated metrics & pipeline data for Coordinator Dashboard',
+  })
+  getCoordinatorDashboard(@Request() req) {
+    return this.usersService.getCoordinatorDashboardSummary(req.user.user_id);
+  }
+
   @Get(':id')
   @Roles(Role.ADMIN, Role.COORDINATOR)
   @ApiOperation({ summary: 'Get user details by ID' })
