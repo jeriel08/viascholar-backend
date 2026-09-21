@@ -46,6 +46,13 @@ export class UsersController {
     return this.auditService.getLogs(page ? +page : 1, limit ? +limit : 50);
   }
 
+  @Get('admin/dashboard')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Get aggregated metrics & data for Admin Dashboard' })
+  getAdminDashboard() {
+    return this.usersService.getAdminDashboardSummary();
+  }
+
   @Get(':id')
   @Roles(Role.ADMIN, Role.COORDINATOR)
   @ApiOperation({ summary: 'Get user details by ID' })
