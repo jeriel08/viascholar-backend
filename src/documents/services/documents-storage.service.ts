@@ -68,6 +68,26 @@ export class DocumentsStorageService {
       );
     }
 
+    if (this.isCollegeGradeDocument(documentType) || documentType === 'CCG') {
+      const unresolvedReport = await this.prisma.gradeReport.findFirst({
+        where: {
+          scholar_profile_id: scholar.profile_id,
+          status: 'FLAGGED',
+          appeal_status: { not: 'APPROVED' },
+        },
+        orderBy: { submitted_at: 'desc' },
+      });
+      if (unresolvedReport) {
+        const msg =
+          unresolvedReport.appeal_status === 'PENDING_GRANTOR'
+            ? "Grade submission is paused while your academic appeal is awaiting the Grantor's verdict."
+            : unresolvedReport.appeal_status === 'DENIED'
+              ? 'Grade submission is unavailable because your scholarship was discontinued.'
+              : 'Grade submission is paused. Please submit and resolve your Second Chance Appeal for your flagged grade report first.';
+        throw new BadRequestException(msg);
+      }
+    }
+
     const fileList = Array.isArray(files) ? files : [files];
     if (fileList.length === 0) {
       throw new BadRequestException('At least one file must be uploaded.');
@@ -315,6 +335,10 @@ export class DocumentsStorageService {
             'OFFICIAL_RECEIPT',
             'RECEIPT',
             'CONSOLIDATED_ASSESSMENT',
+            'CONSOLIDATED_MATRICULATION',
+            'PROSPECTUS',
+            'CURRICULUM',
+            'HISTORICAL_CCG',
           ],
         },
         status: {

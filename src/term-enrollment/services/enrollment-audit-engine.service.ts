@@ -288,13 +288,10 @@ export class EnrollmentAuditEngineService {
       }
     }
 
-    // 3. Credit load checks
-    let overloadFlag = false;
+    // 3. Credit load checks (Overload restrictions removed per organization policy)
+    const overloadFlag = false;
     let underloadFlag = false;
-    if (totalUnits > 24) {
-      overloadFlag = true;
-      flags.push('OVERLOAD_UNITS');
-    } else if (totalUnits < 12 && totalUnits > 0) {
+    if (totalUnits < 12 && totalUnits > 0) {
       underloadFlag = true;
       flags.push('UNDERLOAD_UNITS');
     }

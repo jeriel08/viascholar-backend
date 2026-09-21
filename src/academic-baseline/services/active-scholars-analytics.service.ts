@@ -165,11 +165,17 @@ export class ActiveScholarsAnalyticsService {
 
       // 4. Health determination
       let health: 'good' | 'warn' | 'bad' = 'good';
-      const hasFailedReport = gradeReports.some(
+
+      const isOnProbation =
+        scholar.academic_baseline_status === 'ON_PROBATION' ||
+        gradeReports.some((gr) => gr.appeal_status === 'APPROVED');
+
+      const hasActiveUnresolvedFailure = gradeReports.some(
         (gr) =>
-          gr.status === 'FLAGGED' ||
-          gr.status === 'REJECTED' ||
-          gr.evaluation_flag === 'ACADEMIC_FAILURE',
+          (gr.status === 'FLAGGED' ||
+            gr.status === 'REJECTED' ||
+            gr.evaluation_flag === 'ACADEMIC_FAILURE') &&
+          gr.appeal_status !== 'APPROVED',
       );
       const hasFailedSubject = scholar.prospectus?.subjects?.some(
         (s) => s.status === 'FAILED',
@@ -178,7 +184,9 @@ export class ActiveScholarsAnalyticsService {
         (d) => d.status === 'NEEDS_REUPLOAD' || d.status === 'REJECTED',
       );
 
-      if (hasFailedReport || hasFailedSubject) {
+      if (isOnProbation) {
+        health = 'warn';
+      } else if (hasActiveUnresolvedFailure || (hasFailedSubject && !isOnProbation)) {
         health = 'bad';
       } else if (hasMissingDocs || verifiedDocs < docs.length) {
         health = 'warn';

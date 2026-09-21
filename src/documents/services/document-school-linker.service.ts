@@ -91,50 +91,64 @@ export class DocumentSchoolLinkerService {
         }
       }
 
-      let schoolIdToLink = matchedSchool?.school_id;
+      const isHighSchoolMatch =
+        matchedSchool &&
+        (/high\s*school|senior\s*high|deped/i.test(matchedSchool.school_name) ||
+          matchedSchool.grading_scale === 'PERCENTAGE_100');
+
+      let schoolIdToLink = isHighSchoolMatch
+        ? undefined
+        : matchedSchool?.school_id;
 
       // Only create a new unverified school entry if NO existing school matched
       if (!matchedSchool && gradingLegend) {
-        const defaultHighest =
-          gradingLegend.highest_grade ??
-          (gradingLegend.grading_scale === 'NUMERIC_4_POINT' ? 4.0 : 1.0);
-        const defaultPassing =
-          gradingLegend.passing_grade ??
-          (gradingLegend.grading_scale === 'NUMERIC_4_POINT' ? 2.0 : 3.0);
-        const defaultFailing =
-          gradingLegend.failing_grade ??
-          (gradingLegend.grading_scale === 'NUMERIC_4_POINT' ? 1.0 : 5.0);
+        const isExtractedHighSchool =
+          /high\s*school|senior\s*high|junior\s*high|secondary|sf9|form\s*138|sf10/i.test(
+            trimmedSchool,
+          );
 
-        const newSchool = await this.prisma.schoolGradingSystem.create({
-          data: {
-            school_name: trimmedSchool,
-            grading_scale:
-              gradingLegend.grading_scale ||
-              (gradingLegend.highest_grade === 4
-                ? 'NUMERIC_4_POINT'
-                : 'NUMERIC_5_POINT'),
-            highest_grade: defaultHighest,
-            passing_grade: defaultPassing,
-            failing_grade: defaultFailing,
-            special_codes: gradingLegend.special_codes
-              ? (gradingLegend.special_codes as Prisma.InputJsonValue)
-              : undefined,
-            notes:
-              gradingLegend.notes ||
-              `Auto-extracted from document: ${gradingLegend.legend_title || 'Legend'}`,
-            is_verified: false,
-            submitted_by_user_id: userId,
-          },
-        });
-        schoolIdToLink = newSchool.school_id;
-        this.eventsGateway.emitToStaff('school_grading:created', newSchool);
+        if (!isExtractedHighSchool) {
+          const defaultHighest =
+            gradingLegend.highest_grade ??
+            (gradingLegend.grading_scale === 'NUMERIC_4_POINT' ? 4.0 : 1.0);
+          const defaultPassing =
+            gradingLegend.passing_grade ??
+            (gradingLegend.grading_scale === 'NUMERIC_4_POINT' ? 2.0 : 3.0);
+          const defaultFailing =
+            gradingLegend.failing_grade ??
+            (gradingLegend.grading_scale === 'NUMERIC_4_POINT' ? 1.0 : 5.0);
+
+          const newSchool = await this.prisma.schoolGradingSystem.create({
+            data: {
+              school_name: trimmedSchool,
+              grading_scale:
+                gradingLegend.grading_scale ||
+                (gradingLegend.highest_grade === 4
+                  ? 'NUMERIC_4_POINT'
+                  : 'NUMERIC_5_POINT'),
+              highest_grade: defaultHighest,
+              passing_grade: defaultPassing,
+              failing_grade: defaultFailing,
+              special_codes: gradingLegend.special_codes
+                ? (gradingLegend.special_codes as Prisma.InputJsonValue)
+                : undefined,
+              notes:
+                gradingLegend.notes ||
+                `Auto-extracted from document: ${gradingLegend.legend_title || 'Legend'}`,
+              is_verified: false,
+              submitted_by_user_id: userId,
+            },
+          });
+          schoolIdToLink = newSchool.school_id;
+          this.eventsGateway.emitToStaff('school_grading:created', newSchool);
+        }
       }
 
-      if (schoolIdToLink || !currentScholarSchoolName) {
+      if (schoolIdToLink) {
         await this.prisma.scholarProfile.update({
           where: { profile_id: scholarProfileId },
           data: {
-            ...(schoolIdToLink ? { school_id: schoolIdToLink } : {}),
+            school_id: schoolIdToLink,
             ...(!currentScholarSchoolName
               ? { school_name: trimmedSchool }
               : {}),

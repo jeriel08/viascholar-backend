@@ -104,19 +104,28 @@ export class AcademicAppealService {
           });
         }
 
-        const appealMsgText =
-          `📢 [ACADEMIC SECOND CHANCE APPEAL SUBMITTED]\n\n` +
-          `Scholar: ${scholar.first_name} ${scholar.last_name} (${scholar.student_number || 'ID Pending'})\n` +
-          `Term: ${report.academic_year} • ${report.semester}\n` +
-          `Term GWA: ${Number(report.gpa).toFixed(2)} (Retention Status: ${report.evaluation_flag || 'FLAGGED'})\n\n` +
-          `Scholar Statement:\n"${dto.appeal_notes}"\n\n` +
-          `Please review the full academic record and issue your official verdict.`;
+        const appealMetadata = {
+          report_id: report.report_id,
+          scholar_profile_id: scholar.profile_id,
+          student_name: `${scholar.first_name} ${scholar.last_name}`.trim(),
+          student_number: scholar.student_number || 'ID Pending',
+          academic_year: report.academic_year,
+          semester: report.semester,
+          gpa: Number(report.gpa),
+          evaluation_flag: report.evaluation_flag || 'FLAGGED',
+          appeal_notes: dto.appeal_notes,
+          appeal_submitted_at: updatedReport.appeal_submitted_at?.toISOString(),
+        };
 
-        await this.prisma.message.create({
+        const appealMsgText = `Academic Second Chance Appeal submitted for ${report.academic_year} ${report.semester}.\n\nScholar Statement:\n"${dto.appeal_notes}"`;
+
+        const newMsg = await this.prisma.message.create({
           data: {
             conversation_id: convo.conversation_id,
             sender_user_id: userId,
             message_text: appealMsgText,
+            message_type: 'SYSTEM_APPEAL_SUBMITTED',
+            metadata: appealMetadata as any,
           },
         });
 
@@ -124,9 +133,33 @@ export class AcademicAppealService {
           where: { conversation_id: convo.conversation_id },
           data: {
             last_message_at: new Date(),
-            last_message_preview: `Academic Appeal: ${dto.appeal_notes.slice(0, 80)}...`,
+            last_message_preview: `📢 Academic Appeal: ${dto.appeal_notes.slice(0, 80)}...`,
           },
         });
+
+        const chatPayload = {
+          message_id: newMsg.message_id,
+          conversation_id: convo.conversation_id,
+          sender_user_id: userId,
+          sender_name: `${scholar.first_name} ${scholar.last_name}`.trim(),
+          sender_role: 'SCHOLAR',
+          message_text: appealMsgText,
+          message_type: 'SYSTEM_APPEAL_SUBMITTED',
+          metadata: appealMetadata,
+          is_read: false,
+          sent_at: newMsg.sent_at,
+        };
+
+        this.eventsGateway.emitToRoom(
+          `conversation_${convo.conversation_id}`,
+          'chat:new_message',
+          chatPayload,
+        );
+        this.eventsGateway.emitToUser(
+          grantor.user_id,
+          'chat:new_message',
+          chatPayload,
+        );
       }
     } catch (msgErr) {
       this.logger.warn(`Failed to post appeal chat notification: ${msgErr}`);
@@ -209,6 +242,16 @@ export class AcademicAppealService {
       },
     });
 
+    // If appeal is APPROVED: put scholar on active probation
+    if (isApproved) {
+      await this.prisma.scholarProfile.update({
+        where: { profile_id: report.scholar_profile_id },
+        data: {
+          academic_baseline_status: 'ON_PROBATION',
+        },
+      });
+    }
+
     // If appeal is DENIED: terminate contract, update profile standing, and cancel pending disbursements
     if (!isApproved) {
       await this.prisma.contract.updateMany({
@@ -252,17 +295,69 @@ export class AcademicAppealService {
       });
 
       if (convo) {
-        const decisionText = isApproved
-          ? `✅ [SECOND CHANCE APPEAL APPROVED]\n\nYour academic appeal for ${report.academic_year} ${report.semester} has been APPROVED on probationary standing. You may now proceed to enroll for the upcoming term.\n\nGrantor Notes:\n${dto.decision_notes || 'Maintain passing grades to clear probation.'}`
-          : `❌ [SECOND CHANCE APPEAL DENIED]\n\nYour academic appeal for ${report.academic_year} ${report.semester} was reviewed and DENIED.\n\nGrantor Remarks:\n${dto.decision_notes || 'Scholarship retention criteria not met.'}`;
+        const verdictMetadata = {
+          report_id: report.report_id,
+          scholar_profile_id: report.scholar_profile_id,
+          student_name: `${report.scholar_profile.first_name} ${report.scholar_profile.last_name}`.trim(),
+          academic_year: report.academic_year,
+          semester: report.semester,
+          decision: dto.decision,
+          decision_notes: dto.decision_notes || '',
+          reviewed_by_name: `${employee.first_name} ${employee.last_name}`.trim(),
+          reviewed_at: updated.appeal_reviewed_at?.toISOString(),
+        };
 
-        await this.prisma.message.create({
+        const decisionText = isApproved
+          ? `Second Chance Appeal Approved for ${report.academic_year} ${report.semester}.\n\nGrantor Notes:\n"${dto.decision_notes || 'Maintain passing grades to clear probation.'}"`
+          : `Second Chance Appeal Denied for ${report.academic_year} ${report.semester}.\n\nGrantor Remarks:\n"${dto.decision_notes || 'Scholarship retention criteria not met.'}"`;
+
+        const verdictMsg = await this.prisma.message.create({
           data: {
             conversation_id: convo.conversation_id,
             sender_user_id: grantorUserId,
             message_text: decisionText,
+            message_type: isApproved
+              ? 'SYSTEM_APPEAL_APPROVED'
+              : 'SYSTEM_APPEAL_DENIED',
+            metadata: verdictMetadata as any,
           },
         });
+
+        await this.prisma.conversation.update({
+          where: { conversation_id: convo.conversation_id },
+          data: {
+            last_message_at: new Date(),
+            last_message_preview: isApproved
+              ? `✅ Appeal Approved (${report.academic_year} ${report.semester})`
+              : `❌ Appeal Denied (${report.academic_year} ${report.semester})`,
+          },
+        });
+
+        const chatPayload = {
+          message_id: verdictMsg.message_id,
+          conversation_id: convo.conversation_id,
+          sender_user_id: grantorUserId,
+          sender_name: `${employee.first_name} ${employee.last_name}`.trim(),
+          sender_role: 'GRANTOR',
+          message_text: decisionText,
+          message_type: isApproved
+            ? 'SYSTEM_APPEAL_APPROVED'
+            : 'SYSTEM_APPEAL_DENIED',
+          metadata: verdictMetadata,
+          is_read: false,
+          sent_at: verdictMsg.sent_at,
+        };
+
+        this.eventsGateway.emitToRoom(
+          `conversation_${convo.conversation_id}`,
+          'chat:new_message',
+          chatPayload,
+        );
+        this.eventsGateway.emitToUser(
+          report.scholar_profile.user_id,
+          'chat:new_message',
+          chatPayload,
+        );
       }
     } catch (err) {
       this.logger.warn(`Failed to post verdict message: ${err}`);

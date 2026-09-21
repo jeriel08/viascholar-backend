@@ -355,6 +355,8 @@ model Message {
   conversation_id Int
   sender_user_id  Int
   message_text    String    @db.Text
+  message_type    String    @default("TEXT") @db.VarChar(50) // "TEXT", "SYSTEM_APPEAL_SUBMITTED", "SYSTEM_APPEAL_APPROVED", "SYSTEM_APPEAL_DENIED"
+  metadata        Json?
   is_read         Boolean   @default(false)
   sent_at         DateTime  @default(now())
   read_at         DateTime?

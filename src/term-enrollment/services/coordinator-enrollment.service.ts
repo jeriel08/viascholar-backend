@@ -141,6 +141,12 @@ export class CoordinatorEnrollmentService {
       );
     }
 
+    if (enrollment.status === 'APPROVED' || enrollment.status === 'COMPLETED') {
+      throw new BadRequestException(
+        `Term enrollment #${enrollmentId} has already been reviewed and endorsed.`,
+      );
+    }
+
     if (dto.action === EnrollmentReviewAction.APPROVE) {
       const approvedAmount =
         dto.approved_amount ?? Number(enrollment.total_assessment);

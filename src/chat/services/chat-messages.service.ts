@@ -107,6 +107,8 @@ export class ChatMessagesService {
           'User',
         sender_role: m.sender_user.role,
         message_text: m.message_text,
+        message_type: m.message_type || 'TEXT',
+        metadata: m.metadata || undefined,
         is_read: m.is_read,
         sent_at: m.sent_at,
         read_at: m.read_at,
@@ -203,6 +205,8 @@ export class ChatMessagesService {
       sender_name: senderName,
       sender_role: senderRole,
       message_text: message.message_text,
+      message_type: message.message_type || 'TEXT',
+      metadata: message.metadata || undefined,
       is_read: false,
       sent_at: message.sent_at,
     };

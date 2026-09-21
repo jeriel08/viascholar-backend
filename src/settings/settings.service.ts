@@ -451,11 +451,11 @@ export class SettingsService implements OnModuleInit {
         passing - ((normalizedPercent - 75) / 25) * (passing - highest);
       return gwa <= Number(thresholdGwa.toFixed(2));
     } else {
-      // Ascending scale (e.g. UM 4.0: 4.0 highest, 2.0 passing at 75%, 3.00 retention at 90%)
+      // Ascending scale (e.g. UM 4.0: 4.0 highest, 2.0 passing at 75%, 3.50 retention at 90-95%)
       const thresholdGwa =
         normalizedPercent <= 90
-          ? passing + ((normalizedPercent - 75) / 15) * (3.0 - passing)
-          : 3.0 + ((normalizedPercent - 90) / 10) * (highest - 3.0);
+          ? passing + ((normalizedPercent - 75) / 15) * 1.5
+          : 3.5 + ((normalizedPercent - 90) / 10) * (highest - 3.5);
       return gwa >= Number(thresholdGwa.toFixed(2));
     }
   }

@@ -42,6 +42,48 @@ export class ScholarEnrollmentService {
     return scholar;
   }
 
+  private async getAcademicStandingLock(scholarProfileId: number) {
+    const latestFlaggedReport = await this.prisma.gradeReport.findFirst({
+      where: {
+        scholar_profile_id: scholarProfileId,
+        status: 'FLAGGED',
+        appeal_status: { not: 'APPROVED' },
+      },
+      orderBy: { submitted_at: 'desc' },
+    });
+
+    if (!latestFlaggedReport) {
+      return { is_locked: false };
+    }
+
+    const appealStatus = latestFlaggedReport.appeal_status;
+    let reason = 'APPEAL_REQUIRED';
+    let message =
+      'Your academic standing is under review due to a flagged grade report. Please submit a Second Chance Appeal before enrolling for the next term.';
+
+    if (appealStatus === 'PENDING_GRANTOR') {
+      reason = 'APPEAL_PENDING';
+      message =
+        "Your academic appeal has been submitted and is awaiting the Grantor's verdict. Start-of-term enrollment is locked until your appeal verdict is decided.";
+    } else if (appealStatus === 'DENIED') {
+      reason = 'DISCONTINUED';
+      message =
+        'Your scholarship agreement has been discontinued following an appeal denial.';
+    }
+
+    return {
+      is_locked: true,
+      reason,
+      appeal_status: appealStatus,
+      report_id: latestFlaggedReport.report_id,
+      academic_year: latestFlaggedReport.academic_year,
+      semester: latestFlaggedReport.semester,
+      gpa: Number(latestFlaggedReport.gpa),
+      evaluation_flag: latestFlaggedReport.evaluation_flag,
+      message,
+    };
+  }
+
   // 1. Get current or latest enrollment draft/submission
   async getCurrentEnrollment(
     userId: number,
@@ -49,6 +91,8 @@ export class ScholarEnrollmentService {
     semester?: string,
   ) {
     const scholar = await this.getScholarProfile(userId);
+
+    const academicLock = await this.getAcademicStandingLock(scholar.profile_id);
 
     const whereClause: any = { scholar_profile_id: scholar.profile_id };
     if (academicYear && semester) {
@@ -126,12 +170,17 @@ export class ScholarEnrollmentService {
       enrollment,
       completed_previous_enrollment: completedEnrollment,
       prospectus_frozen: scholar.prospectus?.is_frozen ?? false,
+      academic_lock: academicLock,
     };
   }
 
   // 2. Upload and parse COR document
   async uploadAndParseCor(userId: number, file: Express.Multer.File) {
     const scholar = await this.getScholarProfile(userId);
+    const lock = await this.getAcademicStandingLock(scholar.profile_id);
+    if (lock.is_locked) {
+      throw new BadRequestException(lock.message);
+    }
     if (!file) throw new BadRequestException('No COR file uploaded.');
 
     // Upload to Cloudinary
@@ -247,6 +296,10 @@ export class ScholarEnrollmentService {
   // 3. Upload and parse SOA document
   async uploadAndParseSoa(userId: number, file: Express.Multer.File) {
     const scholar = await this.getScholarProfile(userId);
+    const lock = await this.getAcademicStandingLock(scholar.profile_id);
+    if (lock.is_locked) {
+      throw new BadRequestException(lock.message);
+    }
     if (!file) throw new BadRequestException('No SOA file uploaded.');
 
     const uploadRes = await this.cloudinaryService.uploadDocument(
@@ -388,6 +441,10 @@ export class ScholarEnrollmentService {
   // 4. Upload and parse Consolidated COR+SOA document
   async uploadAndParseConsolidated(userId: number, file: Express.Multer.File) {
     const scholar = await this.getScholarProfile(userId);
+    const lock = await this.getAcademicStandingLock(scholar.profile_id);
+    if (lock.is_locked) {
+      throw new BadRequestException(lock.message);
+    }
     if (!file) throw new BadRequestException('No consolidated file uploaded.');
 
     const uploadRes = await this.cloudinaryService.uploadDocument(
@@ -580,6 +637,10 @@ export class ScholarEnrollmentService {
   // 5. Save or update draft enrollment without submitting
   async saveDraft(userId: number, dto: SubmitEnrollmentDto) {
     const scholar = await this.getScholarProfile(userId);
+    const lock = await this.getAcademicStandingLock(scholar.profile_id);
+    if (lock.is_locked) {
+      throw new BadRequestException(lock.message);
+    }
     const auditResult = await this.auditEngineService.runAudit(
       scholar.profile_id,
       dto.enrolled_subjects,
@@ -660,6 +721,10 @@ export class ScholarEnrollmentService {
   // 8. Submit final term enrollment for review
   async submitEnrollment(userId: number, dto: SubmitEnrollmentDto) {
     const scholar = await this.getScholarProfile(userId);
+    const lock = await this.getAcademicStandingLock(scholar.profile_id);
+    if (lock.is_locked) {
+      throw new BadRequestException(lock.message);
+    }
     const auditResult = await this.auditEngineService.runAudit(
       scholar.profile_id,
       dto.enrolled_subjects,

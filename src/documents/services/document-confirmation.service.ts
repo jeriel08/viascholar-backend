@@ -64,6 +64,26 @@ export class DocumentConfirmationService {
       );
     }
 
+    if (doc.document_type === 'CCG') {
+      const unresolvedReport = await this.prisma.gradeReport.findFirst({
+        where: {
+          scholar_profile_id: doc.scholar_profile_id,
+          status: 'FLAGGED',
+          appeal_status: { not: 'APPROVED' },
+        },
+        orderBy: { submitted_at: 'desc' },
+      });
+      if (unresolvedReport) {
+        const msg =
+          unresolvedReport.appeal_status === 'PENDING_GRANTOR'
+            ? "Grade submission is paused while your academic appeal is awaiting the Grantor's verdict."
+            : unresolvedReport.appeal_status === 'DENIED'
+              ? 'Grade submission is unavailable because your scholarship was discontinued.'
+              : 'Grade submission is paused. Please submit and resolve your Second Chance Appeal for your flagged grade report first.';
+        throw new BadRequestException(msg);
+      }
+    }
+
     const extracted = (doc.extracted_data ?? {}) as ExtractedDocData;
     const generalAverage =
       dto.general_average != null
