@@ -62,6 +62,15 @@ export class UsersController {
     return this.usersService.getCoordinatorDashboardSummary(req.user.user_id);
   }
 
+  @Get('grantor/dashboard')
+  @Roles(Role.GRANTOR, Role.ADMIN)
+  @ApiOperation({
+    summary: 'Get aggregated metrics & verdict queues for Grantor Dashboard',
+  })
+  getGrantorDashboard(@Request() req) {
+    return this.usersService.getGrantorDashboardSummary(req.user.user_id);
+  }
+
   @Get(':id')
   @Roles(Role.ADMIN, Role.COORDINATOR)
   @ApiOperation({ summary: 'Get user details by ID' })
