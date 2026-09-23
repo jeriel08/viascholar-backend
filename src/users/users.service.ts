@@ -595,29 +595,27 @@ export class UsersService {
               ? Number((totalW / totalU).toFixed(2))
               : Number(graded[0].grade);
         } else {
-          gwa = gradeThreshold;
+          gwa = scholar.school_grading_system?.highest_grade
+            ? Number(scholar.school_grading_system.highest_grade)
+            : (scholar.school_grading_system?.grading_scale === 'NUMERIC_5_POINT' ? 1.0 : (scholar.school_grading_system?.grading_scale === 'NUMERIC_4_POINT' ? 4.0 : gradeThreshold));
         }
       } else {
-        gwa = gradeThreshold;
+        gwa = scholar.school_grading_system?.highest_grade
+          ? Number(scholar.school_grading_system.highest_grade)
+          : (scholar.school_grading_system?.grading_scale === 'NUMERIC_5_POINT' ? 1.0 : (scholar.school_grading_system?.grading_scale === 'NUMERIC_4_POINT' ? 4.0 : gradeThreshold));
       }
 
-      // Health Standing
-      const isOnProbation =
-        scholar.academic_baseline_status === 'ON_PROBATION' ||
-        latestReport?.appeal_status === 'APPROVED';
-      const isFlagged =
-        latestReport &&
-        (!latestReport.is_eligible ||
-          latestReport.status === 'FLAGGED' ||
-          latestReport.evaluation_flag === 'ACADEMIC_FAILURE');
-
-      let health: 'good' | 'warn' | 'bad' = 'good';
-      if (isOnProbation) {
-        health = 'warn';
-        probationCount++;
-      } else if (isFlagged) {
-        health = 'bad';
+      // Health Standing with accurate school grading scale
+      const health = this.evaluateScholarHealth(
+        gwa,
+        scholar,
+        latestReport,
+        gradeThreshold,
+      );
+      if (health === 'bad') {
         actionRequiredCount++;
+      } else if (health === 'warn') {
+        probationCount++;
       } else {
         goodStandingCount++;
       }
@@ -1007,30 +1005,28 @@ export class UsersService {
               ? Number((totalW / totalU).toFixed(2))
               : Number(graded[0].grade);
         } else {
-          gwa = gradeThreshold;
+          gwa = scholar.school_grading_system?.highest_grade
+            ? Number(scholar.school_grading_system.highest_grade)
+            : (scholar.school_grading_system?.grading_scale === 'NUMERIC_5_POINT' ? 1.0 : (scholar.school_grading_system?.grading_scale === 'NUMERIC_4_POINT' ? 4.0 : gradeThreshold));
         }
       } else {
-        gwa = gradeThreshold;
+        gwa = scholar.school_grading_system?.highest_grade
+          ? Number(scholar.school_grading_system.highest_grade)
+          : (scholar.school_grading_system?.grading_scale === 'NUMERIC_5_POINT' ? 1.0 : (scholar.school_grading_system?.grading_scale === 'NUMERIC_4_POINT' ? 4.0 : gradeThreshold));
       }
 
-      const isOnProbation =
-        scholar.academic_baseline_status === 'ON_PROBATION' ||
-        latestReport?.appeal_status === 'APPROVED';
-      const isFlagged =
-        latestReport &&
-        (latestReport.evaluation_flag === 'BELOW_PASSING_MARK' ||
-          latestReport.evaluation_flag === 'ACADEMIC_FAILURE' ||
-          latestReport.status === 'FLAGGED');
-
-      let health: 'good' | 'warn' | 'bad' = 'good';
-      if (isFlagged || (gwa > 0 && gwa < gradeThreshold - 5)) {
-        health = 'bad';
+      // Health Standing with accurate school grading scale
+      const health = this.evaluateScholarHealth(
+        gwa,
+        scholar,
+        latestReport,
+        gradeThreshold,
+      );
+      if (health === 'bad') {
         actionRequiredCount++;
-      } else if (isOnProbation || (gwa > 0 && gwa < gradeThreshold)) {
-        health = 'warn';
+      } else if (health === 'warn') {
         probationCount++;
       } else {
-        health = 'good';
         goodStandingCount++;
       }
 
@@ -1150,6 +1146,107 @@ export class UsersService {
         last_message_at: c.messages[0]?.sent_at?.toISOString() || c.updated_at?.toISOString(),
       })),
     };
+  }
+
+  /**
+   * Evaluates if computed GWA meets retention threshold across different grading scales.
+   * e.g., A 90% threshold translates to:
+   * - 90.00 on a 100% percentage scale
+   * - 3.50 on UM's 4.0 scale (where 2.0 = 75%, 4.0 = 100%, 3.50 = 90%)
+   * - 1.80 on USEP / UP 5.0 scale (where 3.0 = 75%, 1.0 = 100%, 1.80 = 90%)
+   */
+  evaluateGwaThreshold(
+    gwa: number,
+    globalThresholdPercent: number,
+    schoolConfig?: any,
+  ): boolean {
+    if (!schoolConfig || schoolConfig.grading_scale === 'PERCENTAGE_100') {
+      return gwa >= globalThresholdPercent;
+    }
+
+    const highest = Number(schoolConfig.highest_grade ?? 1.0);
+    const passing = Number(schoolConfig.passing_grade ?? 3.0);
+    const failing = Number(schoolConfig.failing_grade ?? 5.0);
+
+    const normalizedPercent = Math.max(
+      75,
+      Math.min(100, globalThresholdPercent),
+    );
+
+    if (highest < failing) {
+      // Inverted 5-point scale (e.g. 1.0 highest, 3.0 passing at 75%)
+      // 90% translates to: 3.0 - ((90 - 75) / 25) * (3.0 - 1.0) = 1.80
+      const thresholdGwa =
+        passing - ((normalizedPercent - 75) / 25) * (passing - highest);
+      return gwa <= Number(thresholdGwa.toFixed(2));
+    } else {
+      // Ascending scale (e.g. UM 4.0: 4.0 highest, 2.0 passing at 75%, 3.50 retention at 90%)
+      const thresholdGwa =
+        normalizedPercent <= 90
+          ? passing + ((normalizedPercent - 75) / 15) * 1.5
+          : 3.5 + ((normalizedPercent - 90) / 10) * (highest - 3.5);
+      return gwa >= Number(thresholdGwa.toFixed(2));
+    }
+  }
+
+  evaluateScholarHealth(
+    gwa: number,
+    scholar: any,
+    latestReport: any,
+    globalThresholdPercent: number,
+  ): 'good' | 'warn' | 'bad' {
+    const isOnProbation =
+      scholar.academic_baseline_status === 'ON_PROBATION' ||
+      latestReport?.appeal_status === 'APPROVED';
+
+    const isFlagged =
+      latestReport &&
+      (latestReport.status === 'FLAGGED' ||
+        latestReport.evaluation_flag === 'ACADEMIC_FAILURE' ||
+        latestReport.evaluation_flag === 'BELOW_PASSING_MARK' ||
+        latestReport.is_eligible === false);
+
+    const schoolConfig = scholar.school_grading_system;
+    const highest = Number(
+      schoolConfig?.highest_grade ??
+        (schoolConfig?.grading_scale === 'NUMERIC_5_POINT'
+          ? 1.0
+          : schoolConfig?.grading_scale === 'NUMERIC_4_POINT'
+            ? 4.0
+            : 100),
+    );
+    const passing = Number(
+      schoolConfig?.passing_grade ??
+        (schoolConfig?.grading_scale === 'NUMERIC_5_POINT'
+          ? 3.0
+          : schoolConfig?.grading_scale === 'NUMERIC_4_POINT'
+            ? 2.0
+            : 75),
+    );
+    const failing = Number(
+      schoolConfig?.failing_grade ??
+        (schoolConfig?.grading_scale === 'NUMERIC_5_POINT'
+          ? 5.0
+          : schoolConfig?.grading_scale === 'NUMERIC_4_POINT'
+            ? 1.0
+            : 50),
+    );
+
+    const isInverted = highest < failing;
+    const isFailingGrade = isInverted ? gwa > passing : gwa < passing;
+
+    const meetsRetention = this.evaluateGwaThreshold(
+      gwa,
+      globalThresholdPercent,
+      schoolConfig,
+    );
+
+    if (isFlagged || (gwa > 0 && isFailingGrade)) {
+      return 'bad';
+    } else if (isOnProbation || (gwa > 0 && !meetsRetention)) {
+      return 'warn';
+    }
+    return 'good';
   }
 }
 
