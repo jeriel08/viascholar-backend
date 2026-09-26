@@ -78,7 +78,19 @@ export class UsersService {
         is_active: true,
         last_login_at: true,
         created_at: true,
-        scholar_profile: true,
+        scholar_profile: {
+          include: {
+            grade_reports: {
+              orderBy: { submitted_at: 'desc' },
+              take: 1,
+              select: {
+                report_id: true,
+                gpa: true,
+                status: true,
+              },
+            },
+          },
+        },
         employee: true,
       },
     });
@@ -97,7 +109,19 @@ export class UsersService {
         is_active: true,
         last_login_at: true,
         created_at: true,
-        scholar_profile: true,
+        scholar_profile: {
+          include: {
+            grade_reports: {
+              orderBy: { submitted_at: 'desc' },
+              take: 1,
+              select: {
+                report_id: true,
+                gpa: true,
+                status: true,
+              },
+            },
+          },
+        },
         employee: true,
       },
     });
