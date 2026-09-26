@@ -201,7 +201,14 @@ export class ApplicationsService {
         scholar_profile: {
           include: {
             _count: {
-              select: { documents: true },
+              select: { documents: true, contracts: true },
+            },
+            contracts: {
+              select: {
+                contract_id: true,
+                contract_number: true,
+                status: true,
+              },
             },
           },
         },
