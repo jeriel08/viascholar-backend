@@ -27,10 +27,11 @@ const DOCUMENT_DATA_SCHEMA = {
         'TRANSCRIPT_OF_RECORDS',
         'CERTIFICATE_OF_GRADES',
         'STATEMENT_OF_ACCOUNT',
+        'CERTIFICATE_OF_REGISTRATION',
         'OTHER',
       ],
       description:
-        "Classification of the document. 'FORM_138' for DepEd Form 138 / SF9-SHS / SF9-JHS / Form 9 / Form 137 / Progress Report Card; 'TRANSCRIPT_OF_RECORDS' for College Official Transcript of Records (TOR); 'CERTIFICATE_OF_GRADES' for Certified Copy of Grades (COG) / Grade Slip; 'STATEMENT_OF_ACCOUNT' for billing statements; 'OTHER' for unrelated or other documents.",
+        "Classification of the document. 'FORM_138' for DepEd Form 138 / SF9-SHS / SF9-JHS / Form 9 / Form 137 / Progress Report Card; 'TRANSCRIPT_OF_RECORDS' for College Official Transcript of Records (TOR); 'CERTIFICATE_OF_GRADES' for Certified Copy of Grades (COG) / CCG / Grade Slip; 'STATEMENT_OF_ACCOUNT' for billing statements / tuition assessments; 'CERTIFICATE_OF_REGISTRATION' for Certificate of Registration (COR) / Certificate of Matriculation (COM) / Class Schedule; 'OTHER' for unrelated or other documents.",
     },
     student_name: {
       type: 'string',
@@ -502,8 +503,9 @@ STRICT EXTRACTION INSTRUCTIONS:
    - Check the top-left, top-center header, or document titles:
      * "SF9", "SF9-SHS", "SF9-JHS", "Form 138", "Form 9", "Form 137", "Progress Report Card", "Learner's Progress Report Card", "DepEd" -> "FORM_138"
      * "Official Transcript of Records", "Transcript of Records", "TOR", "Permanent Record" -> "TRANSCRIPT_OF_RECORDS"
-     * "Certified Copy of Grades", "Certificate of Grades", "COG", "Grade Slip", "Report of Rating" -> "CERTIFICATE_OF_GRADES"
-     * "Statement of Account", "Assessment Form", "Billing" -> "STATEMENT_OF_ACCOUNT"
+     * "Certified Copy of Grades", "Certificate of Grades", "COG", "CCG", "Grade Slip", "Report of Rating", "Semester Grades", "Semestral Grade Report" -> "CERTIFICATE_OF_GRADES"
+     * "Statement of Account", "Assessment Form", "Tuition Assessment", "Student Ledger", "Billing" -> "STATEMENT_OF_ACCOUNT"
+     * "Certificate of Registration", "Certificate of Matriculation", "COR", "COM", "Registration Form", "Class Schedule" -> "CERTIFICATE_OF_REGISTRATION"
      * Other documents -> "OTHER"
 2. Senior High / Junior High (Form 138 / Form 9 / SF9):
    - Check header metadata fields for Grade, Section, Track, and Strand:
@@ -523,7 +525,11 @@ STRICT EXTRACTION INSTRUCTIONS:
      * If subject grades are numbers like 1.25, 1.50, 1.75, 2.00, 2.50, 3.00, the scale is NUMERIC_5_POINT (USEP/UP/ADDU scale: 1.00 is highest, 3.00 is passing, 5.00 is failing).
      * If subject grades are numbers like 85, 90, 92, the scale is PERCENTAGE_100 (DepEd scale: 100 is highest, 75 is passing).
    - Extract special status codes listed in the legend (e.g., {"7.1": "LACKING_PAYMENT", "7.2": "LACKING_REQUIREMENTS", "9.0": "DROPPED", "INC": "INCOMPLETE", "PSD": "PASSED", "DRP": "DROPPED", "TWE": "TOTAL_WITHDRAWAL"}) into 'special_codes'.
-5. Format:
+5. Official Signature & Certification Seal ('has_signature'):
+   - Look carefully for official signatures, digital registrar signatures, dean/principal signatures, registrar stamp impressions, "CERTIFIED TRUE COPY" stamps, or university dry seals.
+   - Return true if any authorized signature, stamp, or seal is visible on the document.
+   - Return false if the document has NO signature, NO stamp, and NO seal (e.g. an uncertified portal screenshot, self-service web printout without signature, or draft).
+6. Format:
    - Ensure numeric values for grades, units, and averages are numbers (e.g. 1.75, 88.5, 90.0), not stringified numbers.
    - If a field is not found or not applicable, set it to null.`;
 
@@ -650,7 +656,7 @@ Extract the student identification, semester, enrolled subjects table, and finan
 IMPORTANT EXTRACTION GUIDELINES:
 1. Philippine university receipts (e.g. from University of Mindanao / UM, Ateneo, UIC, USEP, HCDC) are frequently printed on continuous pre-printed dot-matrix forms or thermal paper slips.
 2. Text and numbers may be printed out of place, misaligned with pre-printed form boxes, or overlapping cashier stamps ("PAID", date stamps, cashier signature).
-3. The Official Receipt Number (OR #) is frequently composite, hyphenated, or alphanumeric with trailing letters (e.g. '46127-004084B', '109284-B', '0048192'). Extract the complete, exact alphanumeric string.
+3. The Official Receipt Number (OR #) is frequently composite, hyphenated, or alphanumeric with trailing letters (e.g. '46127-004084B', '109284-B', '0048192'). Extract the complete, exact alphanumeric string. CRITICAL: Do NOT confuse the pre-printed booklet/serial number (e.g. '3236889' printed in red at the top right) with the university cashier's electronic OR number (e.g. '46127-004084B'). Always prioritize the cashier-printed or portal-recorded alphanumeric transaction code (often formatted as StudentID-SequenceSeries like '46127-004084B' or 'OR-102948') over any pre-printed booklet sequence number.
 4. Extract the Student ID Number (e.g. '46127' or '2021-00123'), full Student/Payor Name, total numeric Amount Paid (PHP), cashier transaction date (YYYY-MM-DD), issuing University Name, and Payment Mode (e.g., 'CHECK', 'CASH').`;
 
     const rawData = await this.executeExtraction<ExtractedReceiptData>(

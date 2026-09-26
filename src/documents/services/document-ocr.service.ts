@@ -104,29 +104,66 @@ export class DocumentOcrService {
 
       let isInvalidOrMismatchedType = false;
       let mismatchRejectionReason: string | null = null;
+      const isCcgDoc = doc.document_type === 'CCG' || documentType === 'CCG';
 
-      if (
-        detectedDocType === 'STATEMENT_OF_ACCOUNT' ||
-        detectedDocType === 'OTHER'
-      ) {
-        isInvalidOrMismatchedType = true;
-        mismatchRejectionReason = `Invalid document type: The uploaded document appears to be ${detectedDocType === 'STATEMENT_OF_ACCOUNT' ? 'a Statement of Account / Billing' : 'an unsupported document'}, not an official grade report or transcript. Please upload a valid grade record.`;
-      } else if (isUpperclassman && detectedDocType === 'FORM_138') {
-        isInvalidOrMismatchedType = true;
-        mismatchRejectionReason = `Document type mismatch: As a Year ${scholarYearLevel} scholar, you are required to upload a Transcript of Records (TOR) or Certificate of Grades (COG). A High School Report Card (Form 138/SF9) was detected.`;
-      } else if (
-        !isUpperclassman &&
-        doc.document_type !== 'CCG' &&
-        documentType !== 'CCG' &&
-        (detectedDocType === 'TRANSCRIPT_OF_RECORDS' ||
-          detectedDocType === 'CERTIFICATE_OF_GRADES')
-      ) {
-        isInvalidOrMismatchedType = true;
-        mismatchRejectionReason = `Document type mismatch: As a 1st year applicant, you are required to upload your Senior High School Form 138 or Form 9 report card. A college transcript / certificate of grades was detected.`;
+      if (isCcgDoc) {
+        if (detectedDocType === 'STATEMENT_OF_ACCOUNT') {
+          isInvalidOrMismatchedType = true;
+          mismatchRejectionReason =
+            'Invalid document type: You uploaded a Statement of Account / Tuition Assessment instead of a Certified Copy of Grades (CCG). Please upload your official grade slip or transcript from your registrar.';
+        } else if (detectedDocType === 'CERTIFICATE_OF_REGISTRATION') {
+          isInvalidOrMismatchedType = true;
+          mismatchRejectionReason =
+            'Invalid document type: You uploaded a Certificate of Registration (COR) / Enrollment Schedule instead of a Certified Copy of Grades (CCG). Please upload your official grade slip or transcript from your registrar.';
+        } else if (isUpperclassman && detectedDocType === 'FORM_138') {
+          isInvalidOrMismatchedType = true;
+          mismatchRejectionReason =
+            `Document type mismatch: As a Year ${scholarYearLevel} scholar, a college Certified Copy of Grades (CCG) or Transcript of Records (TOR) is required. A High School Report Card (Form 138/SF9) was detected.`;
+        } else if (detectedDocType === 'OTHER') {
+          isInvalidOrMismatchedType = true;
+          mismatchRejectionReason =
+            'Unsupported document: The uploaded file is not recognized as a Certified Copy of Grades (CCG) or Transcript of Records (TOR). Please ensure you upload an official registrar grade slip.';
+        } else if (extractedData.has_signature === false) {
+          isInvalidOrMismatchedType = true;
+          mismatchRejectionReason =
+            'Uncertified grade slip: No registrar signature, university seal, or official certification stamp was detected on this document. A Certified Copy of Grades (CCG) must be signed or stamped by the university registrar.';
+        }
+      } else {
+        if (
+          detectedDocType === 'STATEMENT_OF_ACCOUNT' ||
+          detectedDocType === 'CERTIFICATE_OF_REGISTRATION' ||
+          detectedDocType === 'OTHER'
+        ) {
+          isInvalidOrMismatchedType = true;
+          mismatchRejectionReason = `Invalid document type: The uploaded document appears to be ${
+            detectedDocType === 'STATEMENT_OF_ACCOUNT'
+              ? 'a Statement of Account / Billing'
+              : detectedDocType === 'CERTIFICATE_OF_REGISTRATION'
+                ? 'a Certificate of Registration / Enrollment Schedule'
+                : 'an unsupported document'
+          }, not an official grade report or transcript. Please upload a valid grade record.`;
+        } else if (isUpperclassman && detectedDocType === 'FORM_138') {
+          isInvalidOrMismatchedType = true;
+          mismatchRejectionReason = `Document type mismatch: As a Year ${scholarYearLevel} scholar, you are required to upload a Transcript of Records (TOR) or Certificate of Grades (COG). A High School Report Card (Form 138/SF9) was detected.`;
+        } else if (
+          !isUpperclassman &&
+          (detectedDocType === 'TRANSCRIPT_OF_RECORDS' ||
+            detectedDocType === 'CERTIFICATE_OF_GRADES')
+        ) {
+          isInvalidOrMismatchedType = true;
+          mismatchRejectionReason = `Document type mismatch: As a 1st year applicant, you are required to upload your Senior High School Form 138 or Form 9 report card. A college transcript / certificate of grades was detected.`;
+        }
       }
 
       const hasGrades =
         Array.isArray(extractedData.grades) && extractedData.grades.length > 0;
+
+      if (!hasGrades && !isInvalidOrMismatchedType) {
+        isInvalidOrMismatchedType = true;
+        mismatchRejectionReason =
+          'No course grades detected: The uploaded document does not contain readable course ratings or grades. Please upload a clear copy of your Certified Copy of Grades (CCG).';
+      }
+
       const validationStatus =
         hasGrades && !isInvalidOrMismatchedType
           ? 'PASSED_PRECHECK'

@@ -4,7 +4,7 @@ export const OFFICIAL_RECEIPT_DATA_SCHEMA = {
     or_number: {
       type: 'string',
       description:
-        "Official Receipt (OR) Number printed on the receipt. In Philippine universities (e.g. University of Mindanao / UM, Ateneo, UIC, USEP), this can be composite, hyphenated, or alphanumeric with trailing letters (e.g. '46127-004084B', 'OR-102948', '0048192', '46127004084B'). Look for labels like 'O.R. NO.', 'OR #', 'OFFICIAL RECEIPT NO.', or printed serial numbers at the top right, header, or footer.",
+        "Official Receipt (OR) Number printed by the university cashier. In Philippine universities (e.g. University of Mindanao / UM, Ateneo, UIC, USEP), this is typically an electronic composite or alphanumeric code such as '46127-004084B' (StudentID-SequenceSeries), '109284-B', or 'OR-102948'. DO NOT extract the generic pre-printed booklet/BIR control serial number (e.g. '3236889' printed in red at the top-right). Prioritize the cashier transaction or validation line code.",
     },
     student_id: {
       type: 'string',
