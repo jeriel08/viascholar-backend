@@ -117,8 +117,7 @@ export class DocumentOcrService {
             'Invalid document type: You uploaded a Certificate of Registration (COR) / Enrollment Schedule instead of a Certified Copy of Grades (CCG). Please upload your official grade slip or transcript from your registrar.';
         } else if (isUpperclassman && detectedDocType === 'FORM_138') {
           isInvalidOrMismatchedType = true;
-          mismatchRejectionReason =
-            `Document type mismatch: As a Year ${scholarYearLevel} scholar, a college Certified Copy of Grades (CCG) or Transcript of Records (TOR) is required. A High School Report Card (Form 138/SF9) was detected.`;
+          mismatchRejectionReason = `Document type mismatch: As a Year ${scholarYearLevel} scholar, a college Certified Copy of Grades (CCG) or Transcript of Records (TOR) is required. A High School Report Card (Form 138/SF9) was detected.`;
         } else if (detectedDocType === 'OTHER') {
           isInvalidOrMismatchedType = true;
           mismatchRejectionReason =

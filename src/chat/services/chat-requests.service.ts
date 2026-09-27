@@ -8,12 +8,14 @@ import { PrismaService } from '../../prisma/prisma.service.js';
 import { EventsGateway } from '../../events/events.gateway.js';
 import { RequestGrantorDto } from '../dto/request-grantor.dto.js';
 import { RespondRequestDto } from '../dto/respond-request.dto.js';
+import { NotificationsService } from '../../notifications/notifications.service.js';
 
 @Injectable()
 export class ChatRequestsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly eventsGateway: EventsGateway,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // Get all available coordinators for scholar directory
@@ -169,6 +171,13 @@ export class ChatRequestsService {
       reason: dto.reason,
     });
 
+    void this.notificationsService.notifyUser(dto.grantor_user_id, {
+      title: 'Message Access Request',
+      message: `${scholarName} requested permission to start a direct message thread with you.`,
+      category: 'chat',
+      link: '/grantMessage',
+    });
+
     return conversation;
   }
 
@@ -224,6 +233,13 @@ export class ChatRequestsService {
         respondedByUserId: userId,
       },
     );
+
+    void this.notificationsService.notifyUser(conversation.scholar_user_id, {
+      title: 'Message Request Update',
+      message: `Your message request was ${newStatus === 'ACTIVE' ? 'accepted! You can now chat.' : 'declined.'}`,
+      category: 'chat',
+      link: '/scholarMessage',
+    });
 
     this.eventsGateway.emitToRoom(
       `conversation_${conversationId}`,

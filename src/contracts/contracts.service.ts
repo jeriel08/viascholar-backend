@@ -16,6 +16,7 @@ import { ContractStatus } from '../generated/prisma/enums.js';
 import { CreateContractDto } from './dto/create-contract.dto.js';
 import { RequestContractChangesDto } from './dto/request-contract-changes.dto.js';
 import { EventsGateway } from '../events/events.gateway.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 export type { SignContractOptions };
 
@@ -29,6 +30,7 @@ export class ContractsService {
     private pdfStamperService: PdfStamperService,
     private contractSigningService: ContractSigningService,
     private eventsGateway: EventsGateway,
+    private notificationsService: NotificationsService,
   ) {}
 
   // 1. Staff creates a pending contract for a scholar with an approved application
@@ -126,7 +128,21 @@ export class ContractsService {
         'contract:created',
         contractPayload,
       );
+
+      void this.notificationsService.notifyUser(scholar.user_id, {
+        title: 'Scholarship Agreement Ready',
+        message: 'Your scholarship agreement is ready for review and signing!',
+        category: 'contract',
+        link: '/ApplicantsContract',
+      });
     }
+
+    void this.notificationsService.notifyStaff({
+      title: 'Scholarship Agreement Ready',
+      message: `A scholarship agreement has been prepared for ${studentName}.`,
+      category: 'contract',
+      link: '/CoordinatorApplicants',
+    });
 
     return contract;
   }

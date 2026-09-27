@@ -186,7 +186,10 @@ export class ActiveScholarsAnalyticsService {
 
       if (isOnProbation) {
         health = 'warn';
-      } else if (hasActiveUnresolvedFailure || (hasFailedSubject && !isOnProbation)) {
+      } else if (
+        hasActiveUnresolvedFailure ||
+        (hasFailedSubject && !isOnProbation)
+      ) {
         health = 'bad';
       } else if (hasMissingDocs || verifiedDocs < docs.length) {
         health = 'warn';

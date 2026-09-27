@@ -16,7 +16,7 @@ async function bootstrap() {
     process.env.FRONTEND_URL,
   ]
     .filter(Boolean)
-    .map((origin) => origin!.replace(/\/+$/, '')) as string[];
+    .map((origin) => origin!.replace(/\/+$/, ''));
 
   app.enableCsrfProtection({
     trustedOrigins: allowedOrigins,

@@ -10,6 +10,7 @@ import { MailService } from '../mail/mail.service.js';
 import { CreateApplicationDto } from './dto/create-application.dto.js';
 import { QueryApplicationsDto } from './dto/query-applications.dto.js';
 import { EventsGateway } from '../events/events.gateway.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 @Injectable()
 export class ApplicationsService {
@@ -18,6 +19,7 @@ export class ApplicationsService {
     private auditService: AuditService,
     private mailService: MailService,
     private eventsGateway: EventsGateway,
+    private notificationsService: NotificationsService,
   ) {}
 
   // 1. Scholar submits or updates their application details
@@ -140,6 +142,20 @@ export class ApplicationsService {
       stage: application.stage,
       status: application.status,
       submittedAt: new Date().toISOString(),
+    });
+
+    void this.notificationsService.notifyStaff({
+      title: 'New Application Submitted',
+      message: `A new application was submitted by ${studentName} for ${dto.scholarship_track}.`,
+      category: 'application',
+      link: '/CoordinatorApplicants',
+    });
+
+    void this.notificationsService.notifyUser(userId, {
+      title: 'Application Submitted',
+      message: `Your scholarship application for ${dto.scholarship_track} was submitted successfully!`,
+      category: 'application',
+      link: '/ApplicantsDashboard',
     });
 
     return application;

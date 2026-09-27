@@ -9,6 +9,7 @@ import { AuditService } from '../../audit/audit.service.js';
 import { MailService } from '../../mail/mail.service.js';
 import { UpdateApplicationStageDto } from '../dto/update-stage.dto.js';
 import { EventsGateway } from '../../events/events.gateway.js';
+import { NotificationsService } from '../../notifications/notifications.service.js';
 
 @Injectable()
 export class ApplicationStageService {
@@ -17,6 +18,7 @@ export class ApplicationStageService {
     private auditService: AuditService,
     private mailService: MailService,
     private eventsGateway: EventsGateway,
+    private notificationsService: NotificationsService,
   ) {}
 
   // Staff updates application stage (Review, Schedule Interview, Approve, Reject)
@@ -191,7 +193,23 @@ export class ApplicationStageService {
         'application:stage_updated',
         stageEventPayload,
       );
+      void this.notificationsService.notifyUser(
+        application.scholar_profile.user_id,
+        {
+          title: 'Milestone Updated',
+          message: `Your application has moved to ${dto.stage || dto.status}.`,
+          category: 'application',
+          link: '/ApplicantsDashboard',
+        },
+      );
     }
+
+    void this.notificationsService.notifyStaff({
+      title: 'Milestone Updated',
+      message: `${studentName ? `${studentName}'s application` : 'Application'} moved to ${dto.stage || dto.status}.`,
+      category: 'application',
+      link: '/CoordinatorApplicants',
+    });
 
     return updated;
   }

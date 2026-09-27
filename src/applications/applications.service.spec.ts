@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { MailService } from '../mail/mail.service.js';
 import { EventsGateway } from '../events/events.gateway.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 describe('ApplicationsService', () => {
   let service: ApplicationsService;
@@ -27,6 +28,13 @@ describe('ApplicationsService', () => {
           useValue: {
             emitToStaff: jest.fn(),
             emitToUser: jest.fn(),
+          },
+        },
+        {
+          provide: NotificationsService,
+          useValue: {
+            notifyStaff: jest.fn(),
+            notifyUser: jest.fn(),
           },
         },
       ],

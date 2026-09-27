@@ -9,12 +9,14 @@ import { CreatePostDto } from './dto/create-post.dto.js';
 import { CreateCommentDto } from './dto/create-comment.dto.js';
 import { QueryPostsDto } from './dto/query-posts.dto.js';
 import { Prisma } from '../generated/prisma/client.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 @Injectable()
 export class ForumService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly eventsGateway: EventsGateway,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // 1. Create a new forum discussion or question
@@ -283,6 +285,13 @@ export class ForumService {
           comment: commentPayload,
         },
       );
+
+      void this.notificationsService.notifyUser(post.author_user_id, {
+        title: 'Forum Discussion Reply',
+        message: `${cProfile?.first_name || 'Someone'} replied to "${post.title}".`,
+        category: 'forum',
+        link: '/SchoForum',
+      });
     }
 
     return commentPayload;

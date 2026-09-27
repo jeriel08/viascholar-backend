@@ -48,7 +48,9 @@ export class UsersController {
 
   @Get('admin/dashboard')
   @Roles(Role.ADMIN)
-  @ApiOperation({ summary: 'Get aggregated metrics & data for Admin Dashboard' })
+  @ApiOperation({
+    summary: 'Get aggregated metrics & data for Admin Dashboard',
+  })
   getAdminDashboard() {
     return this.usersService.getAdminDashboardSummary();
   }

@@ -67,7 +67,10 @@ export class AnalyticsService {
     const mean = Number((sum / count).toFixed(2));
 
     // Variance: sum((x - mean)^2) / N
-    const sumSqDiff = gwas.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0);
+    const sumSqDiff = gwas.reduce(
+      (acc, val) => acc + Math.pow(val - mean, 2),
+      0,
+    );
     const variance = Number((sumSqDiff / count).toFixed(4));
     const standardDeviation = Number(Math.sqrt(variance).toFixed(2));
 
@@ -82,14 +85,18 @@ export class AnalyticsService {
       const upper = Math.ceil(idx);
       const weight = idx - lower;
       if (lower === upper) return arr[lower];
-      return Number((arr[lower] * (1 - weight) + arr[upper] * weight).toFixed(2));
+      return Number(
+        (arr[lower] * (1 - weight) + arr[upper] * weight).toFixed(2),
+      );
     };
 
     const q1 = getPercentile(sorted, 0.25);
     const median = getPercentile(sorted, 0.5);
     const q3 = getPercentile(sorted, 0.75);
 
-    const goodStandingCount = scholars.filter((s) => s.health === 'good').length;
+    const goodStandingCount = scholars.filter(
+      (s) => s.health === 'good',
+    ).length;
     const probationCount = scholars.filter((s) => s.health === 'warn').length;
     const flaggedCount = scholars.filter((s) => s.health === 'bad').length;
 
@@ -118,74 +125,79 @@ export class AnalyticsService {
    * Computes Mean GWA, Standard Deviation, Compliance Rate, Percentiles, Document Compliance, and Disbursements.
    */
   async getDescriptiveAnalytics(query: AnalyticsQueryDto) {
-    const [systemSetting, scholarProfiles, applications, disbursements, documents] =
-      await Promise.all([
-        this.prisma.systemSetting.findFirst(),
-        this.prisma.scholarProfile.findMany({
-          where: {
+    const [
+      systemSetting,
+      scholarProfiles,
+      applications,
+      disbursements,
+      documents,
+    ] = await Promise.all([
+      this.prisma.systemSetting.findFirst(),
+      this.prisma.scholarProfile.findMany({
+        where: {
+          user: { role: Role.SCHOLAR, is_active: true },
+          ...(query.schoolId ? { school_id: query.schoolId } : {}),
+          ...(query.track ? { scholarship_track: query.track } : {}),
+          ...(query.course ? { course_of_study: query.course } : {}),
+        },
+        include: {
+          user: { select: { user_id: true, email: true } },
+          school_grading_system: true,
+          grade_reports: {
+            orderBy: { submitted_at: 'desc' },
+            take: 1,
+          },
+          prospectus: {
+            include: {
+              subjects: {
+                where: { status: { in: ['PASSED', 'CREDITED'] } },
+                select: { units: true, grade: true },
+              },
+            },
+          },
+          documents: true,
+          disbursements: true,
+        },
+        orderBy: { profile_id: 'desc' },
+      }),
+      this.prisma.application.findMany({
+        where: {
+          scholar_profile: {
+            user: { role: Role.APPLICANT, is_active: true },
+          },
+        },
+        include: {
+          scholar_profile: {
+            select: {
+              scholarship_track: true,
+              school_name: true,
+              course_of_study: true,
+            },
+          },
+        },
+      }),
+      this.prisma.disbursement.findMany({
+        orderBy: { disbursement_id: 'desc' },
+        include: {
+          scholar_profile: {
+            select: {
+              first_name: true,
+              last_name: true,
+              scholarship_track: true,
+              school_name: true,
+              course_of_study: true,
+            },
+          },
+        },
+      }),
+      this.prisma.scholarDocument.findMany({
+        where: {
+          scholar_profile: {
             user: { role: Role.SCHOLAR, is_active: true },
-            ...(query.schoolId ? { school_id: query.schoolId } : {}),
-            ...(query.track ? { scholarship_track: query.track } : {}),
-            ...(query.course ? { course_of_study: query.course } : {}),
           },
-          include: {
-            user: { select: { user_id: true, email: true } },
-            school_grading_system: true,
-            grade_reports: {
-              orderBy: { submitted_at: 'desc' },
-              take: 1,
-            },
-            prospectus: {
-              include: {
-                subjects: {
-                  where: { status: { in: ['PASSED', 'CREDITED'] } },
-                  select: { units: true, grade: true },
-                },
-              },
-            },
-            documents: true,
-            disbursements: true,
-          },
-          orderBy: { profile_id: 'desc' },
-        }),
-        this.prisma.application.findMany({
-          where: {
-            scholar_profile: {
-              user: { role: Role.APPLICANT, is_active: true },
-            },
-          },
-          include: {
-            scholar_profile: {
-              select: {
-                scholarship_track: true,
-                school_name: true,
-                course_of_study: true,
-              },
-            },
-          },
-        }),
-        this.prisma.disbursement.findMany({
-          orderBy: { disbursement_id: 'desc' },
-          include: {
-            scholar_profile: {
-              select: {
-                first_name: true,
-                last_name: true,
-                scholarship_track: true,
-                school_name: true,
-                course_of_study: true,
-              },
-            },
-          },
-        }),
-        this.prisma.scholarDocument.findMany({
-          where: {
-            scholar_profile: {
-              user: { role: Role.SCHOLAR, is_active: true },
-            },
-          },
-        }),
-      ]);
+        },
+      }),
+    ]);
 
     const gradeThreshold = systemSetting?.grade_threshold
       ? Number(systemSetting.grade_threshold)
@@ -227,12 +239,21 @@ export class AnalyticsService {
         } else {
           gwa = scholar.school_grading_system?.highest_grade
             ? Number(scholar.school_grading_system.highest_grade)
-            : (scholar.school_grading_system?.grading_scale === 'NUMERIC_5_POINT' ? 1.0 : (scholar.school_grading_system?.grading_scale === 'NUMERIC_4_POINT' ? 4.0 : gradeThreshold));
+            : scholar.school_grading_system?.grading_scale === 'NUMERIC_5_POINT'
+              ? 1.0
+              : scholar.school_grading_system?.grading_scale ===
+                  'NUMERIC_4_POINT'
+                ? 4.0
+                : gradeThreshold;
         }
       } else {
         gwa = scholar.school_grading_system?.highest_grade
           ? Number(scholar.school_grading_system.highest_grade)
-          : (scholar.school_grading_system?.grading_scale === 'NUMERIC_5_POINT' ? 1.0 : (scholar.school_grading_system?.grading_scale === 'NUMERIC_4_POINT' ? 4.0 : gradeThreshold));
+          : scholar.school_grading_system?.grading_scale === 'NUMERIC_5_POINT'
+            ? 1.0
+            : scholar.school_grading_system?.grading_scale === 'NUMERIC_4_POINT'
+              ? 4.0
+              : gradeThreshold;
       }
 
       const schoolConfig = scholar.school_grading_system;
@@ -294,10 +315,16 @@ export class AnalyticsService {
         normalizedScore = gwa;
       } else if (schoolConfig.grading_scale === 'NUMERIC_4_POINT') {
         // 2.0 = 75%, 4.0 = 100%
-        normalizedScore = Math.max(50, Math.min(100, 75 + ((gwa - 2.0) / 2.0) * 25));
+        normalizedScore = Math.max(
+          50,
+          Math.min(100, 75 + ((gwa - 2.0) / 2.0) * 25),
+        );
       } else if (schoolConfig.grading_scale === 'NUMERIC_5_POINT') {
         // 3.0 = 75%, 1.0 = 100%
-        normalizedScore = Math.max(50, Math.min(100, 75 + ((3.0 - gwa) / 2.0) * 25));
+        normalizedScore = Math.max(
+          50,
+          Math.min(100, 75 + ((3.0 - gwa) / 2.0) * 25),
+        );
       } else {
         normalizedScore = gwa;
       }
@@ -335,7 +362,9 @@ export class AnalyticsService {
         ).length;
         const percentileRank =
           totalN > 0
-            ? Number((((lowerCount + 0.5 * equalCount) / totalN) * 100).toFixed(1))
+            ? Number(
+                (((lowerCount + 0.5 * equalCount) / totalN) * 100).toFixed(1),
+              )
             : 100;
 
         return {
@@ -354,13 +383,15 @@ export class AnalyticsService {
         groups[val].push(sc);
       }
 
-      return Object.entries(groups).map(([category, items]) => {
-        const stats = this.computeDescriptiveStats(items);
-        return {
-          category,
-          ...stats,
-        };
-      }).sort((a, b) => b.count - a.count);
+      return Object.entries(groups)
+        .map(([category, items]) => {
+          const stats = this.computeDescriptiveStats(items);
+          return {
+            category,
+            ...stats,
+          };
+        })
+        .sort((a, b) => b.count - a.count);
     };
 
     const courseBreakdown = groupByKey('course');
@@ -369,7 +400,9 @@ export class AnalyticsService {
 
     // 5. Document Compliance Analytics
     const totalDocs = documents.length;
-    const verifiedDocs = documents.filter((d) => d.status === 'VERIFIED').length;
+    const verifiedDocs = documents.filter(
+      (d) => d.status === 'VERIFIED',
+    ).length;
     const pendingDocs = documents.filter(
       (d) =>
         d.status === 'PENDING' ||
@@ -380,7 +413,9 @@ export class AnalyticsService {
       (d) => d.status === 'REJECTED' || d.status === 'NEEDS_REUPLOAD',
     ).length;
     const docComplianceRate =
-      totalDocs > 0 ? Number(((verifiedDocs / totalDocs) * 100).toFixed(1)) : 100;
+      totalDocs > 0
+        ? Number(((verifiedDocs / totalDocs) * 100).toFixed(1))
+        : 100;
 
     // 6. Financial Disbursements Summary (Grantor Focus)
     const totalDisbursedSum = disbursements
@@ -391,7 +426,9 @@ export class AnalyticsService {
       .filter((d) => ['PENDING', 'AUTHORIZED'].includes(d.status))
       .reduce((acc, d) => acc + Number(d.amount), 0);
 
-    const totalOrSubmitted = disbursements.filter((d) => Boolean(d.or_document_id)).length;
+    const totalOrSubmitted = disbursements.filter((d) =>
+      Boolean(d.or_document_id),
+    ).length;
     const claimedOrReleasedCount = disbursements.filter((d) =>
       ['RELEASED', 'CLAIMED', 'SETTLED'].includes(d.status),
     ).length;
@@ -472,7 +509,12 @@ export class AnalyticsService {
         count: endorsedCount + approvedCount,
         pct:
           totalApplications > 0
-            ? Number((((endorsedCount + approvedCount) / totalApplications) * 100).toFixed(1))
+            ? Number(
+                (
+                  ((endorsedCount + approvedCount) / totalApplications) *
+                  100
+                ).toFixed(1),
+              )
             : 0,
       },
       {
@@ -563,13 +605,18 @@ Return ONLY a JSON object with this exact structure (no markdown formatting, no 
           const data = await response.json();
           const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
           if (text) {
-            const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
+            const cleanJson = text
+              .replace(/```json/g, '')
+              .replace(/```/g, '')
+              .trim();
             const parsed = JSON.parse(cleanJson);
             return parsed;
           }
         }
       } catch (err) {
-        this.logger.warn(`Gemini API explanation failed, falling back to heuristic explanation: ${err}`);
+        this.logger.warn(
+          `Gemini API explanation failed, falling back to heuristic explanation: ${err}`,
+        );
       }
     }
 
@@ -582,7 +629,12 @@ Return ONLY a JSON object with this exact structure (no markdown formatting, no 
    */
   private generateStatisticalHeuristicExplanation(dto: ExplainChartDto) {
     if (dto.chartType === 'INTAKE_FUNNEL') {
-      const funnel = (dto.metrics?.funnel as Array<{ stage: string; count: number; pct: number }>) || [];
+      const funnel =
+        (dto.metrics?.funnel as Array<{
+          stage: string;
+          count: number;
+          pct: number;
+        }>) || [];
       const total = funnel[0]?.count || 0;
       const approved = funnel[funnel.length - 1]?.count || 0;
       return {
@@ -602,10 +654,17 @@ Return ONLY a JSON object with this exact structure (no markdown formatting, no 
 
     if (dto.chartType === 'FINANCIAL_ALLOCATION') {
       const total = Number(dto.metrics?.totalDisbursed || 0);
-      const disbByTrack = (dto.metrics?.disbByTrack as Array<{ track: string; amount: number }>) || [];
+      const disbByTrack =
+        (dto.metrics?.disbByTrack as Array<{
+          track: string;
+          amount: number;
+        }>) || [];
       const topTrack =
         disbByTrack.length > 0
-          ? disbByTrack.reduce((prev, curr) => (curr.amount > prev.amount ? curr : prev), disbByTrack[0])
+          ? disbByTrack.reduce(
+              (prev, curr) => (curr.amount > prev.amount ? curr : prev),
+              disbByTrack[0],
+            )
           : null;
       return {
         summary: `A total of ₱${total.toLocaleString()} in scholarship grants has been released across active program tracks.`,
@@ -618,7 +677,11 @@ Return ONLY a JSON object with this exact structure (no markdown formatting, no 
         ],
         keyHighlights: [
           `Total Funds Released: ₱${total.toLocaleString()}`,
-          ...(topTrack ? [`Top Funding Track: ${topTrack.track} (₱${topTrack.amount.toLocaleString()})`] : []),
+          ...(topTrack
+            ? [
+                `Top Funding Track: ${topTrack.track} (₱${topTrack.amount.toLocaleString()})`,
+              ]
+            : []),
         ],
       };
     }
@@ -632,20 +695,25 @@ Return ONLY a JSON object with this exact structure (no markdown formatting, no 
 
     let consistencyDescription = 'grades are generally consistent';
     if (sd <= 0.25) {
-      consistencyDescription = 'grades are very consistent and close together, showing steady academic performance across the group';
+      consistencyDescription =
+        'grades are very consistent and close together, showing steady academic performance across the group';
     } else if (sd <= 0.5) {
-      consistencyDescription = 'grades are moderately balanced, with most scholars performing around the same level';
+      consistencyDescription =
+        'grades are moderately balanced, with most scholars performing around the same level';
     } else {
-      consistencyDescription = 'grades show noticeable spread, meaning some scholars are excelling while others may be struggling';
+      consistencyDescription =
+        'grades show noticeable spread, meaning some scholars are excelling while others may be struggling';
     }
 
     let passingDescription = `${complianceRate}% of scholars meet the required passing grade`;
     if (complianceRate >= 90) {
       passingDescription += ' (Strong standing)';
     } else if (complianceRate >= 75) {
-      passingDescription += ' (Good standing, with a few scholars needing attention)';
+      passingDescription +=
+        ' (Good standing, with a few scholars needing attention)';
     } else {
-      passingDescription += ' (Attention needed — several scholars are below the required threshold)';
+      passingDescription +=
+        ' (Attention needed — several scholars are below the required threshold)';
     }
 
     const highlights: string[] = [

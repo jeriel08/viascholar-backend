@@ -9,6 +9,7 @@ import { MailService } from '../../mail/mail.service.js';
 import { EventsGateway } from '../../events/events.gateway.js';
 import { ConfirmDocumentDto } from '../dto/confirm-document.dto.js';
 import { Prisma } from '../../generated/prisma/client.js';
+import { NotificationsService } from '../../notifications/notifications.service.js';
 
 interface ConfirmedGradeData {
   academic_year?: string;
@@ -41,6 +42,7 @@ export class DocumentConfirmationService {
     private readonly auditService: AuditService,
     private readonly mailService: MailService,
     private readonly eventsGateway: EventsGateway,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // 1. Scholar confirms/corrects OCR-extracted fields for coordinator audit
@@ -160,6 +162,19 @@ export class DocumentConfirmationService {
         'grade_report:submitted',
         confirmedPayload,
       );
+      void this.notificationsService.notifyStaff({
+        title: 'New Grade Audit Awaiting Review',
+        message: `${studentName || 'A scholar'} submitted ${doc.document_type || 'grades'} for end-of-term audit.`,
+        category: 'document',
+        link: '/CoordinatorMonitor',
+      });
+    } else {
+      void this.notificationsService.notifyStaff({
+        title: 'Documents Confirmed',
+        message: `${studentName || 'An applicant'} confirmed their document details.`,
+        category: 'document',
+        link: '/CoordinatorApplicants',
+      });
     }
 
     if (doc.document_type === 'CCG') {
@@ -253,7 +268,23 @@ export class DocumentConfirmationService {
         'document:changes_requested',
         payload,
       );
+
+      void this.notificationsService.notifyUser(doc.scholar_profile.user_id, {
+        title: 'Document Revision Needed',
+        message:
+          reason ||
+          'Please review your documents and re-upload required files.',
+        category: 'document',
+        link: '/ApplicantsApplication',
+      });
     }
+
+    void this.notificationsService.notifyStaff({
+      title: 'Document Revision Requested',
+      message: `Revisions were requested for ${studentName || 'applicant'}'s documents.`,
+      category: 'document',
+      link: '/CoordinatorApplicants',
+    });
 
     return updated;
   }

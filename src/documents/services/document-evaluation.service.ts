@@ -13,6 +13,7 @@ import { DocumentConfirmationService } from './document-confirmation.service.js'
 import { ConfirmDocumentDto } from '../dto/confirm-document.dto.js';
 import { VerifyDocumentDto } from '../dto/verify-document.dto.js';
 import { SchoolGradingSystem } from '../../generated/prisma/client.js';
+import { NotificationsService } from '../../notifications/notifications.service.js';
 
 interface ConfirmedGradeData {
   academic_year?: string;
@@ -49,6 +50,7 @@ export class DocumentEvaluationService {
     private readonly prospectusTransitionService: ProspectusTransitionService,
     private readonly confirmationService: DocumentConfirmationService,
     private readonly eventsGateway: EventsGateway,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // Scholar confirms/corrects OCR-extracted fields
@@ -275,7 +277,31 @@ export class DocumentEvaluationService {
         'baseline:prospectus_processed',
         verifyPayload,
       );
+
+      const isGradeAudit = [
+        'CCG',
+        'GRADE_REPORT',
+        'TOR',
+        'GRADE_SLIP',
+        'CERTIFIED_COPY_OF_GRADES',
+      ].includes(doc.document_type);
+
+      void this.notificationsService.notifyUser(doc.scholar_profile.user_id, {
+        title: 'Documents Verified',
+        message: isGradeAudit
+          ? 'Your grade report has been verified by the coordinator.'
+          : 'Your documents have been verified! Your application is now Under Review.',
+        category: 'document',
+        link: isGradeAudit ? '/ScholarGrade' : '/ApplicantsApplication',
+      });
     }
+
+    void this.notificationsService.notifyStaff({
+      title: 'Documents Verified',
+      message: `Applicant documents verified for ${doc.scholar_profile?.first_name || 'applicant'}.`,
+      category: 'document',
+      link: '/CoordinatorApplicants',
+    });
 
     return {
       report,

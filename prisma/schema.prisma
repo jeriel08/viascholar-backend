@@ -90,6 +90,7 @@ model User {
 
   submitted_schools         SchoolGradingSystem[] @relation("SchoolGradingSubmittedBy")
   systemSettings SystemSetting[] @relation("SettingsUpdatedBy")
+  notifications             Notification[]
 
   @@map("users")
 }
@@ -560,3 +561,20 @@ model TermEnrollment {
   @@index([status])
   @@map("term_enrollments")
 }
+
+model Notification {
+  notification_id Int      @id @default(autoincrement())
+  user_id         Int
+  title           String   @db.VarChar(255)
+  message         String   @db.Text
+  category        String   @default("system") @db.VarChar(50)
+  link            String?  @db.VarChar(255)
+  is_read         Boolean  @default(false)
+  created_at      DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+
+  @@index([user_id, is_read])
+  @@index([user_id, created_at])
+  @@map("notifications")
+}

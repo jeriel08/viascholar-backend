@@ -12,6 +12,7 @@ import { RequestRescheduleDto } from '../dto/request-reschedule.dto.js';
 import { RescheduleInterviewDto } from '../dto/reschedule-interview.dto.js';
 import { CancelInterviewDto } from '../dto/cancel-interview.dto.js';
 import { EventsGateway } from '../../events/events.gateway.js';
+import { NotificationsService } from '../../notifications/notifications.service.js';
 
 // meetings.meeting_date is a DATE column — strip the time portion in UTC.
 function toDateOnly(d: Date): Date {
@@ -28,6 +29,7 @@ export class ApplicationInterviewsService {
     private googleCalendarService: GoogleCalendarService,
     private mailService: MailService,
     private eventsGateway: EventsGateway,
+    private notificationsService: NotificationsService,
   ) {}
 
   // 1. Staff schedules interview with automated Google Meet & Calendar creation
@@ -177,7 +179,25 @@ export class ApplicationInterviewsService {
         'interview:scheduled',
         scheduledPayload,
       );
+
+      void this.notificationsService.notifyUser(
+        application.scholar_profile.user_id,
+        {
+          title: 'Interview Scheduled',
+          message:
+            'An interview meeting has been scheduled for your application.',
+          category: 'interview',
+          link: '/scholarMeeting',
+        },
+      );
     }
+
+    void this.notificationsService.notifyStaff({
+      title: 'Interview Scheduled',
+      message: `An interview meeting has been scheduled for ${studentName}.`,
+      category: 'interview',
+      link: '/CoordinatorMeeting',
+    });
 
     return updated;
   }
@@ -250,6 +270,13 @@ export class ApplicationInterviewsService {
       studentName,
       reason: formattedReason,
       requestedAt: new Date().toISOString(),
+    });
+
+    void this.notificationsService.notifyStaff({
+      title: 'Interview Reschedule Requested',
+      message: `${studentName} requested to reschedule their interview meeting.`,
+      category: 'interview',
+      link: '/CoordinatorMeeting',
     });
 
     return updated;
@@ -382,7 +409,24 @@ export class ApplicationInterviewsService {
         'interview:rescheduled',
         rescheduledPayload,
       );
+
+      void this.notificationsService.notifyUser(
+        application.scholar_profile.user_id,
+        {
+          title: 'Interview Rescheduled',
+          message: 'Your interview meeting has been rescheduled.',
+          category: 'interview',
+          link: '/scholarMeeting',
+        },
+      );
     }
+
+    void this.notificationsService.notifyStaff({
+      title: 'Interview Rescheduled',
+      message: `Interview meeting for ${studentName} was rescheduled.`,
+      category: 'interview',
+      link: '/CoordinatorMeeting',
+    });
 
     return updated;
   }
@@ -497,7 +541,24 @@ export class ApplicationInterviewsService {
         'interview:cancelled',
         cancelledPayload,
       );
+
+      void this.notificationsService.notifyUser(
+        application.scholar_profile.user_id,
+        {
+          title: 'Interview Cancelled',
+          message: 'Your interview meeting has been cancelled.',
+          category: 'interview',
+          link: '/scholarMeeting',
+        },
+      );
     }
+
+    void this.notificationsService.notifyStaff({
+      title: 'Interview Cancelled',
+      message: `Interview meeting for ${studentName} was cancelled.`,
+      category: 'interview',
+      link: '/CoordinatorMeeting',
+    });
 
     return updated;
   }

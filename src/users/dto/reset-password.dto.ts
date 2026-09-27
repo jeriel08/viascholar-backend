@@ -13,4 +13,3 @@ export class AdminResetPasswordDto {
 }
 
 export { AdminResetPasswordDto as ResetPasswordDto };
-

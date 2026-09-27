@@ -621,12 +621,21 @@ export class UsersService {
         } else {
           gwa = scholar.school_grading_system?.highest_grade
             ? Number(scholar.school_grading_system.highest_grade)
-            : (scholar.school_grading_system?.grading_scale === 'NUMERIC_5_POINT' ? 1.0 : (scholar.school_grading_system?.grading_scale === 'NUMERIC_4_POINT' ? 4.0 : gradeThreshold));
+            : scholar.school_grading_system?.grading_scale === 'NUMERIC_5_POINT'
+              ? 1.0
+              : scholar.school_grading_system?.grading_scale ===
+                  'NUMERIC_4_POINT'
+                ? 4.0
+                : gradeThreshold;
         }
       } else {
         gwa = scholar.school_grading_system?.highest_grade
           ? Number(scholar.school_grading_system.highest_grade)
-          : (scholar.school_grading_system?.grading_scale === 'NUMERIC_5_POINT' ? 1.0 : (scholar.school_grading_system?.grading_scale === 'NUMERIC_4_POINT' ? 4.0 : gradeThreshold));
+          : scholar.school_grading_system?.grading_scale === 'NUMERIC_5_POINT'
+            ? 1.0
+            : scholar.school_grading_system?.grading_scale === 'NUMERIC_4_POINT'
+              ? 4.0
+              : gradeThreshold;
       }
 
       // Health Standing with accurate school grading scale
@@ -753,12 +762,11 @@ export class UsersService {
         date_claimed: d.date_claimed?.toISOString() || null,
       })),
       meetings: meetings.map((m) => {
-        const attendee =
-          m.scholar_profile
-            ? `${m.scholar_profile.first_name} ${m.scholar_profile.last_name}`.trim()
-            : m.application?.scholar_profile
-              ? `${m.application.scholar_profile.first_name} ${m.application.scholar_profile.last_name}`.trim()
-              : 'Applicant';
+        const attendee = m.scholar_profile
+          ? `${m.scholar_profile.first_name} ${m.scholar_profile.last_name}`.trim()
+          : m.application?.scholar_profile
+            ? `${m.application.scholar_profile.first_name} ${m.application.scholar_profile.last_name}`.trim()
+            : 'Applicant';
         return {
           id: m.meeting_id,
           title: m.title,
@@ -776,8 +784,12 @@ export class UsersService {
           `${c.scholar.scholar_profile?.first_name || ''} ${c.scholar.scholar_profile?.last_name || ''}`.trim() ||
           c.scholar.email,
         email: c.scholar.email,
-        last_message: c.messages[0]?.message_text || c.last_message_preview || 'No messages yet',
-        last_message_at: c.messages[0]?.sent_at?.toISOString() || c.updated_at?.toISOString(),
+        last_message:
+          c.messages[0]?.message_text ||
+          c.last_message_preview ||
+          'No messages yet',
+        last_message_at:
+          c.messages[0]?.sent_at?.toISOString() || c.updated_at?.toISOString(),
       })),
     };
   }
@@ -1031,12 +1043,21 @@ export class UsersService {
         } else {
           gwa = scholar.school_grading_system?.highest_grade
             ? Number(scholar.school_grading_system.highest_grade)
-            : (scholar.school_grading_system?.grading_scale === 'NUMERIC_5_POINT' ? 1.0 : (scholar.school_grading_system?.grading_scale === 'NUMERIC_4_POINT' ? 4.0 : gradeThreshold));
+            : scholar.school_grading_system?.grading_scale === 'NUMERIC_5_POINT'
+              ? 1.0
+              : scholar.school_grading_system?.grading_scale ===
+                  'NUMERIC_4_POINT'
+                ? 4.0
+                : gradeThreshold;
         }
       } else {
         gwa = scholar.school_grading_system?.highest_grade
           ? Number(scholar.school_grading_system.highest_grade)
-          : (scholar.school_grading_system?.grading_scale === 'NUMERIC_5_POINT' ? 1.0 : (scholar.school_grading_system?.grading_scale === 'NUMERIC_4_POINT' ? 4.0 : gradeThreshold));
+          : scholar.school_grading_system?.grading_scale === 'NUMERIC_5_POINT'
+            ? 1.0
+            : scholar.school_grading_system?.grading_scale === 'NUMERIC_4_POINT'
+              ? 4.0
+              : gradeThreshold;
       }
 
       // Health Standing with accurate school grading scale
@@ -1127,7 +1148,9 @@ export class UsersService {
         gpa: Number(appeal.gpa),
         appeal_status: appeal.appeal_status,
         appeal_notes: appeal.appeal_notes || 'No statement provided',
-        submitted_at: appeal.appeal_submitted_at?.toISOString() || appeal.submitted_at?.toISOString(),
+        submitted_at:
+          appeal.appeal_submitted_at?.toISOString() ||
+          appeal.submitted_at?.toISOString(),
       })),
       pendingDisbursements: pendingDisbursementsList.map((d) => ({
         disbursement_id: d.disbursement_id,
@@ -1143,12 +1166,11 @@ export class UsersService {
       })),
       scholars: scholarsSummary.slice(0, 5),
       meetings: meetings.map((m) => {
-        const attendee =
-          m.scholar_profile
-            ? `${m.scholar_profile.first_name} ${m.scholar_profile.last_name}`.trim()
-            : m.application?.scholar_profile
-              ? `${m.application.scholar_profile.first_name} ${m.application.scholar_profile.last_name}`.trim()
-              : 'Coordinator';
+        const attendee = m.scholar_profile
+          ? `${m.scholar_profile.first_name} ${m.scholar_profile.last_name}`.trim()
+          : m.application?.scholar_profile
+            ? `${m.application.scholar_profile.first_name} ${m.application.scholar_profile.last_name}`.trim()
+            : 'Coordinator';
         return {
           id: m.meeting_id,
           title: m.title,
@@ -1166,8 +1188,12 @@ export class UsersService {
           `${c.scholar.scholar_profile?.first_name || ''} ${c.scholar.scholar_profile?.last_name || ''}`.trim() ||
           c.scholar.email,
         email: c.scholar.email,
-        last_message: c.messages[0]?.message_text || c.last_message_preview || 'No messages yet',
-        last_message_at: c.messages[0]?.sent_at?.toISOString() || c.updated_at?.toISOString(),
+        last_message:
+          c.messages[0]?.message_text ||
+          c.last_message_preview ||
+          'No messages yet',
+        last_message_at:
+          c.messages[0]?.sent_at?.toISOString() || c.updated_at?.toISOString(),
       })),
     };
   }
@@ -1273,4 +1299,3 @@ export class UsersService {
     return 'good';
   }
 }
-

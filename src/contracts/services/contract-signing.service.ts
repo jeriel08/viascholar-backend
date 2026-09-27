@@ -12,6 +12,7 @@ import { EventsGateway } from '../../events/events.gateway.js';
 import { Role } from '../../generated/prisma/enums.js';
 import { PdfStamperService } from './pdf-stamper.service.js';
 import { RequestContractChangesDto } from '../dto/request-contract-changes.dto.js';
+import { NotificationsService } from '../../notifications/notifications.service.js';
 
 export interface SignContractOptions {
   signatureBuffer?: Buffer;
@@ -32,6 +33,7 @@ export class ContractSigningService {
     private pdfStamperService: PdfStamperService,
     private configService: ConfigService,
     private eventsGateway: EventsGateway,
+    private notificationsService: NotificationsService,
   ) {
     this.frontendUrl =
       this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000';
@@ -102,6 +104,13 @@ export class ContractSigningService {
       studentName,
       reason: dto.reason,
       requestedAt: new Date().toISOString(),
+    });
+
+    void this.notificationsService.notifyStaff({
+      title: 'Contract Revision Requested',
+      message: `${studentName} requested revisions to their scholarship agreement: ${dto.reason}`,
+      category: 'contract',
+      link: '/CoordinatorApplicants',
     });
 
     return {
@@ -280,6 +289,20 @@ export class ContractSigningService {
     this.eventsGateway.emitToStaff('contract:signed', signedPayload);
     this.eventsGateway.emitToUser(userId, 'contract:signed', signedPayload);
 
+    void this.notificationsService.notifyUser(userId, {
+      title: 'Agreement Signed',
+      message: 'You have successfully signed your scholarship agreement!',
+      category: 'contract',
+      link: '/ApplicantsContract',
+    });
+
+    void this.notificationsService.notifyStaff({
+      title: 'Agreement Signed',
+      message: `${studentName} has signed their scholarship agreement.`,
+      category: 'contract',
+      link: '/CoordinatorApplicants',
+    });
+
     if (promoted) {
       const promotionPayload = {
         userId,
@@ -294,6 +317,21 @@ export class ContractSigningService {
         'user:role_promoted',
         promotionPayload,
       );
+
+      void this.notificationsService.notifyUser(userId, {
+        title: 'Role Promoted 🎉',
+        message:
+          'Congratulations! You have been officially promoted to Scholar!',
+        category: 'system',
+        link: '/scholardashboard',
+      });
+
+      void this.notificationsService.notifyStaff({
+        title: 'Applicant Promoted 🎉',
+        message: `${studentName} has signed their scholarship agreement and is now officially a Scholar.`,
+        category: 'system',
+        link: '/CoordinatorApplicants',
+      });
     }
 
     return updated;

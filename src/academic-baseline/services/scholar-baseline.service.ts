@@ -452,10 +452,7 @@ export class ScholarBaselineService {
     const subjects = scholar.prospectus?.subjects || [];
     let totalUnits = Number(scholar.prospectus?.total_units) || 0;
     if (totalUnits === 0 && subjects.length > 0) {
-      totalUnits = subjects.reduce(
-        (acc, s) => acc + (Number(s.units) || 0),
-        0,
-      );
+      totalUnits = subjects.reduce((acc, s) => acc + (Number(s.units) || 0), 0);
     }
     const passedSubjects = subjects.filter(
       (s) => s.status === 'PASSED' || s.status === 'CREDITED',
@@ -507,13 +504,12 @@ export class ScholarBaselineService {
     const isAppealDenied = latestGradeReport?.appeal_status === 'DENIED';
     const isFlagged =
       latestGradeReport &&
-      (!latestGradeReport.is_eligible || latestGradeReport.status === 'FLAGGED');
+      (!latestGradeReport.is_eligible ||
+        latestGradeReport.status === 'FLAGGED');
 
     let standingType:
-      | 'GOOD_STANDING'
-      | 'PROBATION'
-      | 'ACTION_REQUIRED'
-      | 'PENDING_REVIEW' = 'GOOD_STANDING';
+      'GOOD_STANDING' | 'PROBATION' | 'ACTION_REQUIRED' | 'PENDING_REVIEW' =
+      'GOOD_STANDING';
     if (isOnProbation) {
       standingType = 'PROBATION';
     } else if (hasPendingAppeal) {

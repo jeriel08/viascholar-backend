@@ -298,12 +298,14 @@ export class AcademicAppealService {
         const verdictMetadata = {
           report_id: report.report_id,
           scholar_profile_id: report.scholar_profile_id,
-          student_name: `${report.scholar_profile.first_name} ${report.scholar_profile.last_name}`.trim(),
+          student_name:
+            `${report.scholar_profile.first_name} ${report.scholar_profile.last_name}`.trim(),
           academic_year: report.academic_year,
           semester: report.semester,
           decision: dto.decision,
           decision_notes: dto.decision_notes || '',
-          reviewed_by_name: `${employee.first_name} ${employee.last_name}`.trim(),
+          reviewed_by_name:
+            `${employee.first_name} ${employee.last_name}`.trim(),
           reviewed_at: updated.appeal_reviewed_at?.toISOString(),
         };
 

@@ -22,6 +22,7 @@ import { AcademicBaselineModule } from './academic-baseline/academic-baseline.mo
 import { TermEnrollmentModule } from './term-enrollment/term-enrollment.module.js';
 import { DisbursementsModule } from './disbursements/disbursements.module.js';
 import { AnalyticsModule } from './analytics/analytics.module.js';
+import { NotificationsModule } from './notifications/notifications.module.js';
 import { AppController } from './app.controller.js';
 
 @Module({
@@ -53,6 +54,7 @@ import { AppController } from './app.controller.js';
     EventsModule,
     ChatModule,
     ForumModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [
