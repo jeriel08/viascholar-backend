@@ -12,8 +12,16 @@ async function bootstrap() {
     'http://localhost:3001',
     'http://127.0.0.1:3000',
     'http://127.0.0.1:3001',
+    'https://making-bagel-riveting.ngrok-free.dev',
     process.env.FRONTEND_URL,
-  ].filter(Boolean) as string[];
+  ]
+    .filter(Boolean)
+    .map((origin) => origin!.replace(/\/+$/, '')) as string[];
+
+  app.enableCsrfProtection({
+    trustedOrigins: allowedOrigins,
+    exclude: ['webhooks/*path'],
+  });
 
   app.enableCors({
     origin: (origin, callback) => {
@@ -33,16 +41,23 @@ async function bootstrap() {
   app.useGlobalFilters(new JwtExceptionFilter());
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 
-  const config = new DocumentBuilder()
-    .setTitle('ViaScholar API')
-    .setDescription(
-      'ViaScholar is a capstone project that aims to streamline scholar management and enhance the overall experience for scholars and administrators alike.',
-    )
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const documentFactory = () => SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, documentFactory);
+  const isProduction = process.env.NODE_ENV === 'production';
+  const shouldEnableSwagger =
+    process.env.ENABLE_SWAGGER === 'true' ||
+    (!isProduction && process.env.ENABLE_SWAGGER !== 'false');
+
+  if (shouldEnableSwagger) {
+    const config = new DocumentBuilder()
+      .setTitle('ViaScholar API')
+      .setDescription(
+        'ViaScholar is a capstone project that aims to streamline scholar management and enhance the overall experience for scholars and administrators alike.',
+      )
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const documentFactory = () => SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api', app, documentFactory);
+  }
 
   await app.listen(process.env.PORT ?? 3000);
 }

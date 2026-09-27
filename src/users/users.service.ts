@@ -5,7 +5,7 @@ import { EventsGateway } from '../events/events.gateway.js';
 import { Role } from '../generated/prisma/enums.js';
 import { QueryUsersDto } from './dto/query-users.dto.js';
 import { UpdateUserStatusDto } from './dto/update-user-status.dto.js';
-import { ResetPasswordDto } from './dto/reset-password.dto.js';
+import { AdminResetPasswordDto } from './dto/reset-password.dto.js';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -181,7 +181,7 @@ export class UsersService {
   async resetPassword(
     adminUserId: number,
     targetUserId: number,
-    dto: ResetPasswordDto,
+    dto: AdminResetPasswordDto,
   ) {
     const user = await this.prisma.user.findUnique({
       where: { user_id: targetUserId },
