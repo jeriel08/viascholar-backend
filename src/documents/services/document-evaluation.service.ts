@@ -13,6 +13,7 @@ import { DocumentConfirmationService } from './document-confirmation.service.js'
 import { ConfirmDocumentDto } from '../dto/confirm-document.dto.js';
 import { VerifyDocumentDto } from '../dto/verify-document.dto.js';
 import { SchoolGradingSystem } from '../../generated/prisma/client.js';
+import { Role } from '../../generated/prisma/enums.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
 
 interface ConfirmedGradeData {
@@ -84,7 +85,7 @@ export class DocumentEvaluationService {
 
     const doc = await this.prisma.scholarDocument.findUnique({
       where: { document_id: documentId },
-      include: { scholar_profile: true },
+      include: { scholar_profile: { include: { user: true } } },
     });
     if (!doc) {
       throw new NotFoundException(`Document ID ${documentId} not found.`);
@@ -278,13 +279,16 @@ export class DocumentEvaluationService {
         verifyPayload,
       );
 
-      const isGradeAudit = [
-        'CCG',
-        'GRADE_REPORT',
-        'TOR',
-        'GRADE_SLIP',
-        'CERTIFIED_COPY_OF_GRADES',
-      ].includes(doc.document_type);
+      const isScholar = doc.scholar_profile?.user?.role === Role.SCHOLAR;
+      const isGradeAudit =
+        isScholar &&
+        [
+          'CCG',
+          'GRADE_REPORT',
+          'GRADE_SLIP',
+          'CERTIFIED_COPY_OF_GRADES',
+          'Certificate of Grades',
+        ].includes(doc.document_type);
 
       void this.notificationsService.notifyUser(doc.scholar_profile.user_id, {
         title: 'Documents Verified',

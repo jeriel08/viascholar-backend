@@ -11,6 +11,7 @@ import { PdfMergerService } from './pdf-merger.service.js';
 import { FileForensicsService } from './file-forensics.service.js';
 import { DocumentOcrService } from './document-ocr.service.js';
 import { Prisma } from '../../generated/prisma/client.js';
+import { Role } from '../../generated/prisma/enums.js';
 
 @Injectable()
 export class DocumentsStorageService {
@@ -53,22 +54,28 @@ export class DocumentsStorageService {
     }
 
     const yearLevel = this.getScholarYearLevel(scholar.current_year_level);
-    if (yearLevel >= 2 && this.isHighSchoolDocument(documentType)) {
+    const defaultDocType = yearLevel >= 2 ? 'TOR' : 'Form 138';
+    const effectiveDocType =
+      documentType && documentType.trim() !== ''
+        ? documentType.trim()
+        : defaultDocType;
+
+    if (yearLevel >= 2 && this.isHighSchoolDocument(effectiveDocType)) {
       throw new BadRequestException(
-        `Scholars in Year Level ${yearLevel} (2nd to 4th year) are required to upload a Certified Copy of Grades (CCG) or Transcript of Records (TOR).`,
+        `Students in Year Level ${yearLevel} (2nd to 4th year) are required to upload an official College Transcript of Records (TOR). High School Form 138 / Form 9 cannot be accepted.`,
       );
     }
     if (
       yearLevel === 1 &&
-      !this.isHighSchoolDocument(documentType) &&
-      !this.isCollegeGradeDocument(documentType)
+      (effectiveDocType === 'TOR' ||
+        (!this.isHighSchoolDocument(effectiveDocType) && effectiveDocType !== 'CCG'))
     ) {
       throw new BadRequestException(
-        '1st-year applicants are required to upload their Senior High School Form 138 or Form 9 report card, or Certified Copy of Grades (CCG).',
+        '1st-year applicants are only allowed to submit Senior High School Form 138 or Form 9 report cards, not a College Transcript of Records (TOR).',
       );
     }
 
-    if (this.isCollegeGradeDocument(documentType) || documentType === 'CCG') {
+    if (this.isCollegeGradeDocument(effectiveDocType) || effectiveDocType === 'CCG') {
       const unresolvedReport = await this.prisma.gradeReport.findFirst({
         where: {
           scholar_profile_id: scholar.profile_id,
@@ -97,7 +104,7 @@ export class DocumentsStorageService {
       await this.fileForensicsService.inspectFileMetadata(fileList);
     const processed = await this.pdfMergerService.processAndMergeFiles(
       fileList,
-      documentType,
+      effectiveDocType,
     );
 
     const publicId = processed.fileName.replace(/\.[^/.]+$/, '');
@@ -113,8 +120,13 @@ export class DocumentsStorageService {
     const document = await this.prisma.scholarDocument.create({
       data: {
         scholar_profile_id: scholar.profile_id,
-        document_type: documentType,
-        label: documentType,
+        document_type: effectiveDocType,
+        label:
+          effectiveDocType === 'Form 138'
+            ? 'Senior High School Report Card (Form 138 / Form 9)'
+            : effectiveDocType === 'TOR'
+              ? 'College Transcript of Records (TOR)'
+              : effectiveDocType,
         file_name: processed.fileName,
         file_size: processed.fileSize,
         file_url: cloudinaryResult.secure_url,
@@ -129,7 +141,7 @@ export class DocumentsStorageService {
     await this.auditService.log(
       userId,
       'DOCUMENT_UPLOADED',
-      `Scholar (User ID: ${userId}) uploaded document (ID: ${document.document_id}, Type: ${documentType}, Files: ${fileList.length})${metadataForensics.is_flagged ? ` [Forensic Flags: ${metadataForensics.flags.join(', ')}]` : ''}.`,
+      `Scholar (User ID: ${userId}) uploaded document (ID: ${document.document_id}, Type: ${effectiveDocType}, Files: ${fileList.length})${metadataForensics.is_flagged ? ` [Forensic Flags: ${metadataForensics.flags.join(', ')}]` : ''}.`,
     );
 
     void this.documentOcrService
@@ -138,7 +150,7 @@ export class DocumentsStorageService {
         processed.buffer,
         processed.fileName,
         processed.mimeType,
-        documentType,
+        effectiveDocType,
         fileList,
       )
       ?.catch((err: Error) => {
@@ -322,24 +334,14 @@ export class DocumentsStorageService {
     return doc;
   }
 
-  // Coordinator views pending documents for verification
+  // Coordinator views pending documents for verification (Grade Audits tab)
   async getPendingDocuments() {
-    return this.prisma.scholarDocument.findMany({
+    const docs = await this.prisma.scholarDocument.findMany({
       where: {
-        document_type: {
-          notIn: [
-            'SOA',
-            'COR',
-            'STATEMENT_OF_ACCOUNT',
-            'CERTIFICATE_OF_REGISTRATION',
-            'OFFICIAL_RECEIPT',
-            'RECEIPT',
-            'CONSOLIDATED_ASSESSMENT',
-            'CONSOLIDATED_MATRICULATION',
-            'PROSPECTUS',
-            'CURRICULUM',
-            'HISTORICAL_CCG',
-          ],
+        scholar_profile: {
+          user: {
+            role: Role.SCHOLAR,
+          },
         },
         status: {
           in: [
@@ -360,6 +362,19 @@ export class DocumentsStorageService {
         },
       },
     });
+
+    // Prohibit enrollment/financial docs, TOR, and applicant admission forms (Form 138, Form 137, Form 9, SF9, etc.)
+    const PROHIBITED_DOC_TYPES =
+      /^(TOR|TRANSCRIPT|FORM\s*138|FORM\s*137|FORM\s*9|SF9|REPORT\s*CARD|SOA|COR|STATEMENT_OF_ACCOUNT|CERTIFICATE_OF_REGISTRATION|OFFICIAL_RECEIPT|RECEIPT|CONSOLIDATED|PROSPECTUS|CURRICULUM|HISTORICAL)/i;
+
+    return docs.filter((doc) => {
+      const type = (doc.document_type || '').trim();
+      const label = (doc.label || '').trim();
+      if (PROHIBITED_DOC_TYPES.test(type) || PROHIBITED_DOC_TYPES.test(label)) {
+        return false;
+      }
+      return true;
+    });
   }
 
   // Get allowed document upload types based on scholar year level
@@ -375,36 +390,24 @@ export class DocumentsStorageService {
     const isYear2Plus = yearLevel >= 2;
 
     const allowedTypes = isYear2Plus
-      ? [
-          'CCG',
-          'Certified Copy of Grades',
-          'TOR',
-          'COG',
-          'Transcript of Records',
-          'Certificate of Grades',
-        ]
-      : [
-          'CCG',
-          'Certified Copy of Grades',
-          'Form 138',
-          'Form 9',
-          'Form 137',
-          'High School Report Card',
-          'TOR',
-        ];
+      ? ['TOR', 'Transcript of Records', 'CCG', 'Certified Copy of Grades']
+      : ['Form 138', 'Form 9', 'SF9', 'Form 137', 'High School Report Card', 'CCG'];
 
     const prohibitedTypes = isYear2Plus
-      ? ['Form 138', 'Form 9', 'Form 137', 'High School Report Card']
-      : [];
+      ? ['Form 138', 'Form 9', 'SF9', 'Form 137', 'High School Report Card']
+      : ['TOR', 'Transcript of Records', 'College Transcript'];
 
     return {
       current_year_level: yearLevel,
       is_year_2_plus: isYear2Plus,
       allowed_types: allowedTypes,
       prohibited_types: prohibitedTypes,
+      required_document: isYear2Plus
+        ? 'College Transcript of Records (TOR)'
+        : 'Senior High School Form 138 / Form 9',
       message: isYear2Plus
-        ? 'As a 2nd-4th year scholar, you must submit a Certified Copy of Grades (CCG), TOR, or COG.'
-        : 'Submit your Certified Copy of Grades (CCG) or Senior High School Form 138 report card.',
+        ? 'As a 2nd to 4th year student, you are required to submit an official College Transcript of Records (TOR).'
+        : 'As a 1st-year student, you are only allowed to submit your Senior High School Form 138 or Form 9 report card.',
     };
   }
 }

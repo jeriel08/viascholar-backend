@@ -110,18 +110,23 @@ export class DocumentOcrService {
         if (detectedDocType === 'STATEMENT_OF_ACCOUNT') {
           isInvalidOrMismatchedType = true;
           mismatchRejectionReason =
-            'Invalid document type: You uploaded a Statement of Account / Tuition Assessment instead of a Certified Copy of Grades (CCG). Please upload your official grade slip or transcript from your registrar.';
+            'Invalid document type: You uploaded a Statement of Account / Tuition Assessment instead of a Certified Copy of Grades (CCG). Please upload your official grade slip from your registrar.';
         } else if (detectedDocType === 'CERTIFICATE_OF_REGISTRATION') {
           isInvalidOrMismatchedType = true;
           mismatchRejectionReason =
-            'Invalid document type: You uploaded a Certificate of Registration (COR) / Enrollment Schedule instead of a Certified Copy of Grades (CCG). Please upload your official grade slip or transcript from your registrar.';
-        } else if (isUpperclassman && detectedDocType === 'FORM_138') {
+            'Invalid document type: You uploaded a Certificate of Registration (COR) / Enrollment Schedule instead of a Certified Copy of Grades (CCG). Please upload your official grade slip from your registrar.';
+        } else if (detectedDocType === 'TRANSCRIPT_OF_RECORDS') {
           isInvalidOrMismatchedType = true;
-          mismatchRejectionReason = `Document type mismatch: As a Year ${scholarYearLevel} scholar, a college Certified Copy of Grades (CCG) or Transcript of Records (TOR) is required. A High School Report Card (Form 138/SF9) was detected.`;
+          mismatchRejectionReason =
+            'Invalid document type: A Transcript of Records (TOR) is prohibited for semestral grade audits. Please upload your official Certified Copy of Grades (CCG) issued by your university registrar.';
+        } else if (detectedDocType === 'FORM_138') {
+          isInvalidOrMismatchedType = true;
+          mismatchRejectionReason =
+            'Invalid document type: A High School Report Card (Form 138 / SF9) is prohibited for scholar grade audits. Please upload your official Certified Copy of Grades (CCG).';
         } else if (detectedDocType === 'OTHER') {
           isInvalidOrMismatchedType = true;
           mismatchRejectionReason =
-            'Unsupported document: The uploaded file is not recognized as a Certified Copy of Grades (CCG) or Transcript of Records (TOR). Please ensure you upload an official registrar grade slip.';
+            'Unsupported document: The uploaded file is not recognized as a Certified Copy of Grades (CCG). Please ensure you upload an official registrar grade slip.';
         } else if (extractedData.has_signature === false) {
           isInvalidOrMismatchedType = true;
           mismatchRejectionReason =
@@ -143,14 +148,25 @@ export class DocumentOcrService {
           }, not an official grade report or transcript. Please upload a valid grade record.`;
         } else if (isUpperclassman && detectedDocType === 'FORM_138') {
           isInvalidOrMismatchedType = true;
-          mismatchRejectionReason = `Document type mismatch: As a Year ${scholarYearLevel} scholar, you are required to upload a Transcript of Records (TOR) or Certificate of Grades (COG). A High School Report Card (Form 138/SF9) was detected.`;
+          mismatchRejectionReason = `Document type mismatch: As a Year ${scholarYearLevel} student (2nd to 4th year), you are required to submit an official College Transcript of Records (TOR). A High School Report Card (Form 138/SF9) was detected. Please remove this document and upload your official TOR.`;
+        } else if (
+          isUpperclassman &&
+          !isCcgDoc &&
+          detectedDocType === 'CERTIFICATE_OF_GRADES'
+        ) {
+          isInvalidOrMismatchedType = true;
+          mismatchRejectionReason = `Document type mismatch: As a Year ${scholarYearLevel} applicant (2nd to 4th year), you are required to submit an official College Transcript of Records (TOR). A Certificate of Grades / Grade Slip was detected. Please upload your official TOR.`;
         } else if (
           !isUpperclassman &&
           (detectedDocType === 'TRANSCRIPT_OF_RECORDS' ||
             detectedDocType === 'CERTIFICATE_OF_GRADES')
         ) {
           isInvalidOrMismatchedType = true;
-          mismatchRejectionReason = `Document type mismatch: As a 1st year applicant, you are required to upload your Senior High School Form 138 or Form 9 report card. A college transcript / certificate of grades was detected.`;
+          mismatchRejectionReason = `Document type mismatch: As a 1st-year student, you are only allowed to submit your Senior High School Form 138 or Form 9 report card. A College ${
+            detectedDocType === 'TRANSCRIPT_OF_RECORDS'
+              ? 'Transcript of Records (TOR)'
+              : 'Certificate of Grades'
+          } was detected. Please remove this document and upload your high school report card.`;
         }
       }
 
@@ -160,7 +176,7 @@ export class DocumentOcrService {
       if (!hasGrades && !isInvalidOrMismatchedType) {
         isInvalidOrMismatchedType = true;
         mismatchRejectionReason =
-          'No course grades detected: The uploaded document does not contain readable course ratings or grades. Please upload a clear copy of your Certified Copy of Grades (CCG).';
+          'No course grades detected: The uploaded document does not contain readable course ratings or grades. Please upload a clear copy of your document.';
       }
 
       const validationStatus =
@@ -199,9 +215,37 @@ export class DocumentOcrService {
           ? null
           : 'Unreadable document or missing grade records.';
 
+      // Determine human-readable document_type and label from detected type
+      let detectedHumanType = doc.document_type;
+      let detectedLabel = doc.label;
+
+      if (detectedDocType === 'FORM_138') {
+        detectedHumanType = 'Form 138 / Form 9';
+        detectedLabel = 'Senior High School Report Card (Form 138 / SF9)';
+      } else if (detectedDocType === 'TRANSCRIPT_OF_RECORDS') {
+        detectedHumanType = 'TOR';
+        detectedLabel = 'College Transcript of Records (TOR)';
+      } else if (detectedDocType === 'CERTIFICATE_OF_GRADES') {
+        detectedHumanType = isCcgDoc ? 'CCG' : 'Certificate of Grades';
+        detectedLabel = isCcgDoc
+          ? 'Certified Copy of Grades (CCG)'
+          : 'Certificate of Grades (COG)';
+      } else if (detectedDocType === 'STATEMENT_OF_ACCOUNT') {
+        detectedHumanType = 'Statement of Account';
+        detectedLabel = 'Statement of Account / Billing';
+      } else if (detectedDocType === 'CERTIFICATE_OF_REGISTRATION') {
+        detectedHumanType = 'Certificate of Registration';
+        detectedLabel = 'Certificate of Registration (COR)';
+      } else if (detectedDocType === 'OTHER') {
+        detectedHumanType = 'Other Document';
+        detectedLabel = 'Unsupported Document';
+      }
+
       const updated = await this.prisma.scholarDocument.update({
         where: { document_id: documentId },
         data: {
+          document_type: detectedHumanType,
+          label: detectedLabel,
           status: validationStatus,
           extracted_data:
             mergedExtractedData as unknown as Prisma.InputJsonValue,
@@ -212,14 +256,14 @@ export class DocumentOcrService {
       await this.auditService.log(
         doc.scholar_profile?.user_id || 0,
         'DOCUMENT_OCR_PROCESSED',
-        `LlamaExtract OCR finished for document ID ${documentId}. Status: ${validationStatus}, Risk: ${forensicEvaluation.risk_level}, grade items: ${hasGrades ? extractedData.grades?.length : 0}.`,
+        `LlamaExtract OCR finished for document ID ${documentId}. Status: ${validationStatus}, Detected: ${detectedDocType} (${detectedHumanType}), Risk: ${forensicEvaluation.risk_level}, grade items: ${hasGrades ? extractedData.grades?.length : 0}.`,
       );
 
       const ocrPayload = {
         documentId: doc.document_id,
         scholarProfileId: doc.scholar_profile_id,
         status: validationStatus,
-        documentType: doc.document_type,
+        documentType: detectedHumanType,
         hasGrades,
       };
 

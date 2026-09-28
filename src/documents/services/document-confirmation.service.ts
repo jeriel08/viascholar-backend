@@ -9,6 +9,7 @@ import { MailService } from '../../mail/mail.service.js';
 import { EventsGateway } from '../../events/events.gateway.js';
 import { ConfirmDocumentDto } from '../dto/confirm-document.dto.js';
 import { Prisma } from '../../generated/prisma/client.js';
+import { Role } from '../../generated/prisma/enums.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
 
 interface ConfirmedGradeData {
@@ -53,7 +54,7 @@ export class DocumentConfirmationService {
   ) {
     const doc = await this.prisma.scholarDocument.findUnique({
       where: { document_id: documentId },
-      include: { scholar_profile: true },
+      include: { scholar_profile: { include: { user: true } } },
     });
 
     if (!doc || doc.scholar_profile.user_id !== userId) {
@@ -150,13 +151,16 @@ export class DocumentConfirmationService {
       confirmedPayload,
     );
 
-    const isGradeDoc = [
-      'CCG',
-      'GRADE_REPORT',
-      'TOR',
-      'GRADE_SLIP',
-      'CERTIFIED_COPY_OF_GRADES',
-    ].includes(doc.document_type);
+    const isScholar = doc.scholar_profile?.user?.role === Role.SCHOLAR;
+    const isGradeDoc =
+      isScholar &&
+      [
+        'CCG',
+        'GRADE_REPORT',
+        'GRADE_SLIP',
+        'CERTIFIED_COPY_OF_GRADES',
+        'Certificate of Grades',
+      ].includes(doc.document_type);
     if (isGradeDoc) {
       this.eventsGateway.emitToStaff(
         'grade_report:submitted',
