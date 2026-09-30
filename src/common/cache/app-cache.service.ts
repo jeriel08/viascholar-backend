@@ -2,12 +2,24 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
 
+import { requestCacheStorage } from './cache-context.js';
+
 @Injectable()
 export class AppCacheService {
   private readonly logger = new Logger(AppCacheService.name);
   private readonly keys = new Set<string>();
 
   constructor(@Inject(CACHE_MANAGER) private readonly cache: Cache) {}
+
+  private markCacheStatus(status: 'HIT' | 'MISS') {
+    const store = requestCacheStorage.getStore();
+    if (store) {
+      store.cacheStatus = status;
+      if (!store.res.headersSent) {
+        store.res.setHeader('X-Cache', status);
+      }
+    }
+  }
 
   /**
    * Retrieve a value from the cache by key.
@@ -91,9 +103,11 @@ export class AppCacheService {
     if (!forceRefresh) {
       const cached = await this.get<T>(key);
       if (cached !== undefined && cached !== null) {
+        this.markCacheStatus('HIT');
         return cached;
       }
     }
+    this.markCacheStatus('MISS');
     const fresh = await factory();
     if (fresh !== undefined && fresh !== null) {
       await this.set(key, fresh, ttlMs);
