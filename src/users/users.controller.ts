@@ -51,8 +51,8 @@ export class UsersController {
   @ApiOperation({
     summary: 'Get aggregated metrics & data for Admin Dashboard',
   })
-  getAdminDashboard() {
-    return this.usersService.getAdminDashboardSummary();
+  getAdminDashboard(@Query('refresh') refresh?: string) {
+    return this.usersService.getAdminDashboardSummary(refresh === 'true');
   }
 
   @Get('coordinator/dashboard')
@@ -60,8 +60,14 @@ export class UsersController {
   @ApiOperation({
     summary: 'Get aggregated metrics & pipeline data for Coordinator Dashboard',
   })
-  getCoordinatorDashboard(@Request() req) {
-    return this.usersService.getCoordinatorDashboardSummary(req.user.user_id);
+  getCoordinatorDashboard(
+    @Request() req,
+    @Query('refresh') refresh?: string,
+  ) {
+    return this.usersService.getCoordinatorDashboardSummary(
+      req.user.user_id,
+      refresh === 'true',
+    );
   }
 
   @Get('grantor/dashboard')
@@ -69,8 +75,14 @@ export class UsersController {
   @ApiOperation({
     summary: 'Get aggregated metrics & verdict queues for Grantor Dashboard',
   })
-  getGrantorDashboard(@Request() req) {
-    return this.usersService.getGrantorDashboardSummary(req.user.user_id);
+  getGrantorDashboard(
+    @Request() req,
+    @Query('refresh') refresh?: string,
+  ) {
+    return this.usersService.getGrantorDashboardSummary(
+      req.user.user_id,
+      refresh === 'true',
+    );
   }
 
   @Get(':id')

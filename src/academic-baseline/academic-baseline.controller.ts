@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   Put,
+  Query,
   Request,
   UploadedFiles,
   UseGuards,
@@ -92,8 +93,14 @@ export class AcademicBaselineController {
     summary:
       'Aggregated summary data for the Scholar Dashboard (KPIs, Prospectus, Standing, Disbursements, Communications)',
   })
-  getScholarDashboardSummary(@Request() req: AuthenticatedRequest) {
-    return this.baselineService.getScholarDashboardSummary(req.user.user_id);
+  getScholarDashboardSummary(
+    @Request() req: AuthenticatedRequest,
+    @Query('refresh') refresh?: string,
+  ) {
+    return this.baselineService.getScholarDashboardSummary(
+      req.user.user_id,
+      refresh === 'true',
+    );
   }
 
   @Post('select-school')

@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { SettingsService } from '../settings/settings.service.js';
 import { Role } from '../generated/prisma/enums.js';
 import { AnalyticsQueryDto, ExplainChartDto } from './dto/analytics.dto.js';
+import { AppCacheService } from '../common/cache/app-cache.service.js';
 
 export interface DescriptiveStats {
   count: number;
@@ -29,6 +30,7 @@ export class AnalyticsService {
     private readonly prisma: PrismaService,
     private readonly settingsService: SettingsService,
     private readonly configService: ConfigService,
+    private readonly cacheService: AppCacheService,
   ) {}
 
   /**
@@ -124,8 +126,13 @@ export class AnalyticsService {
    * Main descriptive analytics endpoint for Grantor & Coordinator dashboards.
    * Computes Mean GWA, Standard Deviation, Compliance Rate, Percentiles, Document Compliance, and Disbursements.
    */
-  async getDescriptiveAnalytics(query: AnalyticsQueryDto) {
-    const [
+  async getDescriptiveAnalytics(query: AnalyticsQueryDto, forceRefresh = false) {
+    const cacheKey = `analytics:descriptive:${query.schoolId || 'all'}:${query.track || 'all'}:${query.course || 'all'}`;
+
+    return this.cacheService.wrap(
+      cacheKey,
+      async () => {
+        const [
       systemSetting,
       scholarProfiles,
       applications,
@@ -555,7 +562,11 @@ export class AnalyticsService {
       },
       intakeFunnel,
     };
-  }
+    },
+    2 * 60 * 1000,
+    forceRefresh,
+  );
+}
 
   /**
    * LLM Chart & Metric Explanation Service.

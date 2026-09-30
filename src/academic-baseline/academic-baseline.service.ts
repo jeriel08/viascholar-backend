@@ -28,8 +28,11 @@ export class AcademicBaselineService {
   }
 
   // Fast aggregated summary endpoint for Scholar Dashboard
-  async getScholarDashboardSummary(userId: number) {
-    return this.scholarBaselineService.getScholarDashboardSummary(userId);
+  async getScholarDashboardSummary(userId: number, forceRefresh = false) {
+    return this.scholarBaselineService.getScholarDashboardSummary(
+      userId,
+      forceRefresh,
+    );
   }
 
   // 2. Scholar selects or proposes school grading system

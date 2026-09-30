@@ -11,6 +11,7 @@ import { SettingsService } from '../../settings/settings.service.js';
 import { EventsGateway } from '../../events/events.gateway.js';
 import { SelectSchoolDto } from '../dto/select-school.dto.js';
 import { BatchUpdateSubjectsDto } from '../dto/batch-update-subjects.dto.js';
+import { AppCacheService } from '../../common/cache/app-cache.service.js';
 
 @Injectable()
 export class ScholarBaselineService {
@@ -21,6 +22,7 @@ export class ScholarBaselineService {
     private readonly auditService: AuditService,
     private readonly settingsService: SettingsService,
     private readonly eventsGateway: EventsGateway,
+    private readonly cacheService: AppCacheService,
   ) {}
 
   // 1. Get complete baseline onboarding state for current scholar
@@ -362,6 +364,10 @@ export class ScholarBaselineService {
       payload,
     );
 
+    await this.cacheService.del(`dashboard:scholar:${userId}`);
+    await this.cacheService.delPattern('dashboard:coordinator:');
+    await this.cacheService.delPattern('dashboard:grantor:');
+
     return {
       message: 'Academic baseline submitted for coordinator review.',
       academic_baseline_status: updated.academic_baseline_status,
@@ -369,8 +375,13 @@ export class ScholarBaselineService {
   }
 
   // Fast aggregated summary endpoint for Scholar Dashboard
-  async getScholarDashboardSummary(userId: number) {
-    const scholar = await this.prisma.scholarProfile.findUnique({
+  async getScholarDashboardSummary(userId: number, forceRefresh = false) {
+    const cacheKey = `dashboard:scholar:${userId}`;
+
+    return this.cacheService.wrap(
+      cacheKey,
+      async () => {
+        const scholar = await this.prisma.scholarProfile.findUnique({
       where: { user_id: userId },
       include: {
         user: {
@@ -728,5 +739,9 @@ export class ScholarBaselineService {
           : 'ViaScholar Staff',
       })),
     };
+    },
+    60 * 1000,
+    forceRefresh,
+  );
   }
 }

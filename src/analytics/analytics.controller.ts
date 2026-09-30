@@ -20,8 +20,14 @@ export class AnalyticsController {
     summary:
       'Get unified descriptive analytics (Mean, Std Dev, Compliance, Percentiles, Disbursements, Funnel)',
   })
-  getDescriptiveAnalytics(@Query() query: AnalyticsQueryDto) {
-    return this.analyticsService.getDescriptiveAnalytics(query);
+  getDescriptiveAnalytics(
+    @Query() query: AnalyticsQueryDto,
+    @Query('refresh') refresh?: string,
+  ) {
+    return this.analyticsService.getDescriptiveAnalytics(
+      query,
+      refresh === 'true',
+    );
   }
 
   @Post('explain')

@@ -10,6 +10,7 @@ import { EventsGateway } from '../events/events.gateway.js';
 import { CreateSchoolGradingDto } from './dto/create-school-grading.dto.js';
 import { UpdateSettingsDto } from './dto/update-settings.dto.js';
 import { UpdateSchoolGradingDto } from './dto/update-school-grading.dto.js';
+import { AppCacheService } from '../common/cache/app-cache.service.js';
 
 @Injectable()
 export class SettingsService implements OnModuleInit {
@@ -17,6 +18,7 @@ export class SettingsService implements OnModuleInit {
     private prisma: PrismaService,
     private auditService: AuditService,
     private eventsGateway: EventsGateway,
+    private cacheService: AppCacheService,
   ) {}
 
   // Automatically initialize default settings (90.00 threshold) on startup
@@ -31,19 +33,26 @@ export class SettingsService implements OnModuleInit {
   }
 
   // 1. Get Global Settings
-  async getSettings() {
-    let settings = await this.prisma.systemSetting.findFirst();
-    if (!settings) {
-      settings = await this.prisma.systemSetting.create({
-        data: { grade_threshold: 90.0 },
-      });
-    }
-    return settings;
+  async getSettings(forceRefresh = false) {
+    return this.cacheService.wrap(
+      'settings:global',
+      async () => {
+        let settings = await this.prisma.systemSetting.findFirst();
+        if (!settings) {
+          settings = await this.prisma.systemSetting.create({
+            data: { grade_threshold: 90.0 },
+          });
+        }
+        return settings;
+      },
+      5 * 60 * 1000,
+      forceRefresh,
+    );
   }
 
   // 2. Update Global Settings (Admin / Grantor)
   async updateSettings(userId: number, dto: UpdateSettingsDto) {
-    const settings = await this.getSettings();
+    const settings = await this.getSettings(true);
 
     const updated = await this.prisma.systemSetting.update({
       where: { setting_id: settings.setting_id },
@@ -58,6 +67,10 @@ export class SettingsService implements OnModuleInit {
       'SETTINGS_UPDATED',
       `Updated global grade retention threshold to ${dto.grade_threshold}%`,
     );
+
+    // Invalidate cached global settings and dependent dashboards
+    await this.cacheService.del('settings:global');
+    await this.cacheService.delPattern('dashboard:');
 
     this.eventsGateway.emitToStaff('settings:updated', updated);
     this.eventsGateway.emitToAll('settings:updated', updated);
@@ -123,23 +136,35 @@ export class SettingsService implements OnModuleInit {
 
     this.eventsGateway.emitToStaff('school_grading:created', school);
 
+    await this.cacheService.delPattern('settings:schools:');
+    await this.cacheService.delPattern('dashboard:');
+
     return school;
   }
 
   // 4. Get All School Grading Scales (Optional query for verifiedOnly)
-  async getSchoolGradings(verifiedOnly?: boolean) {
-    return this.prisma.schoolGradingSystem.findMany({
-      where: verifiedOnly ? { is_verified: true } : undefined,
-      orderBy: { school_name: 'asc' },
-      include: {
-        submitted_by_user: {
-          select: { user_id: true, email: true, role: true },
-        },
-        verified_by_employee: {
-          select: { employee_id: true, first_name: true, last_name: true },
-        },
+  async getSchoolGradings(verifiedOnly?: boolean, forceRefresh = false) {
+    const cacheKey = `settings:schools:${verifiedOnly ? 'verified' : 'all'}`;
+
+    return this.cacheService.wrap(
+      cacheKey,
+      async () => {
+        return this.prisma.schoolGradingSystem.findMany({
+          where: verifiedOnly ? { is_verified: true } : undefined,
+          orderBy: { school_name: 'asc' },
+          include: {
+            submitted_by_user: {
+              select: { user_id: true, email: true, role: true },
+            },
+            verified_by_employee: {
+              select: { employee_id: true, first_name: true, last_name: true },
+            },
+          },
+        });
       },
-    });
+      5 * 60 * 1000,
+      forceRefresh,
+    );
   }
 
   // 4b. Coordinator / Staff Verifies School Grading Scale
@@ -173,6 +198,9 @@ export class SettingsService implements OnModuleInit {
       `Coordinator verified grading scale for school: ${school.school_name}`,
     );
 
+    await this.cacheService.delPattern('settings:schools:');
+    await this.cacheService.delPattern('dashboard:');
+
     this.eventsGateway.emitToStaff('school_grading:verified', updated);
     this.eventsGateway.emitToAll('school_grading:verified', updated);
 
@@ -198,6 +226,9 @@ export class SettingsService implements OnModuleInit {
       'SCHOOL_GRADING_DELETED',
       `Deleted grading system for school: ${school.school_name}`,
     );
+
+    await this.cacheService.delPattern('settings:schools:');
+    await this.cacheService.delPattern('dashboard:');
 
     this.eventsGateway.emitToStaff('school_grading:deleted', {
       school_id: schoolId,
@@ -236,6 +267,9 @@ export class SettingsService implements OnModuleInit {
       'SCHOOL_GRADING_UPDATED',
       `Updated grading system for school: ${school.school_name}`,
     );
+
+    await this.cacheService.delPattern('settings:schools:');
+    await this.cacheService.delPattern('dashboard:');
 
     this.eventsGateway.emitToStaff('school_grading:updated', updated);
 
