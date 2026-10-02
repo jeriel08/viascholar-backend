@@ -11,6 +11,7 @@ import { CloudinaryService } from '../../cloudinary/cloudinary.service.js';
 import { SettingsService } from '../../settings/settings.service.js';
 import { EventsGateway } from '../../events/events.gateway.js';
 import { ProspectusOcrService } from '../prospectus-ocr.service.js';
+import { AppCacheService } from '../../common/cache/app-cache.service.js';
 
 @Injectable()
 export class BaselineDocumentIngestionService {
@@ -23,6 +24,7 @@ export class BaselineDocumentIngestionService {
     private readonly settingsService: SettingsService,
     private readonly eventsGateway: EventsGateway,
     private readonly prospectusOcrService: ProspectusOcrService,
+    private readonly cacheService: AppCacheService,
   ) {}
 
   // 1. Upload Prospectus Document & Trigger Batch Ingestion OCR
@@ -180,6 +182,10 @@ export class BaselineDocumentIngestionService {
       studentName: `${scholar.first_name} ${scholar.last_name}`.trim(),
       subjectsCount: extracted.subjects.length,
     });
+
+    await this.cacheService.del(`baseline:scholar:${userId}`);
+    await this.cacheService.del(`baseline:review:${scholar.profile_id}`);
+    await this.cacheService.del(`dashboard:scholar:${userId}`);
 
     return {
       message:
@@ -351,6 +357,10 @@ export class BaselineDocumentIngestionService {
         },
       },
     });
+
+    await this.cacheService.del(`baseline:scholar:${userId}`);
+    await this.cacheService.del(`baseline:review:${scholar.profile_id}`);
+    await this.cacheService.del(`dashboard:scholar:${userId}`);
 
     return {
       message: `Historical grades processed. Successfully credited ${matchedCredited.length} subjects.`,

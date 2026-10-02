@@ -23,8 +23,11 @@ export class AcademicBaselineService {
   // ==========================================
 
   // 1. Get complete baseline onboarding state for current scholar
-  async getScholarBaselineState(userId: number) {
-    return this.scholarBaselineService.getScholarBaselineState(userId);
+  async getScholarBaselineState(userId: number, forceRefresh = false) {
+    return this.scholarBaselineService.getScholarBaselineState(
+      userId,
+      forceRefresh,
+    );
   }
 
   // Fast aggregated summary endpoint for Scholar Dashboard
@@ -84,9 +87,13 @@ export class AcademicBaselineService {
   }
 
   // 8. Coordinator: Get full side-by-side audit bundle for a scholar
-  async getCoordinatorBaselineReview(scholarProfileId: number) {
+  async getCoordinatorBaselineReview(
+    scholarProfileId: number,
+    forceRefresh = false,
+  ) {
     return this.coordinatorBaselineService.getCoordinatorBaselineReview(
       scholarProfileId,
+      forceRefresh,
     );
   }
 

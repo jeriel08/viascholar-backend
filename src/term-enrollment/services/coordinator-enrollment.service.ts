@@ -12,6 +12,7 @@ import {
   ReviewEnrollmentDto,
 } from '../dto/review-enrollment.dto.js';
 import { EnrollmentOcrService } from './enrollment-ocr.service.js';
+import { AppCacheService } from '../../common/cache/app-cache.service.js';
 
 @Injectable()
 export class CoordinatorEnrollmentService {
@@ -22,6 +23,7 @@ export class CoordinatorEnrollmentService {
     private readonly auditService: AuditService,
     private readonly eventsGateway: EventsGateway,
     private readonly enrollmentOcrService: EnrollmentOcrService,
+    private readonly cacheService: AppCacheService,
   ) {}
 
   private async getCoordinatorEmployee(userId: number) {
@@ -271,6 +273,20 @@ export class CoordinatorEnrollmentService {
         scholar_id: enrollment.scholar_profile_id,
         disbursement_id: result.disbursement.disbursement_id,
       });
+
+      if (enrollment.scholar_profile) {
+        await this.cacheService.del(
+          `baseline:scholar:${enrollment.scholar_profile.user_id}`,
+        );
+        await this.cacheService.del(
+          `baseline:review:${enrollment.scholar_profile.profile_id}`,
+        );
+        await this.cacheService.del(
+          `dashboard:scholar:${enrollment.scholar_profile.user_id}`,
+        );
+      }
+      await this.cacheService.delPattern('dashboard:coordinator:');
+      await this.cacheService.delPattern('dashboard:grantor:');
 
       return {
         message:

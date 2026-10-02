@@ -1,13 +1,24 @@
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeAll, jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
-import { AcademicBaselineController } from './academic-baseline.controller.js';
-import { AcademicBaselineService } from './academic-baseline.service.js';
 
 describe('AcademicBaselineController', () => {
-  let controller: AcademicBaselineController;
+  let controller: any;
   let serviceMock: any;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
+    jest.unstable_mockModule('@nestjs/throttler', () => ({
+      Throttle: () => () => {},
+      SkipThrottle: () => () => {},
+      ThrottlerGuard: class {},
+    }));
+
+    const { AcademicBaselineController } = await import(
+      './academic-baseline.controller.js'
+    );
+    const { AcademicBaselineService } = await import(
+      './academic-baseline.service.js'
+    );
+
     serviceMock = {
       getScholarBaselineState: jest.fn(),
       selectOrProposeSchool: jest.fn(),
@@ -32,12 +43,21 @@ describe('AcademicBaselineController', () => {
       ],
     }).compile();
 
-    controller = module.get<AcademicBaselineController>(
-      AcademicBaselineController,
-    );
+    controller = module.get(AcademicBaselineController);
   });
 
   it('should be defined', () => {
     expect(controller).toBeDefined();
+  });
+
+  it('delegates getMyBaseline with refresh param', async () => {
+    const req = { user: { user_id: 42, role: 'SCHOLAR' } } as any;
+    await controller.getMyBaseline(req, 'true');
+    expect(serviceMock.getScholarBaselineState).toHaveBeenCalledWith(42, true);
+  });
+
+  it('delegates getCoordinatorReview with refresh param', async () => {
+    await controller.getCoordinatorReview(10, 'true');
+    expect(serviceMock.getCoordinatorBaselineReview).toHaveBeenCalledWith(10, true);
   });
 });

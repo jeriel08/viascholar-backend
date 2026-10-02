@@ -26,85 +26,94 @@ export class ScholarBaselineService {
   ) {}
 
   // 1. Get complete baseline onboarding state for current scholar
-  async getScholarBaselineState(userId: number) {
-    const scholar = await this.prisma.scholarProfile.findUnique({
-      where: { user_id: userId },
-      include: {
-        school_grading_system: true,
-        prospectus: {
+  async getScholarBaselineState(userId: number, forceRefresh = false) {
+    const cacheKey = `baseline:scholar:${userId}`;
+
+    return this.cacheService.wrap(
+      cacheKey,
+      async () => {
+        const scholar = await this.prisma.scholarProfile.findUnique({
+          where: { user_id: userId },
           include: {
-            subjects: {
-              orderBy: [
-                { year_level: 'asc' },
-                { semester: 'asc' },
-                { subject_code: 'asc' },
-              ],
-            },
-            document: true,
-            frozen_by_employee: {
-              select: {
-                employee_id: true,
-                first_name: true,
-                last_name: true,
-                title: true,
+            school_grading_system: true,
+            prospectus: {
+              include: {
+                subjects: {
+                  orderBy: [
+                    { year_level: 'asc' },
+                    { semester: 'asc' },
+                    { subject_code: 'asc' },
+                  ],
+                },
+                document: true,
+                frozen_by_employee: {
+                  select: {
+                    employee_id: true,
+                    first_name: true,
+                    last_name: true,
+                    title: true,
+                  },
+                },
               },
             },
-          },
-        },
-        documents: {
-          where: {
-            document_type: {
-              in: ['PROSPECTUS', 'HISTORICAL_CCG', 'TOR', 'GRADE_SLIP'],
+            documents: {
+              where: {
+                document_type: {
+                  in: ['PROSPECTUS', 'HISTORICAL_CCG', 'TOR', 'GRADE_SLIP'],
+                },
+              },
+              orderBy: { uploaded_at: 'desc' },
             },
           },
-          orderBy: { uploaded_at: 'desc' },
-        },
+        });
+
+        if (!scholar) {
+          throw new NotFoundException('Scholar profile not found.');
+        }
+
+        const subjects = scholar.prospectus?.subjects || [];
+        let totalUnits = 0;
+        let creditedUnits = 0;
+        let untakenUnits = 0;
+        let creditedCount = 0;
+        let untakenCount = 0;
+
+        for (const sub of subjects) {
+          const u = Number(sub.units) || 0;
+          totalUnits += u;
+          if (sub.status === 'CREDITED' || sub.status === 'PASSED') {
+            creditedUnits += u;
+            creditedCount++;
+          } else {
+            untakenUnits += u;
+            untakenCount++;
+          }
+        }
+
+        return {
+          profile_id: scholar.profile_id,
+          student_name: `${scholar.first_name} ${scholar.last_name}`.trim(),
+          student_number: scholar.student_number,
+          course_of_study: scholar.course_of_study,
+          current_year_level: scholar.current_year_level,
+          academic_baseline_status: scholar.academic_baseline_status,
+          school_grading_system: scholar.school_grading_system,
+          prospectus: scholar.prospectus,
+          documents: scholar.documents,
+          metrics: {
+            total_subjects: subjects.length,
+            total_units: Number(totalUnits.toFixed(1)),
+            credited_subjects: creditedCount,
+            credited_units: Number(creditedUnits.toFixed(1)),
+            untaken_subjects: untakenCount,
+            remaining_units: Number(untakenUnits.toFixed(1)),
+            is_baseline_frozen: scholar.prospectus?.is_frozen ?? false,
+          },
+        };
       },
-    });
-
-    if (!scholar) {
-      throw new NotFoundException('Scholar profile not found.');
-    }
-
-    const subjects = scholar.prospectus?.subjects || [];
-    let totalUnits = 0;
-    let creditedUnits = 0;
-    let untakenUnits = 0;
-    let creditedCount = 0;
-    let untakenCount = 0;
-
-    for (const sub of subjects) {
-      const u = Number(sub.units) || 0;
-      totalUnits += u;
-      if (sub.status === 'CREDITED' || sub.status === 'PASSED') {
-        creditedUnits += u;
-        creditedCount++;
-      } else {
-        untakenUnits += u;
-        untakenCount++;
-      }
-    }
-
-    return {
-      profile_id: scholar.profile_id,
-      student_name: `${scholar.first_name} ${scholar.last_name}`.trim(),
-      student_number: scholar.student_number,
-      course_of_study: scholar.course_of_study,
-      current_year_level: scholar.current_year_level,
-      academic_baseline_status: scholar.academic_baseline_status,
-      school_grading_system: scholar.school_grading_system,
-      prospectus: scholar.prospectus,
-      documents: scholar.documents,
-      metrics: {
-        total_subjects: subjects.length,
-        total_units: Number(totalUnits.toFixed(1)),
-        credited_subjects: creditedCount,
-        credited_units: Number(creditedUnits.toFixed(1)),
-        untaken_subjects: untakenCount,
-        remaining_units: Number(untakenUnits.toFixed(1)),
-        is_baseline_frozen: scholar.prospectus?.is_frozen ?? false,
-      },
-    };
+      60 * 60 * 1000, // 1 hour TTL
+      forceRefresh,
+    );
   }
 
   // 2. Scholar selects or proposes school grading system
@@ -200,6 +209,10 @@ export class ScholarBaselineService {
       school_name: updated.school_grading_system?.school_name,
       academic_baseline_status: updated.academic_baseline_status,
     });
+
+    await this.cacheService.del(`baseline:scholar:${userId}`);
+    await this.cacheService.del(`baseline:review:${scholar.profile_id}`);
+    await this.cacheService.del(`dashboard:scholar:${userId}`);
 
     return {
       message: 'Institution grading configuration confirmed.',
@@ -307,6 +320,10 @@ export class ScholarBaselineService {
       `Updated ${dto.subjects.length} subjects on prospectus ID ${prospectus.prospectus_id}.`,
     );
 
+    await this.cacheService.del(`baseline:scholar:${userId}`);
+    await this.cacheService.del(`baseline:review:${scholarProfileId}`);
+    await this.cacheService.del(`dashboard:scholar:${userId}`);
+
     return {
       message: 'Prospectus subjects saved successfully.',
       prospectus: updated,
@@ -364,6 +381,8 @@ export class ScholarBaselineService {
       payload,
     );
 
+    await this.cacheService.del(`baseline:scholar:${userId}`);
+    await this.cacheService.del(`baseline:review:${scholar.profile_id}`);
     await this.cacheService.del(`dashboard:scholar:${userId}`);
     await this.cacheService.delPattern('dashboard:coordinator:');
     await this.cacheService.delPattern('dashboard:grantor:');

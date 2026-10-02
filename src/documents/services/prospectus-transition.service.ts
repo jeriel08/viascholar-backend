@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { SettingsService } from '../../settings/settings.service.js';
+import { AppCacheService } from '../../common/cache/app-cache.service.js';
 import {
   Application,
   SchoolGradingSystem,
@@ -11,6 +12,7 @@ export class ProspectusTransitionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly settingsService: SettingsService,
+    private readonly cacheService: AppCacheService,
   ) {}
 
   /**
@@ -29,7 +31,10 @@ export class ProspectusTransitionService {
   ): Promise<void> {
     const prospectus = await this.prisma.scholarProspectus.findUnique({
       where: { scholar_profile_id: scholarProfileId },
-      include: { subjects: true },
+      include: {
+        subjects: true,
+        scholar_profile: { select: { user_id: true } },
+      },
     });
 
     if (!prospectus || !prospectus.subjects?.length) return;
@@ -87,6 +92,16 @@ export class ProspectusTransitionService {
         });
       }
     }
+
+    if (prospectus.scholar_profile?.user_id) {
+      await this.cacheService.del(
+        `baseline:scholar:${prospectus.scholar_profile.user_id}`,
+      );
+      await this.cacheService.del(
+        `dashboard:scholar:${prospectus.scholar_profile.user_id}`,
+      );
+    }
+    await this.cacheService.del(`baseline:review:${scholarProfileId}`);
   }
 
   /**

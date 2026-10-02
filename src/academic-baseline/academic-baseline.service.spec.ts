@@ -81,7 +81,7 @@ describe('AcademicBaselineService', () => {
     await service.getScholarBaselineState(123);
     expect(
       scholarBaselineServiceMock.getScholarBaselineState,
-    ).toHaveBeenCalledWith(123);
+    ).toHaveBeenCalledWith(123, false);
   });
 
   it('delegates uploadProspectus to BaselineDocumentIngestionService', async () => {

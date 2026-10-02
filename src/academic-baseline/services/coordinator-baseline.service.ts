@@ -9,6 +9,7 @@ import { AuditService } from '../../audit/audit.service.js';
 import { EventsGateway } from '../../events/events.gateway.js';
 import { BatchUpdateSubjectsDto } from '../dto/batch-update-subjects.dto.js';
 import { FreezeBaselineDto } from '../dto/freeze-baseline.dto.js';
+import { AppCacheService } from '../../common/cache/app-cache.service.js';
 
 @Injectable()
 export class CoordinatorBaselineService {
@@ -18,6 +19,7 @@ export class CoordinatorBaselineService {
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
     private readonly eventsGateway: EventsGateway,
+    private readonly cacheService: AppCacheService,
   ) {}
 
   // 1. Coordinator: Get all scholars awaiting baseline review / frozen status
@@ -56,87 +58,96 @@ export class CoordinatorBaselineService {
   }
 
   // 2. Coordinator: Get full side-by-side audit bundle for a scholar
-  async getCoordinatorBaselineReview(scholarProfileId: number) {
-    const scholar = await this.prisma.scholarProfile.findUnique({
-      where: { profile_id: scholarProfileId },
-      include: {
-        user: { select: { email: true, created_at: true } },
-        school_grading_system: true,
-        prospectus: {
+  async getCoordinatorBaselineReview(scholarProfileId: number, forceRefresh = false) {
+    const cacheKey = `baseline:review:${scholarProfileId}`;
+
+    return this.cacheService.wrap(
+      cacheKey,
+      async () => {
+        const scholar = await this.prisma.scholarProfile.findUnique({
+          where: { profile_id: scholarProfileId },
           include: {
-            document: true,
-            subjects: {
-              orderBy: [
-                { year_level: 'asc' },
-                { semester: 'asc' },
-                { subject_code: 'asc' },
-              ],
-            },
-            frozen_by_employee: {
-              select: {
-                employee_id: true,
-                first_name: true,
-                last_name: true,
-                title: true,
-                user: { select: { role: true } },
+            user: { select: { email: true, created_at: true } },
+            school_grading_system: true,
+            prospectus: {
+              include: {
+                document: true,
+                subjects: {
+                  orderBy: [
+                    { year_level: 'asc' },
+                    { semester: 'asc' },
+                    { subject_code: 'asc' },
+                  ],
+                },
+                frozen_by_employee: {
+                  select: {
+                    employee_id: true,
+                    first_name: true,
+                    last_name: true,
+                    title: true,
+                    user: { select: { role: true } },
+                  },
+                },
               },
             },
-          },
-        },
-        documents: {
-          where: {
-            document_type: {
-              in: ['PROSPECTUS', 'HISTORICAL_CCG', 'TOR', 'GRADE_SLIP'],
+            documents: {
+              where: {
+                document_type: {
+                  in: ['PROSPECTUS', 'HISTORICAL_CCG', 'TOR', 'GRADE_SLIP'],
+                },
+              },
+              orderBy: { uploaded_at: 'desc' },
             },
           },
-          orderBy: { uploaded_at: 'desc' },
-        },
+        });
+
+        if (!scholar) {
+          throw new NotFoundException(
+            `Scholar profile ID ${scholarProfileId} not found.`,
+          );
+        }
+
+        const subjects = scholar.prospectus?.subjects || [];
+        let totalUnits = 0;
+        let creditedUnits = 0;
+        let untakenUnits = 0;
+
+        for (const sub of subjects) {
+          const u = Number(sub.units) || 0;
+          totalUnits += u;
+          if (sub.status === 'CREDITED' || sub.status === 'PASSED') {
+            creditedUnits += u;
+          } else {
+            untakenUnits += u;
+          }
+        }
+
+        return {
+          scholar_profile: {
+            profile_id: scholar.profile_id,
+            student_name: `${scholar.first_name} ${scholar.last_name}`.trim(),
+            student_number: scholar.student_number,
+            course_of_study: scholar.course_of_study,
+            school_name: scholar.school_name,
+            current_year_level: scholar.current_year_level,
+            email: scholar.user.email,
+            academic_baseline_status: scholar.academic_baseline_status,
+          },
+          school_grading_system: scholar.school_grading_system,
+          prospectus: scholar.prospectus,
+          documents: scholar.documents,
+          metrics: {
+            total_subjects: subjects.length,
+            total_units: Number(totalUnits.toFixed(1)),
+            credited_units: Number(creditedUnits.toFixed(1)),
+            remaining_units: Number(untakenUnits.toFixed(1)),
+            is_frozen: scholar.prospectus?.is_frozen ?? false,
+          },
+        };
       },
-    });
-
-    if (!scholar) {
-      throw new NotFoundException(
-        `Scholar profile ID ${scholarProfileId} not found.`,
-      );
-    }
-
-    const subjects = scholar.prospectus?.subjects || [];
-    let totalUnits = 0;
-    let creditedUnits = 0;
-    let untakenUnits = 0;
-
-    for (const sub of subjects) {
-      const u = Number(sub.units) || 0;
-      totalUnits += u;
-      if (sub.status === 'CREDITED' || sub.status === 'PASSED') {
-        creditedUnits += u;
-      } else {
-        untakenUnits += u;
-      }
-    }
-
-    return {
-      scholar_profile: {
-        profile_id: scholar.profile_id,
-        student_name: `${scholar.first_name} ${scholar.last_name}`.trim(),
-        student_number: scholar.student_number,
-        course_of_study: scholar.course_of_study,
-        school_name: scholar.school_name,
-        current_year_level: scholar.current_year_level,
-        email: scholar.user.email,
-        academic_baseline_status: scholar.academic_baseline_status,
-      },
-      school_grading_system: scholar.school_grading_system,
-      prospectus: scholar.prospectus,
-      documents: scholar.documents,
-      metrics: {
-        total_subjects: subjects.length,
-        total_units: Number(totalUnits.toFixed(1)),
-        credited_units: Number(creditedUnits.toFixed(1)),
-        remaining_units: Number(untakenUnits.toFixed(1)),
-        is_frozen: scholar.prospectus?.is_frozen ?? false,
-      },
-    };
+      60 * 60 * 1000, // 1 hour TTL
+      forceRefresh,
+    );
   }
 
   // 3. Coordinator updates / adds / adjusts subjects on a prospectus
@@ -152,6 +163,9 @@ export class CoordinatorBaselineService {
 
     const prospectus = await this.prisma.scholarProspectus.findUnique({
       where: { prospectus_id: prospectusId },
+      include: {
+        scholar_profile: { select: { profile_id: true, user_id: true } },
+      },
     });
     if (!prospectus)
       throw new NotFoundException(`Prospectus ID ${prospectusId} not found.`);
@@ -218,6 +232,18 @@ export class CoordinatorBaselineService {
       employeeUserId,
       'COORDINATOR_UPDATED_BASELINE_SUBJECTS',
       `Coordinator updated ${dto.subjects.length} subjects on prospectus ID ${prospectusId}.`,
+    );
+
+    if (prospectus.scholar_profile?.user_id) {
+      await this.cacheService.del(
+        `baseline:scholar:${prospectus.scholar_profile.user_id}`,
+      );
+      await this.cacheService.del(
+        `dashboard:scholar:${prospectus.scholar_profile.user_id}`,
+      );
+    }
+    await this.cacheService.del(
+      `baseline:review:${prospectus.scholar_profile_id}`,
     );
 
     return {
@@ -355,6 +381,19 @@ export class CoordinatorBaselineService {
       );
     }
 
+    if (prospectus.scholar_profile?.user_id) {
+      await this.cacheService.del(
+        `baseline:scholar:${prospectus.scholar_profile.user_id}`,
+      );
+      await this.cacheService.del(
+        `dashboard:scholar:${prospectus.scholar_profile.user_id}`,
+      );
+    }
+    await this.cacheService.del(
+      `baseline:review:${prospectus.scholar_profile_id}`,
+    );
+    await this.cacheService.delPattern('dashboard:coordinator:');
+
     return {
       message: `Academic baseline for ${studentName} has been frozen and locked successfully.`,
       prospectus: updatedProspectus,
@@ -401,6 +440,19 @@ export class CoordinatorBaselineService {
       prospectusId,
       scholarProfileId: prospectus.scholar_profile_id,
     });
+
+    if (prospectus.scholar_profile?.user_id) {
+      await this.cacheService.del(
+        `baseline:scholar:${prospectus.scholar_profile.user_id}`,
+      );
+      await this.cacheService.del(
+        `dashboard:scholar:${prospectus.scholar_profile.user_id}`,
+      );
+    }
+    await this.cacheService.del(
+      `baseline:review:${prospectus.scholar_profile_id}`,
+    );
+    await this.cacheService.delPattern('dashboard:coordinator:');
 
     return {
       message: 'Academic baseline unlocked for edits.',

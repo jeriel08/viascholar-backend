@@ -83,8 +83,14 @@ export class AcademicBaselineController {
     summary:
       'Scholar views their complete academic baseline setup state and checklist',
   })
-  getMyBaseline(@Request() req: AuthenticatedRequest) {
-    return this.baselineService.getScholarBaselineState(req.user.user_id);
+  getMyBaseline(
+    @Request() req: AuthenticatedRequest,
+    @Query('refresh') refresh?: string,
+  ) {
+    return this.baselineService.getScholarBaselineState(
+      req.user.user_id,
+      refresh === 'true',
+    );
   }
 
   @Get('scholar/dashboard-summary')
@@ -229,8 +235,12 @@ export class AcademicBaselineController {
   })
   getCoordinatorReview(
     @Param('scholarProfileId', ParseIntPipe) scholarProfileId: number,
+    @Query('refresh') refresh?: string,
   ) {
-    return this.baselineService.getCoordinatorBaselineReview(scholarProfileId);
+    return this.baselineService.getCoordinatorBaselineReview(
+      scholarProfileId,
+      refresh === 'true',
+    );
   }
 
   @Put('coordinator/review/:prospectusId/subjects')
