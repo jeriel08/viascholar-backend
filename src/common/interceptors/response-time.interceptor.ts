@@ -12,6 +12,10 @@ import { requestCacheStorage } from '../cache/cache-context.js';
 @Injectable()
 export class ResponseTimeInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    if (context.getType() !== 'http') {
+      return next.handle();
+    }
+
     const http = context.switchToHttp();
     const req = http.getRequest<Request>();
     const res = http.getResponse<Response>();
@@ -25,7 +29,7 @@ export class ResponseTimeInterceptor implements NestInterceptor {
           .pipe(
             tap({
               next: () => {
-                if (!res.headersSent) {
+                if (res && !res.headersSent) {
                   const elapsed = (performance.now() - start).toFixed(2);
                   res.setHeader('X-Response-Time', `${elapsed}ms`);
                   if (!res.getHeader('X-Cache')) {
@@ -34,7 +38,7 @@ export class ResponseTimeInterceptor implements NestInterceptor {
                 }
               },
               error: () => {
-                if (!res.headersSent) {
+                if (res && !res.headersSent) {
                   const elapsed = (performance.now() - start).toFixed(2);
                   res.setHeader('X-Response-Time', `${elapsed}ms`);
                 }

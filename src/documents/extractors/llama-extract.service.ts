@@ -105,35 +105,38 @@ const DOCUMENT_DATA_SCHEMA = {
     },
     grades: {
       type: 'array',
-      description: 'List of subjects and grades extracted from the document.',
+      description:
+        'List of all individual academic subjects and their final grades extracted from the document.',
       items: {
         type: 'object',
         properties: {
           subject_code: {
             type: 'string',
             description:
-              'Course code or subject identifier (e.g., "NSTP 1", "PAHF 1", "GE 2").',
+              'Course code or subject identifier (e.g., "COR 1", "APP 1", "ABM 1", "NSTP 1", "GE 2"). If the code and title are printed together in one cell (e.g. "COR 1 Oral Communication"), extract the prefix as subject_code.',
           },
           subject_name: {
             type: 'string',
-            description: 'Descriptive title of the subject.',
+            description:
+              'Descriptive title of the subject (e.g., "Oral Communication", "General Mathematics", "Organization and Management"). REQUIRED for every grade item. NEVER leave blank or null.',
           },
           units: {
             type: 'number',
-            description: 'Credit units/hours. Default to 0.0 if not listed.',
+            description:
+              'Credit units. For college documents, extract listed units. For high school Form 138 / SF9, default to 1.0 if not listed.',
           },
           grade: {
             type: 'number',
             description:
-              'Final grade or rating earned. If final grade is blank, latest quarter grade.',
+              'Final numerical grade earned. For DepEd Form 138 / SF9 / Form 9 report cards, extract the value in the "Final Grade" / "Semestral Final Grade" / "FG" column. Do NOT extract quarter grades (1, 2, 3, 4).',
           },
           semester: {
             type: 'string',
             description:
-              '"1st Semester" or "2nd Semester" based on table column or header.',
+              '"1st Semester" or "2nd Semester" based on table section.',
           },
         },
-        required: ['subject_code', 'grade'],
+        required: ['subject_name', 'grade'],
       },
     },
     grading_legend: {
@@ -509,13 +512,41 @@ STRICT EXTRACTION INSTRUCTIONS:
      * Other documents -> "OTHER"
 2. Senior High / Junior High (Form 138 / Form 9 / SF9):
    - Check header metadata fields for Grade, Section, Track, and Strand:
-     * "Grade / Section" or "Grade:" and "Section:" (e.g. if header says '11 - ABM' or 'Grade 11 - ABM', extract grade_level: 'Grade 11', section: '11-ABM')
+     * "Grade / Section" or "Grade:" and "Section:" (e.g. if header says '11 - ABM 1' or 'Grade 11 - ABM', extract grade_level: 'Grade 11', section: '11-ABM 1' or 'ABM 1')
      * "Track:" (e.g. 'Academic Track', 'TVL Track') -> extract to 'track'
      * "Strand:" (e.g. 'Accountancy, Business and Management (ABM)', 'STEM', 'HUMSS') -> extract to 'strand' and 'course_name'
      * Do NOT extract descriptive tracks as the section name. The section is the short code/name (e.g. '11-ABM', 'Diamond', '12-STEM 1').
+   - REPORT ON LEARNING PROGRESS AND ACHIEVEMENT (Grades Table):
+     * DepEd SF9 / Form 138 report cards organize subjects into TWO distinct semestral tables: 'FIRST SEMESTER' and 'SECOND SEMESTER'.
+     * The columns are: [SUBJECTS | 1 | 2 | FG] for 1st Semester (Quarter 1, Quarter 2, Final Grade 'FG') and [SUBJECTS | 3 | 4 | FG] for 2nd Semester (Quarter 3, Quarter 4, Final Grade 'FG').
+     * ALWAYS extract the value in the 'FG' (Final Grade) column as the 'grade'. Do NOT extract quarterly ratings (columns 1, 2, 3, 4).
+     * STRICT ROW BINDING & ALIGNMENT: Each horizontal row corresponds to EXACTLY ONE subject. Do NOT let document paper curvature, camera tilt, or vertical perspective skew cause a row offset. Trace each row horizontally across the grid from the subject name to its corresponding FG grade.
+     * Row 1 in 1st Semester is 'COR 1 Oral Communication' with FG 93. Do NOT detach 93 into a phantom row!
+     * ALL subjects in the semester must be extracted, including all Core ('COR'), Applied ('APP'), and Specialized ('ABM' / 'STEM' / 'HUMSS') subjects. For example, in 1st Semester, extract all 8 subjects down to 'ABM 1 Organization and Management' (FG: 89).
+     * Separate Subject Code and Title: If the cell contains both (e.g. 'COR 1 Oral Communication'), extract subject_code: 'COR 1' and subject_name: 'Oral Communication'. If 'ABM 1 Organization and Management', extract subject_code: 'ABM 1' and subject_name: 'Organization and Management'.
+     * NO PHANTOM ENTRIES: Every grade item MUST have a valid, non-empty subject_name. Never extract a row without a subject name. Never extract table section headers or semester averages as subjects.
 3. College Documents (TOR / COG):
-   - Extract Degree Program (e.g. 'Bachelor of Science in Information Technology') into 'course_name'.
+   - Extract Degree Program (e.g. 'Bachelor of Science in Information Technology', 'BS Accountancy') into 'course_name'.
    - Extract Year Level (e.g. '1st Year', '2nd Year', '3rd Year') into 'grade_level'.
+   - MULTI-SEMESTER CHRONOLOGICAL STRUCTURE:
+     * Transcripts organize courses by Academic Year and Semester blocks (e.g., "FIRST SEMESTER AY 2021-2022", "SECOND SEMESTER 2021-2022", "SUMMER 2022", "FIRST SEMESTER 2022-2023").
+     * Assign the corresponding 'semester' label (e.g. "1st Semester", "2nd Semester", "Summer") to every subject within that block.
+   - PARALLEL / TWO-COLUMN PAGE LAYOUTS:
+     * Many Philippine university TORs (e.g., University of Mindanao, UP, ADDU, USEP, UIC, HCDC) print semesters in TWO parallel vertical columns on each page (e.g., Year 1 on the left side, Year 2 on the right side).
+     * Process each semester block vertically from top to bottom. NEVER read across horizontally between parallel columns, as that scrambles course codes from different years.
+   - DISAMBIGUATION OF UNITS VS GRADES:
+     * College transcript tables typically feature columns: [Course No. | Descriptive Title | Final Rating/Grade | Units/Credits].
+     * Carefully distinguish 'units' (usually small integer or half-integer numbers like 3.0, 2.0, 1.0, 4.0, 5.0) from 'grade' (e.g. 1.00, 1.25, 1.50, 1.75, 2.00, 2.50, 3.00, 3.50, 4.00, or 75–100).
+     * NEVER swap or invert units with grades.
+     * If Lecture ('Lec') and Laboratory ('Lab') units are listed separately (e.g., Lec: 2, Lab: 1), sum them into total credit units (3.0).
+   - EXCLUDE ADMINISTRATIVE HEADERS, LABELS, AND FOOTERS:
+     * Do NOT extract administrative or structural lines as subjects. Ignore:
+       - Term headings: "FIRST SEMESTER AY 2022-2023", "MIDYEAR TERM 2023", "SECOND TRIMESTER"
+       - Admission lines: "ACADEMIC ENTRANCE: HIGH SCHOOL GRADUATE", "CREDITED FROM PREVIOUS COLLEGE", "ENTRANCE CREDENTIALS"
+       - Column headings: "COURSE NO.", "DESCRIPTIVE TITLE", "FINAL RATING", "CREDITS", "REMARKS"
+       - Subtotals & footers: "TOTAL UNITS EARNED: 21.0", "TERM GPA: 1.65", "CUMULATIVE GPA: 1.72", "SEMESTRAL AVERAGE", "*** NOTHING FOLLOWS ***"
+   - MULTI-PAGE COMPLETENESS:
+     * College TORs span 2 to 4+ pages. Extract all completed curriculum courses across ALL pages of the merged document.
 4. Grading Legend & Scale Disambiguation ('grading_legend'):
    - Many Philippine college transcripts (TOR) display multiple grading system tables/legends (e.g. for Undergraduate vs. Juris Doctor / Professional School vs. Old/Legacy systems).
    - ALWAYS select the legend applicable to UNDERGRADUATE / COLLEGE students. Ignore legends labeled "JURIS DOCTOR", "PROFESSIONAL SCHOOL", "GRADUATE SCHOOL", or "MASTER'S/DOCTORAL".
@@ -555,7 +586,59 @@ STRICT EXTRACTION INSTRUCTIONS:
       term: rawData.term,
       first_sem_average: rawData.first_sem_average,
       second_sem_average: rawData.second_sem_average,
-      grades: Array.isArray(rawData.grades) ? rawData.grades : [],
+      grades: (Array.isArray(rawData.grades) ? rawData.grades : [])
+        .filter((g: any) => {
+          const rawName = String(g.subject_name || '').trim();
+          const rawCode = String(g.subject_code || '').trim();
+          const hasName = rawName.length > 0;
+          const hasCode = rawCode.length > 0;
+
+          // Reject structural noise or summary lines that might be misread as subjects
+          const isStructuralNoise =
+            /^(total\s*units|cumulative|semestral|term\s*gpa|nothing\s*follows|entrance\s*credentials|academic\s*entrance)/i.test(
+              rawName || rawCode,
+            );
+
+          return (hasName || hasCode) && g.grade != null && !isStructuralNoise;
+        })
+        .map((g: any) => {
+          let code = String(g.subject_code || '').trim();
+          let name = String(g.subject_name || '').trim();
+
+          if (!code && name) {
+            const match = name.match(/^([A-Z0-9_-]+\s*\d+[a-z]?)\s+(.*)$/i);
+            if (match) {
+              code = match[1].trim();
+              name = match[2].trim();
+            }
+          }
+
+          if (!name && code) {
+            const match = code.match(/^([A-Z0-9_-]+\s*\d+[a-z]?)\s+(.*)$/i);
+            if (match) {
+              code = match[1].trim();
+              name = match[2].trim();
+            } else {
+              name = code;
+            }
+          }
+
+          const rawUnits = Number(g.units);
+          const units =
+            !isNaN(rawUnits) && rawUnits > 0
+              ? rawUnits
+              : rawData.detected_document_type === 'FORM_138'
+                ? 1.0
+                : 3.0;
+
+          return {
+            ...g,
+            subject_code: code,
+            subject_name: name,
+            units,
+            grade: Number(g.grade),
+          };
+        }),
       grading_legend: rawData.grading_legend ?? null,
     };
   }
