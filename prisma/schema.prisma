@@ -132,7 +132,7 @@ model ScholarProfile {
   student_address          String? @db.Text
   school_address           String? @db.Text
   student_number           String? @unique @db.VarChar(50)
-  relative_employee        String? @db.VarChar(150)
+  relative_employee        String? @unique @db.VarChar(150)
   scholarship_track        String? @db.VarChar(100)
   course_of_study          String? @db.VarChar(150)
   school_name              String? @db.VarChar(150)

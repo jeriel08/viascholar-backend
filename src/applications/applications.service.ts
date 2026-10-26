@@ -63,6 +63,25 @@ export class ApplicationsService {
       }
     }
 
+    // Verify relative_employee uniqueness across other profiles (1 scholar per employee policy)
+    if (dto.relative_employee?.trim()) {
+      const trimmedRelative = dto.relative_employee.trim();
+      const duplicateRelative = await this.prisma.scholarProfile.findFirst({
+        where: {
+          relative_employee: {
+            equals: trimmedRelative,
+            mode: 'insensitive',
+          },
+          profile_id: { not: scholar.profile_id },
+        },
+      });
+      if (duplicateRelative) {
+        throw new ConflictException(
+          'This relative employee is already associated with another scholar or applicant. The company policy permits only 1 scholar per employee.',
+        );
+      }
+    }
+
     // Update track, course, student number, and addresses on scholar profile
     await this.prisma.scholarProfile.update({
       where: { profile_id: scholar.profile_id },
@@ -74,7 +93,7 @@ export class ApplicationsService {
         student_address: dto.student_address,
         school_address: dto.school_address,
         phone_number: dto.phone_number || scholar.phone_number,
-        relative_employee: dto.relative_employee,
+        relative_employee: dto.relative_employee?.trim() || scholar.relative_employee,
         current_year_level:
           dto.current_year_level !== undefined
             ? dto.current_year_level
