@@ -57,6 +57,16 @@ export class ApplicationsController {
     return this.applicationsService.submitApplication(req.user.user_id, dto);
   }
 
+  @Post('me/finalize')
+  @Roles(Role.APPLICANT, Role.SCHOLAR)
+  @ApiOperation({
+    summary:
+      'Finalize and formally submit scholarship application once documents are confirmed (Student only)',
+  })
+  finalizeApplication(@Request() req: AuthenticatedRequest) {
+    return this.applicationsService.finalizeApplication(req.user.user_id);
+  }
+
   @Get('me')
   @Roles(Role.APPLICANT, Role.SCHOLAR)
   @ApiOperation({

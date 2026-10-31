@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -26,7 +27,7 @@ export class ApplicationsService {
   async submitApplication(userId: number, dto: CreateApplicationDto) {
     const scholar = await this.prisma.scholarProfile.findUnique({
       where: { user_id: userId },
-      include: { applications: true, user: true },
+      include: { applications: true, user: true, documents: true },
     });
 
     if (!scholar) {
@@ -108,11 +109,81 @@ export class ApplicationsService {
       application = await this.prisma.application.create({
         data: {
           scholar_profile_id: scholar.profile_id,
-          stage: 'Submitted',
+          stage: 'Draft',
           status: 'PENDING',
         },
       });
     }
+
+    // Check if the applicant already has confirmed documents
+    const hasConfirmedDoc = scholar.documents?.some(
+      (d) => d.status === 'STUDENT_CONFIRMED' || d.status === 'VERIFIED',
+    );
+
+    // If documents have not yet been confirmed, this is Step 1 of the application wizard.
+    // Save details without firing premature "Application Submitted" notifications to staff.
+    if (!hasConfirmedDoc) {
+      await this.auditService.log(
+        userId,
+        'APPLICATION_DETAILS_SAVED',
+        `Scholar (User ID: ${userId}) saved applicant details for application (ID: ${application.application_id}).`,
+      );
+      return application;
+    }
+
+    // If documents are already confirmed, the student is updating their existing details.
+    await this.auditService.log(
+      userId,
+      'APPLICATION_DETAILS_UPDATED',
+      `Scholar (User ID: ${userId}) updated applicant details for application (ID: ${application.application_id}).`,
+    );
+
+    return application;
+  }
+
+  // 2. Scholar finalizes and submits their application after uploading & confirming documents (Step 2)
+  async finalizeApplication(userId: number) {
+    const scholar = await this.prisma.scholarProfile.findUnique({
+      where: { user_id: userId },
+      include: {
+        applications: true,
+        documents: true,
+        user: true,
+      },
+    });
+
+    if (!scholar || scholar.applications.length === 0) {
+      throw new NotFoundException(
+        'No active application found. Please complete your applicant details first.',
+      );
+    }
+
+    const hasConfirmedDoc = scholar.documents?.some(
+      (d) => d.status === 'STUDENT_CONFIRMED' || d.status === 'VERIFIED',
+    );
+
+    if (!hasConfirmedDoc) {
+      throw new BadRequestException(
+        'Please upload and confirm your required document before submitting your application.',
+      );
+    }
+
+    const existingApp = scholar.applications[0];
+    const isDraft = !existingApp.stage || existingApp.stage === 'Draft';
+
+    if (!isDraft) {
+      // Application was already formally submitted; prevent duplicate coordinator notifications and emails
+      return existingApp;
+    }
+
+    const application = await this.prisma.application.update({
+      where: { application_id: existingApp.application_id },
+      data: {
+        stage: 'Submitted',
+        status: 'PENDING',
+        submitted_at: existingApp.submitted_at ?? new Date(),
+      },
+    });
 
     await this.auditService.log(
       userId,
@@ -120,16 +191,16 @@ export class ApplicationsService {
       `Scholar (User ID: ${userId}) submitted application (ID: ${application.application_id}).`,
     );
 
-    // Dispatch emails (non-blocking)
     const studentName =
       `${scholar.first_name} ${scholar.last_name}`.trim() || 'Applicant';
 
+    // Dispatch emails (non-blocking)
     if (scholar.user?.email) {
       void this.mailService.sendApplicationSubmittedStudent(
         scholar.user.email,
         {
           studentName,
-          track: dto.scholarship_track,
+          track: scholar.scholarship_track || 'Scholarship',
           applicationId: application.application_id,
         },
       );
@@ -139,9 +210,9 @@ export class ApplicationsService {
       if (staffEmails.length > 0) {
         void this.mailService.sendApplicationSubmittedStaff(staffEmails, {
           studentName,
-          track: dto.scholarship_track,
-          course: dto.course_of_study,
-          school: dto.school_name,
+          track: scholar.scholarship_track || 'Scholarship',
+          course: scholar.course_of_study || 'N/A',
+          school: scholar.school_name || 'N/A',
           applicationId: application.application_id,
         });
       }
@@ -152,27 +223,26 @@ export class ApplicationsService {
       applicationId: application.application_id,
       scholarProfileId: scholar.profile_id,
       studentName,
-      studentNumber: dto.student_number || scholar.student_number || null,
-      track: dto.scholarship_track,
-      course: dto.course_of_study,
-      school: dto.school_name,
-      currentYearLevel:
-        dto.current_year_level ?? scholar.current_year_level ?? null,
+      studentNumber: scholar.student_number || null,
+      track: scholar.scholarship_track || null,
+      course: scholar.course_of_study || null,
+      school: scholar.school_name || null,
+      currentYearLevel: scholar.current_year_level ?? null,
       stage: application.stage,
       status: application.status,
-      submittedAt: new Date().toISOString(),
+      submittedAt: application.submitted_at.toISOString(),
     });
 
     void this.notificationsService.notifyStaff({
       title: 'New Application Submitted',
-      message: `A new application was submitted by ${studentName} for ${dto.scholarship_track}.`,
+      message: `A new application was submitted by ${studentName} for ${scholar.scholarship_track || 'scholarship'}.`,
       category: 'application',
       link: '/CoordinatorApplicants',
     });
 
     void this.notificationsService.notifyUser(userId, {
       title: 'Application Submitted',
-      message: `Your scholarship application for ${dto.scholarship_track} was submitted successfully!`,
+      message: `Your scholarship application for ${scholar.scholarship_track || 'scholarship'} was submitted successfully!`,
       category: 'application',
       link: '/ApplicantsDashboard',
     });
@@ -204,9 +274,11 @@ export class ApplicationsService {
     return scholar.applications[0];
   }
 
-  // 3. Staff list all applications with filters
+  // 3. Staff list all applications with filters (Drafts excluded)
   async findAll(query: QueryApplicationsDto) {
-    const where: Prisma.ApplicationWhereInput = {};
+    const where: Prisma.ApplicationWhereInput = {
+      stage: { not: 'Draft' },
+    };
 
     if (query.status) {
       where.status = query.status;

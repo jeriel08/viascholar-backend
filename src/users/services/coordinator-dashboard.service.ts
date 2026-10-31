@@ -41,6 +41,7 @@ export class CoordinatorDashboardService {
           // 1. Applications with scholar profile details (Genuine prospective applicants)
           this.prisma.application.findMany({
             where: {
+              stage: { not: 'Draft' },
               scholar_profile: {
                 user: {
                   role: Role.APPLICANT,

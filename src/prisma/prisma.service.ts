@@ -9,7 +9,7 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
       connectionString: process.env.DATABASE_URL as string,
       max: 20,
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
+      connectionTimeoutMillis: 20000,
     });
     super({ adapter });
   }

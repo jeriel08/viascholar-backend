@@ -169,6 +169,7 @@ export class AnalyticsService {
       }),
       this.prisma.application.findMany({
         where: {
+          stage: { not: 'Draft' },
           scholar_profile: {
             user: { role: Role.APPLICANT, is_active: true },
           },

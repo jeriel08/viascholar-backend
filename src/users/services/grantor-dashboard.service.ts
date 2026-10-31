@@ -76,6 +76,7 @@ export class GrantorDashboardService {
           // 2. Count of all prospective applicants in pipeline
           this.prisma.application.count({
             where: {
+              stage: { not: 'Draft' },
               scholar_profile: {
                 user: {
                   role: Role.APPLICANT,
