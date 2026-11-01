@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LlamaCloud, toFile } from '@llamaindex/llama-cloud';
@@ -284,7 +285,66 @@ const PROSPECTUS_DATA_SCHEMA = {
 export class LlamaExtractService implements IDocumentExtractor {
   private readonly logger = new Logger(LlamaExtractService.name);
 
+  // In-memory SHA-256 deduplication cache with TTL
+  private readonly extractionCache = new Map<
+    string,
+    { result: unknown; cachedAt: number }
+  >();
+  private readonly MAX_CACHE_ENTRIES = 200;
+  private readonly CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
   constructor(private configService: ConfigService) {}
+
+  /**
+   * Generates a deterministic SHA-256 cache key from file buffer, data schema, and prompt.
+   * Guarantees that identical documents under identical extraction targets hit the cache,
+   * while different schemas or modified files yield completely unique keys.
+   */
+  private computeCacheKey(
+    buffer: Buffer,
+    schema: Record<string, any>,
+    systemPrompt?: string,
+  ): string {
+    const hash = createHash('sha256');
+    hash.update(buffer);
+    hash.update('::');
+    hash.update(JSON.stringify(schema));
+    if (systemPrompt) {
+      hash.update('::');
+      hash.update(systemPrompt);
+    }
+    return hash.digest('hex');
+  }
+
+  /**
+   * Retrieves a cached extraction result. Returns a pristine structuredClone
+   * so downstream modifications never mutate the cached payload.
+   */
+  private getCachedResult<T>(key: string): T | null {
+    const entry = this.extractionCache.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.cachedAt > this.CACHE_TTL_MS) {
+      this.extractionCache.delete(key);
+      return null;
+    }
+    return structuredClone(entry.result) as T;
+  }
+
+  /**
+   * Stores a successful extraction in the cache, evicting the oldest entry if full.
+   */
+  private setCachedResult<T>(key: string, result: T): void {
+    if (this.extractionCache.size >= this.MAX_CACHE_ENTRIES) {
+      const oldestKey = this.extractionCache.keys().next().value;
+      if (oldestKey) {
+        this.extractionCache.delete(oldestKey);
+      }
+    }
+    this.extractionCache.set(key, {
+      result: structuredClone(result),
+      cachedAt: Date.now(),
+    });
+  }
 
   private getClient(): LlamaCloud {
     const apiKey =
@@ -412,6 +472,20 @@ export class LlamaExtractService implements IDocumentExtractor {
     const fileName = unifiedFile.fileName;
     const mimeType = unifiedFile.mimeType;
 
+    // Check SHA-256 deduplication cache
+    const cacheKey = this.computeCacheKey(
+      unifiedFile.buffer,
+      dataSchema,
+      systemPrompt,
+    );
+    const cachedResult = this.getCachedResult<T>(cacheKey);
+    if (cachedResult) {
+      this.logger.log(
+        `[SHA-256 Cache Hit] Reusing verified extraction for '${fileName}' (hash: ${cacheKey.slice(0, 10)}). Instant return (<50ms).`,
+      );
+      return cachedResult;
+    }
+
     this.logger.log(
       `Uploading unified document '${fileName}' (${mimeType}, from ${files.length} source file(s)) to LlamaCloud for extraction...`,
     );
@@ -446,20 +520,30 @@ export class LlamaExtractService implements IDocumentExtractor {
 
     let currentJob = job;
     let attempts = 0;
-    const pollIntervalMs = 3000;
-    const maxAttempts = 200; // 200 * 3000ms = 600 seconds (10 minutes)
+    let elapsedMs = 0;
+    const maxWaitMs = 600000; // 10 minutes (600 seconds)
+
+    // Adaptive polling: checks faster early on (1200ms -> 1800ms -> 2500ms)
+    // to capture completed extractions without unnecessary idle wait.
+    const getAdaptivePollIntervalMs = (attemptCount: number): number => {
+      if (attemptCount < 5) return 1200;
+      if (attemptCount < 15) return 1800;
+      return 2500;
+    };
 
     while (
       !['COMPLETED', 'FAILED', 'CANCELLED'].includes(currentJob.status) &&
-      attempts < maxAttempts
+      elapsedMs < maxWaitMs
     ) {
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      const interval = getAdaptivePollIntervalMs(attempts);
+      await new Promise((resolve) => setTimeout(resolve, interval));
+      elapsedMs += interval;
       currentJob = await client.extract.get(job.id);
       attempts++;
 
       if (attempts % 10 === 0) {
         this.logger.log(
-          `LlamaExtract job ${job.id} still in progress (status: ${currentJob.status}, ${Math.round((attempts * pollIntervalMs) / 1000)}s elapsed)...`,
+          `LlamaExtract job ${job.id} still in progress (status: ${currentJob.status}, ${Math.round(elapsedMs / 1000)}s elapsed)...`,
         );
       }
     }
@@ -468,7 +552,7 @@ export class LlamaExtractService implements IDocumentExtractor {
       const isTimeout =
         currentJob.status === 'RUNNING' || currentJob.status === 'PENDING';
       const errorMsg = isTimeout
-        ? `LlamaExtract job ${job.id} timed out after ${Math.round((attempts * pollIntervalMs) / 1000)}s while still processing on LlamaCloud.`
+        ? `LlamaExtract job ${job.id} timed out after ${Math.round(elapsedMs / 1000)}s while still processing on LlamaCloud.`
         : currentJob.error_message ||
           `LlamaExtract job ${job.id} ended with status ${currentJob.status}`;
       this.logger.error(errorMsg);
@@ -480,6 +564,11 @@ export class LlamaExtractService implements IDocumentExtractor {
       throw new Error(
         `LlamaExtract job ${job.id} completed without extract_result.`,
       );
+    }
+
+    // Save successful extraction to SHA-256 deduplication cache
+    if (result && typeof result === 'object' && Object.keys(result).length > 0) {
+      this.setCachedResult(cacheKey, result);
     }
 
     // Clean up remote uploaded file if possible

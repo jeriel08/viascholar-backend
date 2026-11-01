@@ -138,6 +138,178 @@ async function main() {
     }
   }
 
+  // 4. Seed Baseline Academic Programs
+  const baselinePrograms = [
+    {
+      program_code: 'BSIT',
+      program_name: 'BS Information Technology',
+      category: 'College',
+      description: 'Bachelor of Science in Information Technology',
+    },
+    {
+      program_code: 'BSCS',
+      program_name: 'BS Computer Science',
+      category: 'College',
+      description: 'Bachelor of Science in Computer Science',
+    },
+    {
+      program_code: 'BSIS',
+      program_name: 'BS Information Systems',
+      category: 'College',
+      description: 'Bachelor of Science in Information Systems',
+    },
+    {
+      program_code: 'BSA',
+      program_name: 'BS Accountancy',
+      category: 'College',
+      description: 'Bachelor of Science in Accountancy',
+    },
+    {
+      program_code: 'BSMA',
+      program_name: 'BS Management Accounting',
+      category: 'College',
+      description: 'Bachelor of Science in Management Accounting',
+    },
+    {
+      program_code: 'BSBA',
+      program_name: 'BS Business Administration',
+      category: 'College',
+      description: 'Bachelor of Science in Business Administration',
+    },
+    {
+      program_code: 'BSHM',
+      program_name: 'BS Hospitality Management',
+      category: 'College',
+      description: 'Bachelor of Science in Hospitality Management',
+    },
+    {
+      program_code: 'BSTM',
+      program_name: 'BS Tourism Management',
+      category: 'College',
+      description: 'Bachelor of Science in Tourism Management',
+    },
+    {
+      program_code: 'BSN',
+      program_name: 'BS Nursing',
+      category: 'College',
+      description: 'Bachelor of Science in Nursing',
+    },
+    {
+      program_code: 'BSMT',
+      program_name: 'BS Medical Technology',
+      category: 'College',
+      description: 'Bachelor of Science in Medical Technology',
+    },
+    {
+      program_code: 'BSPharm',
+      program_name: 'BS Pharmacy',
+      category: 'College',
+      description: 'Bachelor of Science in Pharmacy',
+    },
+    {
+      program_code: 'BSCE',
+      program_name: 'BS Civil Engineering',
+      category: 'College',
+      description: 'Bachelor of Science in Civil Engineering',
+    },
+    {
+      program_code: 'BSME',
+      program_name: 'BS Mechanical Engineering',
+      category: 'College',
+      description: 'Bachelor of Science in Mechanical Engineering',
+    },
+    {
+      program_code: 'BSEE',
+      program_name: 'BS Electrical Engineering',
+      category: 'College',
+      description: 'Bachelor of Science in Electrical Engineering',
+    },
+    {
+      program_code: 'BSECE',
+      program_name: 'BS Electronics Engineering',
+      category: 'College',
+      description: 'Bachelor of Science in Electronics Engineering',
+    },
+    {
+      program_code: 'BSIE',
+      program_name: 'BS Industrial Engineering',
+      category: 'College',
+      description: 'Bachelor of Science in Industrial Engineering',
+    },
+    {
+      program_code: 'BSArch',
+      program_name: 'BS Architecture',
+      category: 'College',
+      description: 'Bachelor of Science in Architecture',
+    },
+    {
+      program_code: 'BEED',
+      program_name: 'Bachelor of Elementary Education',
+      category: 'College',
+      description: 'Bachelor of Elementary Education',
+    },
+    {
+      program_code: 'BSED',
+      program_name: 'Bachelor of Secondary Education',
+      category: 'College',
+      description: 'Bachelor of Secondary Education',
+    },
+    {
+      program_code: 'ABComm',
+      program_name: 'AB Communication',
+      category: 'College',
+      description: 'Bachelor of Arts in Communication',
+    },
+    {
+      program_code: 'BSPsych',
+      program_name: 'BS Psychology',
+      category: 'College',
+      description: 'Bachelor of Science in Psychology',
+    },
+    {
+      program_code: 'STEM',
+      program_name: 'Senior High School - STEM Strand',
+      category: 'Senior High School',
+      description: 'Science, Technology, Engineering, and Mathematics',
+    },
+    {
+      program_code: 'ABM',
+      program_name: 'Senior High School - ABM Strand',
+      category: 'Senior High School',
+      description: 'Accountancy, Business, and Management',
+    },
+    {
+      program_code: 'HUMSS',
+      program_name: 'Senior High School - HUMSS Strand',
+      category: 'Senior High School',
+      description: 'Humanities and Social Sciences',
+    },
+    {
+      program_code: 'GAS',
+      program_name: 'Senior High School - GAS Strand',
+      category: 'Senior High School',
+      description: 'General Academic Strand',
+    },
+    {
+      program_code: 'TVL',
+      program_name: 'Senior High School - TVL Track',
+      category: 'Senior High School',
+      description: 'Technical-Vocational-Livelihood Track',
+    },
+  ];
+
+  for (const prog of baselinePrograms) {
+    const exists = await prisma.academicProgram.findUnique({
+      where: { program_code: prog.program_code },
+    });
+    if (!exists) {
+      await prisma.academicProgram.create({
+        data: prog,
+      });
+      console.log(`✅ Seeded Academic Program: ${prog.program_name} (${prog.program_code})`);
+    }
+  }
+
   console.log('🎉 Database seeding complete!');
 }
 

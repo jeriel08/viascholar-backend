@@ -183,18 +183,18 @@ export class ScholarEnrollmentService {
     }
     if (!file) throw new BadRequestException('No COR file uploaded.');
 
-    // Upload to Cloudinary
-    const uploadRes = await this.cloudinaryService.uploadDocument(
-      file,
-      'viascholar/enrollment/cor',
-    );
-
-    // Parse via OCR
-    const extractedData = await this.enrollmentOcrService.parseCor({
-      buffer: file.buffer,
-      fileName: file.originalname,
-      mimeType: file.mimetype,
-    });
+    // Concurrently upload to Cloudinary and parse via OCR
+    const [uploadRes, extractedData] = await Promise.all([
+      this.cloudinaryService.uploadDocument(
+        file,
+        'viascholar/enrollment/cor',
+      ),
+      this.enrollmentOcrService.parseCor({
+        buffer: file.buffer,
+        fileName: file.originalname,
+        mimeType: file.mimetype,
+      }),
+    ]);
 
     const ay = extractedData.academic_year || '2026-2027';
     const sem = extractedData.semester || '1st Semester';
@@ -302,16 +302,18 @@ export class ScholarEnrollmentService {
     }
     if (!file) throw new BadRequestException('No SOA file uploaded.');
 
-    const uploadRes = await this.cloudinaryService.uploadDocument(
-      file,
-      'viascholar/enrollment/soa',
-    );
-
-    const extractedData = await this.enrollmentOcrService.parseSoa({
-      buffer: file.buffer,
-      fileName: file.originalname,
-      mimeType: file.mimetype,
-    });
+    // Concurrently upload to Cloudinary and parse via OCR
+    const [uploadRes, extractedData] = await Promise.all([
+      this.cloudinaryService.uploadDocument(
+        file,
+        'viascholar/enrollment/soa',
+      ),
+      this.enrollmentOcrService.parseSoa({
+        buffer: file.buffer,
+        fileName: file.originalname,
+        mimeType: file.mimetype,
+      }),
+    ]);
 
     const ay = extractedData.academic_year || '2026-2027';
     const sem = extractedData.semester || '1st Semester';
@@ -447,16 +449,18 @@ export class ScholarEnrollmentService {
     }
     if (!file) throw new BadRequestException('No consolidated file uploaded.');
 
-    const uploadRes = await this.cloudinaryService.uploadDocument(
-      file,
-      'viascholar/enrollment/consolidated',
-    );
-
-    const extractedData = await this.enrollmentOcrService.parseConsolidated({
-      buffer: file.buffer,
-      fileName: file.originalname,
-      mimeType: file.mimetype,
-    });
+    // Concurrently upload to Cloudinary and parse via OCR
+    const [uploadRes, extractedData] = await Promise.all([
+      this.cloudinaryService.uploadDocument(
+        file,
+        'viascholar/enrollment/consolidated',
+      ),
+      this.enrollmentOcrService.parseConsolidated({
+        buffer: file.buffer,
+        fileName: file.originalname,
+        mimeType: file.mimetype,
+      }),
+    ]);
 
     const ay = extractedData.academic_year || '2026-2027';
     const sem = extractedData.semester || '1st Semester';

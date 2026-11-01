@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
   Request,
   UseGuards,
 } from '@nestjs/common';
@@ -19,6 +20,8 @@ import { Role } from '../generated/prisma/enums.js';
 import { UpdateSettingsDto } from './dto/update-settings.dto.js';
 import { CreateSchoolGradingDto } from './dto/create-school-grading.dto.js';
 import { UpdateSchoolGradingDto } from './dto/update-school-grading.dto.js';
+import { CreateAcademicProgramDto } from './dto/create-program.dto.js';
+import { UpdateAcademicProgramDto } from './dto/update-program.dto.js';
 
 @ApiTags('Settings & School Grading')
 @ApiBearerAuth()
@@ -93,5 +96,40 @@ export class SettingsController {
     @Body() dto: UpdateSchoolGradingDto,
   ) {
     return this.settingsService.updateSchoolGrading(req.user.user_id, id, dto);
+  }
+
+  // ==========================================
+  // ACADEMIC PROGRAMS ENDPOINTS
+  // ==========================================
+
+  @Get('programs')
+  @ApiOperation({ summary: 'Get all configured academic programs' })
+  getPrograms(@Query('only_active') onlyActive?: string) {
+    return this.settingsService.getPrograms(onlyActive === 'true');
+  }
+
+  @Post('programs')
+  @Roles(Role.ADMIN, Role.GRANTOR)
+  @ApiOperation({ summary: 'Add a new academic program (Admin & Grantor)' })
+  createProgram(@Request() req, @Body() dto: CreateAcademicProgramDto) {
+    return this.settingsService.createProgram(req.user.user_id, dto);
+  }
+
+  @Patch('programs/:id')
+  @Roles(Role.ADMIN, Role.GRANTOR)
+  @ApiOperation({ summary: 'Update an existing academic program (Admin & Grantor)' })
+  updateProgram(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateAcademicProgramDto,
+  ) {
+    return this.settingsService.updateProgram(req.user.user_id, id, dto);
+  }
+
+  @Delete('programs/:id')
+  @Roles(Role.ADMIN, Role.GRANTOR)
+  @ApiOperation({ summary: 'Delete an academic program (Admin & Grantor)' })
+  deleteProgram(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    return this.settingsService.deleteProgram(req.user.user_id, id);
   }
 }

@@ -477,6 +477,19 @@ model SchoolGradingSystem {
   @@map("school_grading_systems")
 }
 
+model AcademicProgram {
+  program_id   Int      @id @default(autoincrement())
+  program_code String   @unique @db.VarChar(50)
+  program_name String   @unique @db.VarChar(150)
+  category     String?  @default("College") @db.VarChar(50)
+  description  String?  @db.Text
+  is_active    Boolean  @default(true)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  @@map("academic_programs")
+}
+
 model ScholarProspectus {
   prospectus_id         Int                @id @default(autoincrement())
   scholar_profile_id    Int                @unique

@@ -83,6 +83,21 @@ export class ApplicationsService {
       }
     }
 
+    let matchedSchoolId = scholar.school_id;
+    if (dto.school_name) {
+      const matched = await this.prisma.schoolGradingSystem.findFirst({
+        where: {
+          school_name: {
+            equals: dto.school_name.trim(),
+            mode: 'insensitive',
+          },
+        },
+      });
+      if (matched) {
+        matchedSchoolId = matched.school_id;
+      }
+    }
+
     // Update track, course, student number, and addresses on scholar profile
     await this.prisma.scholarProfile.update({
       where: { profile_id: scholar.profile_id },
@@ -90,6 +105,7 @@ export class ApplicationsService {
         scholarship_track: dto.scholarship_track,
         course_of_study: dto.course_of_study,
         school_name: dto.school_name,
+        school_id: matchedSchoolId,
         student_number: dto.student_number,
         student_address: dto.student_address,
         school_address: dto.school_address,

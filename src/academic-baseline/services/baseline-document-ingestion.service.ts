@@ -51,12 +51,23 @@ export class BaselineDocumentIngestionService {
     }
 
     const firstFile = files[0];
-    const uploadResult = await this.cloudinaryService.uploadBuffer(
-      firstFile.buffer,
-      'viascholar/prospectus',
-      `prospectus_${scholar.profile_id}_${Date.now()}`,
-      'auto',
-    );
+    const inputFiles = files.map((f) => ({
+      buffer: f.buffer,
+      mimeType: f.mimetype,
+      fileName: f.originalname,
+      fileUrl: '',
+    }));
+
+    // Execute Cloudinary upload and OCR extraction concurrently
+    const [uploadResult, extracted] = await Promise.all([
+      this.cloudinaryService.uploadBuffer(
+        firstFile.buffer,
+        'viascholar/prospectus',
+        `prospectus_${scholar.profile_id}_${Date.now()}`,
+        'auto',
+      ),
+      this.prospectusOcrService.processProspectusExtraction(inputFiles),
+    ]);
 
     const doc = await this.prisma.scholarDocument.create({
       data: {
@@ -70,16 +81,6 @@ export class BaselineDocumentIngestionService {
         status: 'PASSED_PRECHECK',
       },
     });
-
-    const inputFiles = files.map((f) => ({
-      buffer: f.buffer,
-      mimeType: f.mimetype,
-      fileName: f.originalname,
-      fileUrl: uploadResult.secure_url,
-    }));
-
-    const extracted =
-      await this.prospectusOcrService.processProspectusExtraction(inputFiles);
 
     const prospectus = await this.prisma.scholarProspectus.upsert({
       where: { scholar_profile_id: scholar.profile_id },
@@ -230,12 +231,23 @@ export class BaselineDocumentIngestionService {
     }
 
     const firstFile = files[0];
-    const uploadResult = await this.cloudinaryService.uploadBuffer(
-      firstFile.buffer,
-      'viascholar/historical-ccg',
-      `historical_ccg_${scholar.profile_id}_${Date.now()}`,
-      'auto',
-    );
+    const inputFiles = files.map((f) => ({
+      buffer: f.buffer,
+      mimeType: f.mimetype,
+      fileName: f.originalname,
+      fileUrl: '',
+    }));
+
+    // Execute Cloudinary upload and Historical CCG OCR concurrently
+    const [uploadResult, historicalCourses] = await Promise.all([
+      this.cloudinaryService.uploadBuffer(
+        firstFile.buffer,
+        'viascholar/historical-ccg',
+        `historical_ccg_${scholar.profile_id}_${Date.now()}`,
+        'auto',
+      ),
+      this.prospectusOcrService.processHistoricalCcgExtraction(inputFiles),
+    ]);
 
     const doc = await this.prisma.scholarDocument.create({
       data: {
@@ -249,18 +261,6 @@ export class BaselineDocumentIngestionService {
         status: 'PASSED_PRECHECK',
       },
     });
-
-    const inputFiles = files.map((f) => ({
-      buffer: f.buffer,
-      mimeType: f.mimetype,
-      fileName: f.originalname,
-      fileUrl: uploadResult.secure_url,
-    }));
-
-    const historicalCourses =
-      await this.prospectusOcrService.processHistoricalCcgExtraction(
-        inputFiles,
-      );
 
     const schoolConfig = scholar.school_grading_system;
     const prospectusSubjects = scholar.prospectus.subjects;

@@ -10,6 +10,8 @@ import { EventsGateway } from '../events/events.gateway.js';
 import { CreateSchoolGradingDto } from './dto/create-school-grading.dto.js';
 import { UpdateSettingsDto } from './dto/update-settings.dto.js';
 import { UpdateSchoolGradingDto } from './dto/update-school-grading.dto.js';
+import { CreateAcademicProgramDto } from './dto/create-program.dto.js';
+import { UpdateAcademicProgramDto } from './dto/update-program.dto.js';
 import { AppCacheService } from '../common/cache/app-cache.service.js';
 
 @Injectable()
@@ -492,5 +494,155 @@ export class SettingsService implements OnModuleInit {
           : 3.5 + ((normalizedPercent - 90) / 10) * (highest - 3.5);
       return gwa >= Number(thresholdGwa.toFixed(2));
     }
+  }
+
+  // ==========================================
+  // ACADEMIC PROGRAMS CRUD
+  // ==========================================
+
+  // 1. Get all academic programs (optionally filter by active status)
+  async getPrograms(onlyActive = false) {
+    return this.cacheService.wrap(
+      `settings:programs:${onlyActive ? 'active' : 'all'}`,
+      async () => {
+        return this.prisma.academicProgram.findMany({
+          where: onlyActive ? { is_active: true } : undefined,
+          orderBy: [{ category: 'asc' }, { program_name: 'asc' }],
+        });
+      },
+      5 * 60 * 1000,
+    );
+  }
+
+  // 2. Create new academic program
+  async createProgram(userId: number, dto: CreateAcademicProgramDto) {
+    const code = dto.program_code.trim().toUpperCase();
+    const name = dto.program_name.trim();
+
+    const existing = await this.prisma.academicProgram.findFirst({
+      where: {
+        OR: [{ program_code: code }, { program_name: name }],
+      },
+    });
+
+    if (existing) {
+      if (existing.program_code === code) {
+        throw new ConflictException(
+          `Program code '${code}' is already registered.`,
+        );
+      }
+      throw new ConflictException(
+        `Program name '${name}' is already registered.`,
+      );
+    }
+
+    const program = await this.prisma.academicProgram.create({
+      data: {
+        program_code: code,
+        program_name: name,
+        category: dto.category?.trim() || 'College',
+        description: dto.description?.trim(),
+        is_active: dto.is_active ?? true,
+      },
+    });
+
+    await this.auditService.log(
+      userId,
+      'PROGRAM_CREATED',
+      `Registered new academic program '${program.program_name}' (${program.program_code})`,
+    );
+
+    await this.cacheService.delPattern('settings:programs:');
+    this.eventsGateway.emitToAll('program:created', program);
+
+    return program;
+  }
+
+  // 3. Update an existing academic program
+  async updateProgram(
+    userId: number,
+    id: number,
+    dto: UpdateAcademicProgramDto,
+  ) {
+    const existing = await this.prisma.academicProgram.findUnique({
+      where: { program_id: id },
+    });
+
+    if (!existing) {
+      throw new NotFoundException(`Academic program with ID ${id} not found.`);
+    }
+
+    const code = dto.program_code?.trim().toUpperCase();
+    const name = dto.program_name?.trim();
+
+    if (code && code !== existing.program_code) {
+      const duplicateCode = await this.prisma.academicProgram.findUnique({
+        where: { program_code: code },
+      });
+      if (duplicateCode) {
+        throw new ConflictException(`Program code '${code}' is already taken.`);
+      }
+    }
+
+    if (name && name !== existing.program_name) {
+      const duplicateName = await this.prisma.academicProgram.findUnique({
+        where: { program_name: name },
+      });
+      if (duplicateName) {
+        throw new ConflictException(`Program name '${name}' is already taken.`);
+      }
+    }
+
+    const updated = await this.prisma.academicProgram.update({
+      where: { program_id: id },
+      data: {
+        ...(code ? { program_code: code } : {}),
+        ...(name ? { program_name: name } : {}),
+        ...(dto.category !== undefined ? { category: dto.category.trim() } : {}),
+        ...(dto.description !== undefined
+          ? { description: dto.description?.trim() }
+          : {}),
+        ...(dto.is_active !== undefined ? { is_active: dto.is_active } : {}),
+      },
+    });
+
+    await this.auditService.log(
+      userId,
+      'PROGRAM_UPDATED',
+      `Updated academic program '${updated.program_name}' (${updated.program_code})`,
+    );
+
+    await this.cacheService.delPattern('settings:programs:');
+    this.eventsGateway.emitToAll('program:updated', updated);
+
+    return updated;
+  }
+
+  // 4. Delete an academic program
+  async deleteProgram(userId: number, id: number) {
+    const existing = await this.prisma.academicProgram.findUnique({
+      where: { program_id: id },
+    });
+
+    if (!existing) {
+      throw new NotFoundException(`Academic program with ID ${id} not found.`);
+    }
+
+    await this.prisma.academicProgram.delete({
+      where: { program_id: id },
+    });
+
+    await this.auditService.log(
+      userId,
+      'PROGRAM_DELETED',
+      `Deleted academic program '${existing.program_name}' (${existing.program_code})`,
+    );
+
+    await this.cacheService.delPattern('settings:programs:');
+    this.eventsGateway.emitToAll('program:deleted', { program_id: id });
+
+    return {
+      message: `Program '${existing.program_name}' deleted successfully.`,
+    };
   }
 }
