@@ -12,6 +12,8 @@ import { UpdateSettingsDto } from './dto/update-settings.dto.js';
 import { UpdateSchoolGradingDto } from './dto/update-school-grading.dto.js';
 import { CreateAcademicProgramDto } from './dto/create-program.dto.js';
 import { UpdateAcademicProgramDto } from './dto/update-program.dto.js';
+import { CreateSchoolDto } from './dto/create-school.dto.js';
+import { UpdateSchoolDto } from './dto/update-school.dto.js';
 import { AppCacheService } from '../common/cache/app-cache.service.js';
 
 @Injectable()
@@ -643,6 +645,230 @@ export class SettingsService implements OnModuleInit {
 
     return {
       message: `Program '${existing.program_name}' deleted successfully.`,
+    };
+  }
+
+  // ==========================================
+  // NORMALIZED SCHOOL INSTITUTIONS MANAGEMENT
+  // ==========================================
+
+  // 1. Get all configured schools (institutions)
+  async getSchools(onlyActive = false) {
+    const cacheKey = `settings:schools_list:${onlyActive ? 'active' : 'all'}`;
+    const cached = await this.cacheService.get(cacheKey);
+    if (cached) return cached;
+
+    const schools = await this.prisma.school.findMany({
+      where: onlyActive ? { is_active: true } : undefined,
+      include: {
+        grading_system: true,
+      },
+      orderBy: { school_name: 'asc' },
+    });
+
+    await this.cacheService.set(cacheKey, schools, 300);
+    return schools;
+  }
+
+  // 2. Add a new school institution
+  async createSchool(userId: number, dto: CreateSchoolDto) {
+    const schoolName = dto.school_name.trim();
+    const schoolCode = dto.school_code?.trim().toUpperCase();
+
+    // Check duplicate school_name
+    const existingName = await this.prisma.school.findUnique({
+      where: { school_name: schoolName },
+    });
+    if (existingName) {
+      throw new ConflictException(
+        `School with name '${schoolName}' already exists.`,
+      );
+    }
+
+    if (schoolCode) {
+      const existingCode = await this.prisma.school.findUnique({
+        where: { school_code: schoolCode },
+      });
+      if (existingCode) {
+        throw new ConflictException(
+          `School code '${schoolCode}' is already in use by '${existingCode.school_name}'.`,
+        );
+      }
+    }
+
+    // Verify grading_system_id if provided
+    if (dto.grading_system_id) {
+      const existsGrading = await this.prisma.schoolGradingSystem.findUnique({
+        where: { school_id: dto.grading_system_id },
+      });
+      if (!existsGrading) {
+        throw new NotFoundException(
+          `Grading system with ID ${dto.grading_system_id} does not exist.`,
+        );
+      }
+    }
+
+    const school = await this.prisma.school.create({
+      data: {
+        school_name: schoolName,
+        school_code: schoolCode || null,
+        address: dto.address?.trim() || null,
+        contact_email: dto.contact_email?.trim() || null,
+        contact_number: dto.contact_number?.trim() || null,
+        grading_system_id: dto.grading_system_id || null,
+        is_active: dto.is_active ?? true,
+      },
+      include: {
+        grading_system: true,
+      },
+    });
+
+    await this.auditService.log(
+      userId,
+      'SCHOOL_CREATED',
+      `Registered new academic institution '${school.school_name}' (${school.school_code || 'N/A'})`,
+    );
+
+    await this.cacheService.delPattern('settings:schools_list:');
+    this.eventsGateway.emitToAll('school:created', school);
+
+    return school;
+  }
+
+  // 3. Update an existing school institution
+  async updateSchool(userId: number, id: number, dto: UpdateSchoolDto) {
+    const existing = await this.prisma.school.findUnique({
+      where: { school_id: id },
+    });
+    if (!existing) {
+      throw new NotFoundException(`School with ID ${id} not found.`);
+    }
+
+    const schoolName = dto.school_name?.trim();
+    const schoolCode = dto.school_code?.trim().toUpperCase();
+
+    if (schoolName && schoolName !== existing.school_name) {
+      const duplicate = await this.prisma.school.findUnique({
+        where: { school_name: schoolName },
+      });
+      if (duplicate) {
+        throw new ConflictException(
+          `School name '${schoolName}' is already taken.`,
+        );
+      }
+    }
+
+    if (schoolCode && schoolCode !== existing.school_code) {
+      const duplicateCode = await this.prisma.school.findUnique({
+        where: { school_code: schoolCode },
+      });
+      if (duplicateCode) {
+        throw new ConflictException(
+          `School code '${schoolCode}' is already taken.`,
+        );
+      }
+    }
+
+    if (dto.grading_system_id !== undefined && dto.grading_system_id !== null) {
+      const existsGrading = await this.prisma.schoolGradingSystem.findUnique({
+        where: { school_id: dto.grading_system_id },
+      });
+      if (!existsGrading) {
+        throw new NotFoundException(
+          `Grading system with ID ${dto.grading_system_id} does not exist.`,
+        );
+      }
+    }
+
+    const updated = await this.prisma.school.update({
+      where: { school_id: id },
+      data: {
+        ...(schoolName ? { school_name: schoolName } : {}),
+        ...(schoolCode !== undefined
+          ? { school_code: schoolCode || null }
+          : {}),
+        ...(dto.address !== undefined
+          ? { address: dto.address?.trim() || null }
+          : {}),
+        ...(dto.contact_email !== undefined
+          ? { contact_email: dto.contact_email?.trim() || null }
+          : {}),
+        ...(dto.contact_number !== undefined
+          ? { contact_number: dto.contact_number?.trim() || null }
+          : {}),
+        ...(dto.grading_system_id !== undefined
+          ? { grading_system_id: dto.grading_system_id }
+          : {}),
+        ...(dto.is_active !== undefined ? { is_active: dto.is_active } : {}),
+      },
+      include: {
+        grading_system: true,
+      },
+    });
+
+    await this.auditService.log(
+      userId,
+      'SCHOOL_UPDATED',
+      `Updated academic institution '${updated.school_name}' (${updated.school_code || 'N/A'})`,
+    );
+
+    await this.cacheService.delPattern('settings:schools_list:');
+    this.eventsGateway.emitToAll('school:updated', updated);
+
+    return updated;
+  }
+
+  // 4. Delete a school institution
+  async deleteSchool(userId: number, id: number) {
+    const existing = await this.prisma.school.findUnique({
+      where: { school_id: id },
+      include: {
+        scholar_profiles: { select: { profile_id: true }, take: 1 },
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundException(`School with ID ${id} not found.`);
+    }
+
+    // If scholars are associated with this school, soft-deactivate instead of hard delete
+    if (existing.scholar_profiles.length > 0) {
+      const deactivated = await this.prisma.school.update({
+        where: { school_id: id },
+        data: { is_active: false },
+        include: { grading_system: true },
+      });
+
+      await this.auditService.log(
+        userId,
+        'SCHOOL_DEACTIVATED',
+        `Deactivated school '${existing.school_name}' because scholars are currently associated with it`,
+      );
+
+      await this.cacheService.delPattern('settings:schools_list:');
+      this.eventsGateway.emitToAll('school:updated', deactivated);
+
+      return {
+        message: `School '${existing.school_name}' is associated with scholars and has been deactivated instead of deleted.`,
+        school: deactivated,
+      };
+    }
+
+    await this.prisma.school.delete({
+      where: { school_id: id },
+    });
+
+    await this.auditService.log(
+      userId,
+      'SCHOOL_DELETED',
+      `Deleted school '${existing.school_name}'`,
+    );
+
+    await this.cacheService.delPattern('settings:schools_list:');
+    this.eventsGateway.emitToAll('school:deleted', { school_id: id });
+
+    return {
+      message: `School '${existing.school_name}' deleted successfully.`,
     };
   }
 }

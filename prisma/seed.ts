@@ -69,7 +69,8 @@ async function main() {
       min_grade: 50.0,
       max_grade: 100.0,
       is_verified: true,
-      notes: 'Standard DepEd Senior High School / Junior High School grading scale (Form 138 / SF9).',
+      notes:
+        'Standard DepEd Senior High School / Junior High School grading scale (Form 138 / SF9).',
     },
     {
       school_name: 'University of Southeastern Philippines (USEP)',
@@ -80,7 +81,8 @@ async function main() {
       min_grade: 1.0,
       max_grade: 5.0,
       is_verified: true,
-      notes: 'State university inverse 5-point grading system. 1.00 is highest/excellent, 3.00 passing, 5.00 failed.',
+      notes:
+        'State university inverse 5-point grading system. 1.00 is highest/excellent, 3.00 passing, 5.00 failed.',
     },
     {
       school_name: 'University of Mindanao (UM)',
@@ -96,7 +98,8 @@ async function main() {
         '7.2': 'LACKING_REQUIREMENTS',
         '9.0': 'DROPPED',
       },
-      notes: 'Undergraduate Grading Scale (Effective 1st Semester SY 2020-2021 to Present). 4.00 highest, 2.00 passing, 1.00 failing.',
+      notes:
+        'Undergraduate Grading Scale (Effective 1st Semester SY 2020-2021 to Present). 4.00 highest, 2.00 passing, 1.00 failing.',
     },
     {
       school_name: 'Ateneo de Davao University (ADDU)',
@@ -107,7 +110,8 @@ async function main() {
       min_grade: 1.0,
       max_grade: 5.0,
       is_verified: true,
-      notes: 'Standard 5-point inverse numerical grading scale. 1.00 highest, 3.00 passing.',
+      notes:
+        'Standard 5-point inverse numerical grading scale. 1.00 highest, 3.00 passing.',
     },
     {
       school_name: 'University of the Philippines (UP)',
@@ -122,7 +126,8 @@ async function main() {
         INC: 'INCOMPLETE',
         DRP: 'DROPPED',
       },
-      notes: 'UP System 5-point grading scale. 1.00 is highest/excellent, 3.00 passing, 5.00 failed.',
+      notes:
+        'UP System 5-point grading scale. 1.00 is highest/excellent, 3.00 passing, 5.00 failed.',
     },
   ];
 
@@ -135,6 +140,99 @@ async function main() {
         data: school,
       });
       console.log(`✅ Seeded School Grading System: ${school.school_name}`);
+    }
+  }
+
+  // 3.5 Seed Baseline School Institutions (Normalized Higher-Ed Schools table linked to Grading System)
+  // Note: DepEd remains in SchoolGradingSystem for Form 138 high school evaluation,
+  // but is excluded from the Higher Education Schools list to avoid student confusion.
+  await prisma.school.deleteMany({
+    where: {
+      OR: [
+        { school_code: 'DEPED' },
+        { school_name: { contains: 'DepEd', mode: 'insensitive' } },
+        { school_name: { contains: 'High School', mode: 'insensitive' } },
+      ],
+    },
+  });
+
+  const baselineInstitutions = [
+    {
+      school_name: 'University of Southeastern Philippines (USEP)',
+      school_code: 'USEP',
+      address: 'Iñigo St, Bo. Obrero, Davao City, 8000 Davao del Sur',
+      grading_scale_match: 'University of Southeastern Philippines (USEP)',
+      is_active: true,
+    },
+    {
+      school_name: 'University of Mindanao (UM)',
+      school_code: 'UM',
+      address: 'Bolton & Matina Campus, Davao City, 8000 Davao del Sur',
+      grading_scale_match: 'University of Mindanao (UM)',
+      is_active: true,
+    },
+    {
+      school_name: 'Ateneo de Davao University (ADDU)',
+      school_code: 'ADDU',
+      address: 'E. Jacinto St, Poblacion District, Davao City, 8000 Davao del Sur',
+      grading_scale_match: 'Ateneo de Davao University (ADDU)',
+      is_active: true,
+    },
+    {
+      school_name: 'University of the Philippines (UP)',
+      school_code: 'UP',
+      address: 'Mintal, Tugbok District, Davao City, 8000 Davao del Sur',
+      grading_scale_match: 'University of the Philippines (UP)',
+      is_active: true,
+    },
+    {
+      school_name: 'Mapúa Malayan Colleges Mindanao (MMCM)',
+      school_code: 'MMCM',
+      address: 'Gen. Douglas MacArthur Hwy, Matina, Davao City, 8000 Davao del Sur',
+      grading_scale_match: 'University of Mindanao (UM)',
+      is_active: true,
+    },
+    {
+      school_name: 'San Pedro College (SPC)',
+      school_code: 'SPC',
+      address: '12 C. de Guzman St, Poblacion District, Davao City, 8000 Davao del Sur',
+      grading_scale_match: 'High School / Senior High (DepEd Standard)',
+      is_active: true,
+    },
+    {
+      school_name: 'University of the Immaculate Conception (UIC)',
+      school_code: 'UIC',
+      address: 'Father Selga St, Davao City, 8000 Davao del Sur',
+      grading_scale_match: 'University of Mindanao (UM)',
+      is_active: true,
+    },
+  ];
+
+  for (const inst of baselineInstitutions) {
+    const gradingSystem = await prisma.schoolGradingSystem.findUnique({
+      where: { school_name: inst.grading_scale_match },
+    });
+
+    const exists = await prisma.school.findUnique({
+      where: { school_name: inst.school_name },
+    });
+
+    if (!exists) {
+      await prisma.school.create({
+        data: {
+          school_name: inst.school_name,
+          school_code: inst.school_code,
+          address: inst.address,
+          grading_system_id: gradingSystem?.school_id || null,
+          is_active: inst.is_active,
+        },
+      });
+      console.log(`✅ Seeded School Entity: ${inst.school_name} (${inst.school_code})`);
+    } else if (!exists.grading_system_id && gradingSystem) {
+      await prisma.school.update({
+        where: { school_id: exists.school_id },
+        data: { grading_system_id: gradingSystem.school_id },
+      });
     }
   }
 
@@ -266,36 +364,6 @@ async function main() {
       category: 'College',
       description: 'Bachelor of Science in Psychology',
     },
-    {
-      program_code: 'STEM',
-      program_name: 'Senior High School - STEM Strand',
-      category: 'Senior High School',
-      description: 'Science, Technology, Engineering, and Mathematics',
-    },
-    {
-      program_code: 'ABM',
-      program_name: 'Senior High School - ABM Strand',
-      category: 'Senior High School',
-      description: 'Accountancy, Business, and Management',
-    },
-    {
-      program_code: 'HUMSS',
-      program_name: 'Senior High School - HUMSS Strand',
-      category: 'Senior High School',
-      description: 'Humanities and Social Sciences',
-    },
-    {
-      program_code: 'GAS',
-      program_name: 'Senior High School - GAS Strand',
-      category: 'Senior High School',
-      description: 'General Academic Strand',
-    },
-    {
-      program_code: 'TVL',
-      program_name: 'Senior High School - TVL Track',
-      category: 'Senior High School',
-      description: 'Technical-Vocational-Livelihood Track',
-    },
   ];
 
   for (const prog of baselinePrograms) {
@@ -306,7 +374,9 @@ async function main() {
       await prisma.academicProgram.create({
         data: prog,
       });
-      console.log(`✅ Seeded Academic Program: ${prog.program_name} (${prog.program_code})`);
+      console.log(
+        `✅ Seeded Academic Program: ${prog.program_name} (${prog.program_code})`,
+      );
     }
   }
 

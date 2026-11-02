@@ -144,7 +144,8 @@ model ScholarProfile {
   banner_url               String? @db.VarChar(255)
 
   user                  User                 @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
-  school_grading_system SchoolGradingSystem? @relation(fields: [school_id], references: [school_id], onDelete: SetNull)
+  school_grading_system SchoolGradingSystem? @relation(fields: [school_id], references: [school_id], onDelete: SetNull, map: "scholar_profiles_school_grading_fkey")
+  school                School?              @relation(fields: [school_id], references: [school_id], onDelete: SetNull, map: "scholar_profiles_school_fkey")
 
   applications  Application[]
   grade_reports GradeReport[]
@@ -473,8 +474,27 @@ model SchoolGradingSystem {
   submitted_by_user       User?            @relation("SchoolGradingSubmittedBy", fields: [submitted_by_user_id], references: [user_id], onDelete: SetNull)
   verified_by_employee    Employee?        @relation("SchoolGradingVerifiedBy", fields: [verified_by_employee_id], references: [employee_id], onDelete: SetNull)
   scholar_profiles        ScholarProfile[]
+  schools                 School[]         @relation("SchoolGradingScale")
 
   @@map("school_grading_systems")
+}
+
+model School {
+  school_id         Int                  @id @default(autoincrement())
+  school_name       String               @unique @db.VarChar(150)
+  school_code       String?              @unique @db.VarChar(50)
+  address           String?              @db.Text
+  contact_email     String?              @db.VarChar(100)
+  contact_number    String?              @db.VarChar(50)
+  is_active         Boolean              @default(true)
+  grading_system_id Int?
+  created_at        DateTime             @default(now())
+  updated_at        DateTime             @updatedAt
+
+  grading_system   SchoolGradingSystem? @relation("SchoolGradingScale", fields: [grading_system_id], references: [school_id], onDelete: SetNull)
+  scholar_profiles ScholarProfile[]
+
+  @@map("schools")
 }
 
 model AcademicProgram {

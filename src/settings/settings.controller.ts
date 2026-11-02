@@ -22,6 +22,8 @@ import { CreateSchoolGradingDto } from './dto/create-school-grading.dto.js';
 import { UpdateSchoolGradingDto } from './dto/update-school-grading.dto.js';
 import { CreateAcademicProgramDto } from './dto/create-program.dto.js';
 import { UpdateAcademicProgramDto } from './dto/update-program.dto.js';
+import { CreateSchoolDto } from './dto/create-school.dto.js';
+import { UpdateSchoolDto } from './dto/update-school.dto.js';
 
 @ApiTags('Settings & School Grading')
 @ApiBearerAuth()
@@ -131,5 +133,71 @@ export class SettingsController {
   @ApiOperation({ summary: 'Delete an academic program (Admin & Grantor)' })
   deleteProgram(@Request() req, @Param('id', ParseIntPipe) id: number) {
     return this.settingsService.deleteProgram(req.user.user_id, id);
+  }
+
+  // ==========================================
+  // NORMALIZED SCHOOL INSTITUTIONS ENDPOINTS
+  // ==========================================
+
+  @Get('schools-list')
+  @ApiOperation({ summary: 'Get all registered school institutions' })
+  getSchoolsList(@Query('only_active') onlyActive?: string) {
+    return this.settingsService.getSchools(onlyActive === 'true');
+  }
+
+  @Get('institutions')
+  @ApiOperation({ summary: 'Get all registered school institutions (alias)' })
+  getInstitutions(@Query('only_active') onlyActive?: string) {
+    return this.settingsService.getSchools(onlyActive === 'true');
+  }
+
+  @Post('schools-list')
+  @Roles(Role.ADMIN, Role.GRANTOR)
+  @ApiOperation({ summary: 'Register a new school institution (Admin & Grantor)' })
+  createSchoolEntity(@Request() req, @Body() dto: CreateSchoolDto) {
+    return this.settingsService.createSchool(req.user.user_id, dto);
+  }
+
+  @Post('institutions')
+  @Roles(Role.ADMIN, Role.GRANTOR)
+  @ApiOperation({ summary: 'Register a new school institution (alias)' })
+  createInstitution(@Request() req, @Body() dto: CreateSchoolDto) {
+    return this.settingsService.createSchool(req.user.user_id, dto);
+  }
+
+  @Patch('schools-list/:id')
+  @Roles(Role.ADMIN, Role.GRANTOR)
+  @ApiOperation({ summary: 'Update a school institution (Admin & Grantor)' })
+  updateSchoolEntity(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateSchoolDto,
+  ) {
+    return this.settingsService.updateSchool(req.user.user_id, id, dto);
+  }
+
+  @Patch('institutions/:id')
+  @Roles(Role.ADMIN, Role.GRANTOR)
+  @ApiOperation({ summary: 'Update a school institution (alias)' })
+  updateInstitution(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateSchoolDto,
+  ) {
+    return this.settingsService.updateSchool(req.user.user_id, id, dto);
+  }
+
+  @Delete('schools-list/:id')
+  @Roles(Role.ADMIN, Role.GRANTOR)
+  @ApiOperation({ summary: 'Delete a school institution (Admin & Grantor)' })
+  deleteSchoolEntity(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    return this.settingsService.deleteSchool(req.user.user_id, id);
+  }
+
+  @Delete('institutions/:id')
+  @Roles(Role.ADMIN, Role.GRANTOR)
+  @ApiOperation({ summary: 'Delete a school institution (alias)' })
+  deleteInstitution(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    return this.settingsService.deleteSchool(req.user.user_id, id);
   }
 }
