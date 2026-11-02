@@ -4,6 +4,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   MinLength,
 } from 'class-validator';
 import { Role } from '../../generated/prisma/enums.js';
@@ -28,11 +29,17 @@ export class CreateStaffDto {
   @ApiProperty({ description: 'The first name of the staff' })
   @IsString()
   @IsNotEmpty()
+  @Matches(/^[^0-9]+$/, {
+    message: 'First name cannot contain numerical characters.',
+  })
   first_name: string;
 
   @ApiProperty({ description: 'The last name of the staff' })
   @IsString()
   @IsNotEmpty()
+  @Matches(/^[^0-9]+$/, {
+    message: 'Last name cannot contain numerical characters.',
+  })
   last_name: string;
 
   @ApiProperty({ description: 'The title of the staff', required: false })

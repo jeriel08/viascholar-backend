@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsString, IsInt, Min, Max } from 'class-validator';
+import { IsOptional, IsString, IsInt, Min, Max, Matches } from 'class-validator';
 
 export class UpdateProfileDto {
   // Shared Profile Fields
@@ -59,6 +59,10 @@ export class UpdateProfileDto {
   })
   @IsString()
   @IsOptional()
+  @Matches(/^\d{5,12}$/, {
+    message:
+      'Student number must be between 5 and 12 numerical digits (exclude dashes or special characters).',
+  })
   student_number?: string;
 
   @ApiProperty({
