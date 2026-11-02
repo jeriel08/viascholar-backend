@@ -51,6 +51,21 @@ export class CreateSchoolDto {
   grading_system_id?: number;
 
   @ApiPropertyOptional({
+    example: 'NUMERIC_5_POINT',
+    description: 'Standard grading scale template (NUMERIC_5_POINT, NUMERIC_4_POINT, or PERCENTAGE_100)',
+  })
+  @IsString()
+  @IsOptional()
+  grading_scale?: string;
+
+  @ApiPropertyOptional({
+    example: { '7.1': 'Unpaid Tuition', '7.2': 'Incomplete', '9.0': 'Dropped' },
+    description: 'Special grade codes mapping (e.g. 7.1, 7.2, 9.0, INC, DRP)',
+  })
+  @IsOptional()
+  special_codes?: Record<string, string>;
+
+  @ApiPropertyOptional({
     example: true,
     description: 'Whether this school is active and selectable by applicants',
   })

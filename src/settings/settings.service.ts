@@ -670,6 +670,114 @@ export class SettingsService implements OnModuleInit {
     return schools;
   }
 
+  private async resolveOrCreateGradingSystem(
+    schoolName: string,
+    gradingScale?: string,
+    explicitGradingSystemId?: number,
+    specialCodes?: Record<string, string>,
+  ): Promise<number | null> {
+    if (explicitGradingSystemId && !specialCodes && !gradingScale) {
+      const exists = await this.prisma.schoolGradingSystem.findUnique({
+        where: { school_id: explicitGradingSystemId },
+      });
+      if (exists) return exists.school_id;
+    }
+
+    if (!gradingScale || gradingScale === 'NONE') {
+      return explicitGradingSystemId || null;
+    }
+
+    let highest = 1.0;
+    let passing = 3.0;
+    let failing = 5.0;
+    let minGrade = 1.0;
+    let maxGrade = 5.0;
+    let defaultSpecialCodes: Record<string, string> = {
+      INC: 'Incomplete',
+      DRP: 'Dropped',
+      FA: 'Failure due to Absences',
+    };
+
+    if (gradingScale === 'NUMERIC_4_POINT') {
+      highest = 4.0;
+      passing = 2.0;
+      failing = 1.0;
+      minGrade = 1.0;
+      maxGrade = 4.0;
+      defaultSpecialCodes = {
+        '7.1': 'Unpaid Tuition',
+        '7.2': 'Incomplete',
+        '9.0': 'Dropped',
+      };
+    } else if (gradingScale === 'PERCENTAGE_100') {
+      highest = 100.0;
+      passing = 75.0;
+      failing = 50.0;
+      minGrade = 50.0;
+      maxGrade = 100.0;
+      defaultSpecialCodes = {
+        INC: 'Incomplete',
+        DRP: 'Dropped',
+      };
+    } else {
+      gradingScale = 'NUMERIC_5_POINT';
+      highest = 1.0;
+      passing = 3.0;
+      failing = 5.0;
+      minGrade = 1.0;
+      maxGrade = 5.0;
+      defaultSpecialCodes = {
+        INC: 'Incomplete',
+        DRP: 'Dropped',
+        FA: 'Failure due to Absences',
+      };
+    }
+
+    const finalSpecialCodes = specialCodes ?? defaultSpecialCodes;
+
+    const existing = explicitGradingSystemId
+      ? await this.prisma.schoolGradingSystem.findUnique({
+          where: { school_id: explicitGradingSystemId },
+        })
+      : await this.prisma.schoolGradingSystem.findUnique({
+          where: { school_name: schoolName },
+        });
+
+    if (existing) {
+      const updated = await this.prisma.schoolGradingSystem.update({
+        where: { school_id: existing.school_id },
+        data: {
+          grading_scale: gradingScale,
+          highest_grade: highest,
+          passing_grade: passing,
+          failing_grade: failing,
+          min_grade: minGrade,
+          max_grade: maxGrade,
+          ...(specialCodes !== undefined ? { special_codes: specialCodes } : {}),
+          is_verified: true,
+        },
+      });
+      return updated.school_id;
+    }
+
+    const created = await this.prisma.schoolGradingSystem.create({
+      data: {
+        school_name: schoolName,
+        grading_scale: gradingScale,
+        highest_grade: highest,
+        passing_grade: passing,
+        failing_grade: failing,
+        min_grade: minGrade,
+        max_grade: maxGrade,
+        special_codes: finalSpecialCodes,
+        is_verified: true,
+        notes: `Standard ${gradingScale} scale configured during school registration.`,
+      },
+    });
+
+    return created.school_id;
+  }
+
   // 2. Add a new school institution
   async createSchool(userId: number, dto: CreateSchoolDto) {
     const schoolName = dto.school_name.trim();
@@ -696,17 +804,12 @@ export class SettingsService implements OnModuleInit {
       }
     }
 
-    // Verify grading_system_id if provided
-    if (dto.grading_system_id) {
-      const existsGrading = await this.prisma.schoolGradingSystem.findUnique({
-        where: { school_id: dto.grading_system_id },
-      });
-      if (!existsGrading) {
-        throw new NotFoundException(
-          `Grading system with ID ${dto.grading_system_id} does not exist.`,
-        );
-      }
-    }
+    const gradingSystemId = await this.resolveOrCreateGradingSystem(
+      schoolName,
+      dto.grading_scale,
+      dto.grading_system_id,
+      dto.special_codes,
+    );
 
     const school = await this.prisma.school.create({
       data: {
@@ -715,7 +818,7 @@ export class SettingsService implements OnModuleInit {
         address: dto.address?.trim() || null,
         contact_email: dto.contact_email?.trim() || null,
         contact_number: dto.contact_number?.trim() || null,
-        grading_system_id: dto.grading_system_id || null,
+        grading_system_id: gradingSystemId,
         is_active: dto.is_active ?? true,
       },
       include: {
@@ -769,15 +872,20 @@ export class SettingsService implements OnModuleInit {
       }
     }
 
-    if (dto.grading_system_id !== undefined && dto.grading_system_id !== null) {
-      const existsGrading = await this.prisma.schoolGradingSystem.findUnique({
-        where: { school_id: dto.grading_system_id },
-      });
-      if (!existsGrading) {
-        throw new NotFoundException(
-          `Grading system with ID ${dto.grading_system_id} does not exist.`,
-        );
-      }
+    const targetSchoolName = schoolName || existing.school_name;
+    let resolvedGradingSystemId: number | null | undefined = undefined;
+
+    if (
+      dto.grading_scale !== undefined ||
+      dto.grading_system_id !== undefined ||
+      dto.special_codes !== undefined
+    ) {
+      resolvedGradingSystemId = await this.resolveOrCreateGradingSystem(
+        targetSchoolName,
+        dto.grading_scale,
+        dto.grading_system_id,
+        dto.special_codes,
+      );
     }
 
     const updated = await this.prisma.school.update({
@@ -796,8 +904,8 @@ export class SettingsService implements OnModuleInit {
         ...(dto.contact_number !== undefined
           ? { contact_number: dto.contact_number?.trim() || null }
           : {}),
-        ...(dto.grading_system_id !== undefined
-          ? { grading_system_id: dto.grading_system_id }
+        ...(resolvedGradingSystemId !== undefined
+          ? { grading_system_id: resolvedGradingSystemId }
           : {}),
         ...(dto.is_active !== undefined ? { is_active: dto.is_active } : {}),
       },
