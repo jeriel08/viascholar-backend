@@ -93,6 +93,38 @@ export class DocumentsStorageService {
               : 'Grade submission is paused. Please submit and resolve your Second Chance Appeal for your flagged grade report first.';
         throw new BadRequestException(msg);
       }
+
+      if (effectiveDocType === 'CCG') {
+        const activeEnrollment = await this.prisma.termEnrollment.findFirst({
+          where: {
+            scholar_profile_id: scholar.profile_id,
+            status: { not: 'COMPLETED' },
+          },
+          orderBy: { created_at: 'desc' },
+        });
+
+        if (!activeEnrollment) {
+          throw new BadRequestException(
+            'Grade submission is locked. You have not submitted your start-of-term enrollment yet. Please complete and submit your Certificate of Registration (COR) on the Enrollment page first.',
+          );
+        }
+
+        if (activeEnrollment.status !== 'APPROVED') {
+          if (activeEnrollment.status === 'PENDING_REVIEW') {
+            throw new BadRequestException(
+              `Grade submission is locked. Your start-of-term enrollment for ${activeEnrollment.academic_year} (${activeEnrollment.semester}) is currently pending coordinator review. Grades can only be uploaded once your enrollment is approved.`,
+            );
+          }
+          if (activeEnrollment.status === 'CHANGES_REQUESTED') {
+            throw new BadRequestException(
+              'Grade submission is locked. Your coordinator has requested changes to your start-of-term enrollment. Please update and resubmit your enrollment first.',
+            );
+          }
+          throw new BadRequestException(
+            'Grade submission is locked. Your start-of-term enrollment has not been approved.',
+          );
+        }
+      }
     }
 
     const fileList = Array.isArray(files) ? files : [files];
@@ -286,7 +318,7 @@ export class DocumentsStorageService {
   }
 
   // 2. Scholar views their own documents
-  async getMyDocuments(userId: number) {
+  async getMyDocuments(userId: number, documentType?: string) {
     const scholar = await this.prisma.scholarProfile.findUnique({
       where: { user_id: userId },
     });
@@ -294,8 +326,13 @@ export class DocumentsStorageService {
       throw new NotFoundException('Scholar profile not found.');
     }
 
+    const where: any = { scholar_profile_id: scholar.profile_id };
+    if (documentType) {
+      where.document_type = documentType;
+    }
+
     return this.prisma.scholarDocument.findMany({
-      where: { scholar_profile_id: scholar.profile_id },
+      where,
       orderBy: { uploaded_at: 'desc' },
       select: {
         document_id: true,

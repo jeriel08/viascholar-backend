@@ -4,6 +4,7 @@ import {
   Param,
   ParseIntPipe,
   Query,
+  Request,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
@@ -14,7 +15,15 @@ import { Role } from '../generated/prisma/enums.js';
 import { MeetingsService } from './meetings.service.js';
 import { QueryMeetingsDto } from './dto/query-meetings.dto.js';
 
-@ApiTags('Staff Meetings')
+interface AuthenticatedRequest {
+  user: {
+    user_id: number;
+    email: string;
+    role: Role;
+  };
+}
+
+@ApiTags('Meetings')
 @ApiBearerAuth()
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Controller('meetings')
@@ -22,20 +31,28 @@ export class MeetingsController {
   constructor(private readonly meetingsService: MeetingsService) {}
 
   @Get()
-  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR, Role.SCHOLAR, Role.APPLICANT)
   @ApiOperation({
-    summary: 'List scheduled interviews from the meetings table (Staff only)',
+    summary:
+      'List scheduled meetings from the meetings table (Staff lists all, Scholar/Applicant lists their own)',
   })
-  findAll(@Query() query: QueryMeetingsDto) {
-    return this.meetingsService.findAll(query);
+  findAll(
+    @Request() req: AuthenticatedRequest,
+    @Query() query: QueryMeetingsDto,
+  ) {
+    return this.meetingsService.findAll(query, req.user);
   }
 
   @Get(':id')
-  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR, Role.SCHOLAR, Role.APPLICANT)
   @ApiOperation({
-    summary: 'View one scheduled interview in full (Staff only)',
+    summary:
+      'View one scheduled meeting in full (Staff views any, Scholar/Applicant views own)',
   })
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.meetingsService.findOne(id);
+  findOne(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.meetingsService.findOne(id, req.user);
   }
 }

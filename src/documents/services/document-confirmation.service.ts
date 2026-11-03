@@ -85,6 +85,20 @@ export class DocumentConfirmationService {
               : 'Grade submission is paused. Please submit and resolve your Second Chance Appeal for your flagged grade report first.';
         throw new BadRequestException(msg);
       }
+
+      const activeEnrollment = await this.prisma.termEnrollment.findFirst({
+        where: {
+          scholar_profile_id: doc.scholar_profile_id,
+          status: { not: 'COMPLETED' },
+        },
+        orderBy: { created_at: 'desc' },
+      });
+
+      if (!activeEnrollment || activeEnrollment.status !== 'APPROVED') {
+        throw new BadRequestException(
+          'You cannot confirm or submit grades without an approved start-of-term enrollment.',
+        );
+      }
     }
 
     const extracted = (doc.extracted_data ?? {}) as ExtractedDocData;
@@ -185,7 +199,7 @@ export class DocumentConfirmationService {
       const activeEnrollment = await this.prisma.termEnrollment.findFirst({
         where: {
           scholar_profile_id: doc.scholar_profile_id,
-          status: { in: ['APPROVED', 'SUBMITTED', 'PENDING_REVIEW'] },
+          status: 'APPROVED',
         },
         orderBy: { created_at: 'desc' },
       });

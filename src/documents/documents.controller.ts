@@ -186,8 +186,11 @@ export class DocumentsController {
   @ApiOperation({
     summary: 'List own documents with OCR data and coordinator remarks',
   })
-  getMyDocuments(@Request() req: AuthenticatedRequest) {
-    return this.storageService.getMyDocuments(req.user.user_id);
+  getMyDocuments(
+    @Request() req: AuthenticatedRequest,
+    @Query('document_type') documentType?: string,
+  ) {
+    return this.storageService.getMyDocuments(req.user.user_id, documentType);
   }
 
   @Get('grade-reports/me')
