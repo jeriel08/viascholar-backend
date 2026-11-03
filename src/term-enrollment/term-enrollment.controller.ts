@@ -227,6 +227,16 @@ export class TermEnrollmentController {
     );
   }
 
+  @Delete('draft/document/:docType')
+  @Roles(Role.SCHOLAR)
+  @ApiOperation({ summary: 'Clear a specific document from active draft' })
+  async clearDraftDocument(
+    @Request() req: AuthenticatedRequest,
+    @Param('docType') docType: 'cor' | 'soa' | 'consolidated',
+  ) {
+    return this.scholarService.clearDraftDocument(req.user.user_id, docType);
+  }
+
   // ==========================================
   // COORDINATOR & GRANTOR MONITORING ENDPOINTS
   // ==========================================

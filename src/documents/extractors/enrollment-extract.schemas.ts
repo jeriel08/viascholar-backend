@@ -1,6 +1,27 @@
 export const ENROLLMENT_COR_DATA_SCHEMA = {
   type: 'object',
   properties: {
+    detected_document_type: {
+      type: 'string',
+      enum: [
+        'CERTIFICATE_OF_REGISTRATION',
+        'STATEMENT_OF_ACCOUNT',
+        'CONSOLIDATED_ENROLLMENT',
+        'OTHER',
+      ],
+      description:
+        "Document classification. 'CERTIFICATE_OF_REGISTRATION' for Certificate of Registration / Matriculation / Class Schedule / Study Load listing courses; 'STATEMENT_OF_ACCOUNT' for tuition billing, student ledgers, fee assessments; 'CONSOLIDATED_ENROLLMENT' if the form has BOTH class schedule and tuition assessment; 'OTHER' for unrelated documents.",
+    },
+    is_class_schedule: {
+      type: 'boolean',
+      description:
+        'True ONLY if the document explicitly contains an enrolled subjects / course schedule table with subjects and units.',
+    },
+    is_assessment_form: {
+      type: 'boolean',
+      description:
+        'True if this document is primarily a tuition fee assessment, billing statement, student ledger, or cashier assessment of fees.',
+    },
     student_name: {
       type: 'string',
       description: "Student's full name printed on the document.",
@@ -82,6 +103,27 @@ export const ENROLLMENT_COR_DATA_SCHEMA = {
 export const ENROLLMENT_SOA_DATA_SCHEMA = {
   type: 'object',
   properties: {
+    detected_document_type: {
+      type: 'string',
+      enum: [
+        'CERTIFICATE_OF_REGISTRATION',
+        'STATEMENT_OF_ACCOUNT',
+        'CONSOLIDATED_ENROLLMENT',
+        'OTHER',
+      ],
+      description:
+        "Document classification. 'STATEMENT_OF_ACCOUNT' for tuition billing, student ledgers, fee assessments; 'CERTIFICATE_OF_REGISTRATION' for Certificate of Registration / Class Schedule; 'CONSOLIDATED_ENROLLMENT' if the form has BOTH class schedule and tuition assessment; 'OTHER' for unrelated documents.",
+    },
+    is_class_schedule: {
+      type: 'boolean',
+      description:
+        'True ONLY if the document explicitly contains an enrolled subjects / course schedule table with subjects and units.',
+    },
+    is_assessment_form: {
+      type: 'boolean',
+      description:
+        'True if this document contains tuition fees, fee breakdown, or assessment of tuition balance due.',
+    },
     student_name: {
       type: 'string',
       description:
@@ -149,6 +191,19 @@ export const ENROLLMENT_SOA_DATA_SCHEMA = {
 export const CONSOLIDATED_ENROLLMENT_DATA_SCHEMA = {
   type: 'object',
   properties: {
+    detected_document_type: {
+      type: 'string',
+      enum: [
+        'CERTIFICATE_OF_REGISTRATION',
+        'STATEMENT_OF_ACCOUNT',
+        'CONSOLIDATED_ENROLLMENT',
+        'OTHER',
+      ],
+      description:
+        "Document classification. Should be 'CONSOLIDATED_ENROLLMENT' if both class schedule and tuition assessment are present on this document.",
+    },
+    is_class_schedule: { type: 'boolean' },
+    is_assessment_form: { type: 'boolean' },
     student_name: { type: 'string' },
     student_number: { type: 'string' },
     school_name: { type: 'string' },

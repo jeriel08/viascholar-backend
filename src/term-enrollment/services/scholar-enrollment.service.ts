@@ -709,6 +709,113 @@ export class ScholarEnrollmentService {
     };
   }
 
+  // 6b. Clear a specific document from draft and update/reset draft state
+  async clearDraftDocument(
+    userId: number,
+    docType: 'cor' | 'soa' | 'consolidated',
+  ) {
+    const scholar = await this.getScholarProfile(userId);
+    const draft = await this.prisma.termEnrollment.findFirst({
+      where: {
+        scholar_profile_id: scholar.profile_id,
+        status: 'DRAFT',
+      },
+      orderBy: { created_at: 'desc' },
+    });
+
+    if (!draft) {
+      return { success: true, message: 'No active draft found to clear.' };
+    }
+
+    if (docType === 'cor') {
+      if (draft.cor_document_id) {
+        await this.prisma.scholarDocument
+          .delete({
+            where: { document_id: draft.cor_document_id },
+          })
+          .catch(() => {});
+      }
+
+      // If SOA is also absent or same as COR, delete the draft entirely
+      if (
+        !draft.soa_document_id ||
+        draft.soa_document_id === draft.cor_document_id
+      ) {
+        await this.prisma.termEnrollment.delete({
+          where: { enrollment_id: draft.enrollment_id },
+        });
+        return { success: true, message: 'Enrollment draft reset.' };
+      } else {
+        await this.prisma.termEnrollment.update({
+          where: { enrollment_id: draft.enrollment_id },
+          data: {
+            cor_document_id: null,
+            enrolled_subjects: [],
+            total_units: 0,
+            audit_flags: [],
+          },
+        });
+        return {
+          success: true,
+          message: 'Proof of subjects removed from draft.',
+        };
+      }
+    } else if (docType === 'soa') {
+      if (draft.soa_document_id) {
+        await this.prisma.scholarDocument
+          .delete({
+            where: { document_id: draft.soa_document_id },
+          })
+          .catch(() => {});
+      }
+
+      // If COR is also absent or same as SOA, delete the draft entirely
+      if (
+        !draft.cor_document_id ||
+        draft.cor_document_id === draft.soa_document_id
+      ) {
+        await this.prisma.termEnrollment.delete({
+          where: { enrollment_id: draft.enrollment_id },
+        });
+        return { success: true, message: 'Enrollment draft reset.' };
+      } else {
+        await this.prisma.termEnrollment.update({
+          where: { enrollment_id: draft.enrollment_id },
+          data: {
+            soa_document_id: null,
+            total_assessment: 0,
+            assessment_date: null,
+            billing_breakdown: {},
+          },
+        });
+        return {
+          success: true,
+          message: 'Proof of billing removed from draft.',
+        };
+      }
+    } else if (docType === 'consolidated') {
+      const docIds = [draft.cor_document_id, draft.soa_document_id].filter(
+        Boolean,
+      ) as number[];
+      if (docIds.length > 0) {
+        await this.prisma.scholarDocument
+          .deleteMany({
+            where: { document_id: { in: docIds } },
+          })
+          .catch(() => {});
+      }
+      await this.prisma.termEnrollment.delete({
+        where: { enrollment_id: draft.enrollment_id },
+      });
+      return {
+        success: true,
+        message: 'Consolidated document removed and draft reset.',
+      };
+    }
+
+    return { success: true, message: 'Document cleared.' };
+  }
+
   // 7. Pre-audit calculation before final submission
   async runPreAudit(userId: number, dto: SubmitEnrollmentDto) {
     const scholar = await this.getScholarProfile(userId);

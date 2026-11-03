@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { LlamaExtractService } from '../../documents/extractors/llama-extract.service.js';
 import { InputDocumentFile } from '../../documents/extractors/document-extractor.interface.js';
 
@@ -104,6 +104,21 @@ export class EnrollmentOcrService {
     this.logger.log('Dispatching COR document to LlamaExtract...');
     const raw = await this.llamaExtractService.extractEnrollmentCorData(input);
 
+    // 1. Strict Document Type Checking
+    if (
+      raw.detected_document_type === 'STATEMENT_OF_ACCOUNT' ||
+      (raw.is_assessment_form && !raw.is_class_schedule)
+    ) {
+      throw new BadRequestException(
+        'The uploaded document is a Statement of Account or Tuition Fee Assessment. Please upload your Proof of Enrolled Subjects (Certificate of Registration / Class Schedule) in this input, or switch to Consolidated mode if your form contains both.',
+      );
+    }
+    if (raw.detected_document_type === 'OTHER') {
+      throw new BadRequestException(
+        'The uploaded document does not appear to be an official Certificate of Registration or Class Schedule. Please upload a valid enrollment document.',
+      );
+    }
+
     const subjects: ExtractedCorSubject[] = (raw.subjects || [])
       .map((s: any) => ({
         subject_code: (s.subject_code || '').trim().toUpperCase(),
@@ -115,10 +130,30 @@ export class EnrollmentOcrService {
       }))
       .filter((s: ExtractedCorSubject) => Boolean(s.subject_code));
 
+    if (subjects.length === 0) {
+      throw new BadRequestException(
+        'No registered courses or class schedule were detected in the uploaded file. Please make sure to upload an official Certificate of Registration (COR) or Class Schedule showing your enrolled subjects.',
+      );
+    }
+
+    // Filter out fee items accidentally parsed as subjects
+    const feeKeywords =
+      /tuition|matriculation|miscellaneous|athletic|library|medical|dental|registration\s+fee|guidance|id\s+fee|energy\s+fee|assessment|laboratory\s+fee|discount|downpayment/i;
+    const academicSubjects = subjects.filter(
+      (s) =>
+        !feeKeywords.test(s.subject_code) &&
+        !feeKeywords.test(s.descriptive_title),
+    );
+    if (academicSubjects.length === 0) {
+      throw new BadRequestException(
+        'The uploaded document appears to be a tuition billing ledger rather than an enrolled class schedule. Please upload your Certificate of Registration or Class Schedule.',
+      );
+    }
+
     const totalUnits =
       Number(raw.total_units) > 0
         ? Number(raw.total_units)
-        : subjects.reduce((sum, s) => sum + s.units, 0);
+        : academicSubjects.reduce((sum, s) => sum + s.units, 0);
 
     return {
       student_name: raw.student_name,
@@ -129,7 +164,7 @@ export class EnrollmentOcrService {
       semester: this.normalizeSemester(raw.semester),
       year_level: this.normalizeYearLevel(raw.year_level),
       total_units: totalUnits,
-      subjects,
+      subjects: academicSubjects,
     };
   }
 
@@ -139,6 +174,36 @@ export class EnrollmentOcrService {
     this.logger.log('Dispatching SOA document to LlamaExtract...');
     const raw = await this.llamaExtractService.extractEnrollmentSoaData(input);
 
+    // 1. Strict Document Type Checking
+    if (
+      raw.detected_document_type === 'CERTIFICATE_OF_REGISTRATION' ||
+      (raw.is_class_schedule && !raw.is_assessment_form)
+    ) {
+      throw new BadRequestException(
+        'The uploaded document is a Certificate of Registration or Class Schedule, not a Statement of Account. Please upload your Tuition Fee Assessment, Statement of Account (SOA), or Student Ledger in this input.',
+      );
+    }
+    if (raw.detected_document_type === 'OTHER') {
+      throw new BadRequestException(
+        'The uploaded document does not appear to be an official Statement of Account or Tuition Assessment. Please upload a valid billing or ledger document.',
+      );
+    }
+
+    const totalAssessment = Number(raw.total_assessment) || 0;
+    const hasFeeBreakdown = Boolean(
+      raw.tuition_fee ||
+        raw.lab_fees ||
+        raw.misc_fees ||
+        raw.other_fees ||
+        raw.net_balance_due,
+    );
+
+    if (totalAssessment <= 0 && !hasFeeBreakdown) {
+      throw new BadRequestException(
+        'No tuition assessment balance or fee charges were detected in the uploaded file. Please upload an official Statement of Account (SOA), Tuition Fee Assessment, or Student Ledger.',
+      );
+    }
+
     return {
       student_name: raw.student_name,
       student_number: raw.student_number,
@@ -146,7 +211,7 @@ export class EnrollmentOcrService {
       academic_year: raw.academic_year,
       semester: this.normalizeSemester(raw.semester),
       assessment_date: raw.assessment_date,
-      total_assessment: Number(raw.total_assessment) || 0,
+      total_assessment: totalAssessment,
       tuition_fee:
         raw.tuition_fee != null ? Number(raw.tuition_fee) : undefined,
       lab_fees: raw.lab_fees != null ? Number(raw.lab_fees) : undefined,
@@ -158,7 +223,7 @@ export class EnrollmentOcrService {
       net_balance_due:
         raw.net_balance_due != null
           ? Number(raw.net_balance_due)
-          : Number(raw.total_assessment) || 0,
+          : totalAssessment,
     };
   }
 
@@ -182,6 +247,26 @@ export class EnrollmentOcrService {
       }))
       .filter((s: ExtractedCorSubject) => Boolean(s.subject_code));
 
+    if (subjects.length === 0) {
+      throw new BadRequestException(
+        'No enrolled subjects found in the consolidated document. Please ensure your form contains both your registered courses and tuition assessment.',
+      );
+    }
+
+    const totalAssessment = Number(raw.total_assessment) || 0;
+    const hasFeeBreakdown = Boolean(
+      raw.tuition_fee ||
+        raw.lab_fees ||
+        raw.misc_fees ||
+        raw.other_fees ||
+        raw.net_balance_due,
+    );
+    if (totalAssessment <= 0 && !hasFeeBreakdown) {
+      throw new BadRequestException(
+        'No tuition assessment balance found in the consolidated document. If your school issues separate documents for class schedule and tuition billing, please turn off Consolidated mode.',
+      );
+    }
+
     const totalUnits =
       Number(raw.total_units) > 0
         ? Number(raw.total_units)
@@ -197,7 +282,7 @@ export class EnrollmentOcrService {
       year_level: this.normalizeYearLevel(raw.year_level),
       total_units: totalUnits,
       assessment_date: raw.assessment_date,
-      total_assessment: Number(raw.total_assessment) || 0,
+      total_assessment: totalAssessment,
       tuition_fee:
         raw.tuition_fee != null ? Number(raw.tuition_fee) : undefined,
       lab_fees: raw.lab_fees != null ? Number(raw.lab_fees) : undefined,
@@ -209,7 +294,7 @@ export class EnrollmentOcrService {
       net_balance_due:
         raw.net_balance_due != null
           ? Number(raw.net_balance_due)
-          : Number(raw.total_assessment) || 0,
+          : totalAssessment,
       subjects,
     };
   }

@@ -782,8 +782,17 @@ CRITICAL INSTRUCTIONS:
   async extractEnrollmentCorData(
     input: InputDocumentFile | InputDocumentFile[],
   ): Promise<any> {
-    const systemPrompt = `You are an expert academic document OCR AI specializing in Philippine college and university Certificate of Registration (COR), Certificate of Matriculation (COM), E-Form, and Form 1.
-Extract the student identification, term, and enrolled subjects table. Cleanly parse subject codes, titles, credit units, section, and schedule.`;
+    const systemPrompt = `You are an expert academic document OCR AI specializing in Philippine college and university Certificate of Registration (COR), Certificate of Matriculation (COM), Class Schedules, Study Load, and Form 1.
+
+CRITICAL DOCUMENT TYPE CLASSIFICATION:
+1. Classify the document under detected_document_type:
+   - 'CERTIFICATE_OF_REGISTRATION': A valid Certificate of Registration, Class Schedule, or Study Load listing academic courses/subjects (e.g., IT 101, ENG 1, MATH 2) and units.
+   - 'STATEMENT_OF_ACCOUNT': A Statement of Account, Tuition Fee Assessment, Student Ledger, or Billing statement showing fees (Tuition, Miscellaneous, Lab, Balance Due) WITHOUT a class schedule.
+   - 'CONSOLIDATED_ENROLLMENT': Contains both an enrolled class schedule and a financial tuition fee assessment on the same document.
+   - 'OTHER': Unrelated document (ID card, grade report, receipt, etc.).
+2. Set is_class_schedule to true ONLY if the document explicitly contains registered/enrolled subjects or course schedule table.
+3. Set is_assessment_form to true if the document is primarily an assessment of fees or statement of account.
+4. DO NOT treat tuition fee lines, miscellaneous fees, or payment breakdowns as academic subjects! Only parse actual course offerings/subjects (e.g. Computer Programming, Data Structures, English, Calculus).`;
 
     const rawData = await this.executeExtraction<any>(
       input,
@@ -796,8 +805,17 @@ Extract the student identification, term, and enrolled subjects table. Cleanly p
   async extractEnrollmentSoaData(
     input: InputDocumentFile | InputDocumentFile[],
   ): Promise<any> {
-    const systemPrompt = `You are an expert financial document OCR AI specializing in Philippine college and university Statement of Account (SOA), Student Ledgers, and Assessment Forms.
-Extract the student identification, academic year, semester, assessment date, total assessment, tuition/lab/misc fees, and net balance due.`;
+    const systemPrompt = `You are an expert financial document OCR AI specializing in Philippine college and university Statement of Account (SOA), Student Ledgers, Tuition Fee Assessment Forms, and Billing Statements.
+
+CRITICAL DOCUMENT TYPE CLASSIFICATION:
+1. Classify the document under detected_document_type:
+   - 'STATEMENT_OF_ACCOUNT': A valid Statement of Account, Tuition Fee Assessment, Student Ledger, or Billing statement showing fees and charges (e.g., Tuition Fee, Miscellaneous, Laboratory, Total Assessment, Balance Due).
+   - 'CERTIFICATE_OF_REGISTRATION': A Certificate of Registration, Class Schedule, or Study Load listing enrolled subjects WITHOUT a financial tuition billing assessment.
+   - 'CONSOLIDATED_ENROLLMENT': Contains both an enrolled class schedule and a financial tuition fee assessment on the same document.
+   - 'OTHER': Unrelated document (ID card, grade card, receipt, etc.).
+2. Set is_assessment_form to true ONLY if the document explicitly contains tuition fees, assessment breakdown, or balance due.
+3. Set is_class_schedule to true if the document is primarily a class schedule.
+4. If the document is purely a class schedule with no tuition fees or balance due, classify it as 'CERTIFICATE_OF_REGISTRATION' and set is_assessment_form to false.`;
 
     const rawData = await this.executeExtraction<any>(
       input,
@@ -811,7 +829,7 @@ Extract the student identification, academic year, semester, assessment date, to
     input: InputDocumentFile | InputDocumentFile[],
   ): Promise<any> {
     const systemPrompt = `You are an expert academic and financial document OCR AI specializing in consolidated Philippine university enrollment & assessment forms (e.g. UM Certificate of Matriculation, HCDC Registration/Assessment Form).
-Extract the student identification, semester, enrolled subjects table, and financial tuition assessment breakdown.`;
+Extract the student identification, semester, enrolled subjects table, and financial tuition assessment breakdown. Set detected_document_type to 'CONSOLIDATED_ENROLLMENT'.`;
 
     const rawData = await this.executeExtraction<any>(
       input,
