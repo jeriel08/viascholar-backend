@@ -59,6 +59,11 @@ async function bootstrap() {
     SwaggerModule.setup('api', app, documentFactory);
   }
 
-  await app.listen(process.env.PORT ?? 3000);
+  const server = await app.listen(process.env.PORT ?? 3000);
+  if (server && typeof server.setTimeout === 'function') {
+    server.setTimeout(300000); // 5 minutes for complex AI document processing
+    server.headersTimeout = 300000;
+    server.requestTimeout = 300000;
+  }
 }
 bootstrap();

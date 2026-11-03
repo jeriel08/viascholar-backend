@@ -97,7 +97,7 @@ export const ENROLLMENT_COR_DATA_SCHEMA = {
       },
     },
   },
-  required: ['subjects'],
+  required: ['detected_document_type'],
 };
 
 export const ENROLLMENT_SOA_DATA_SCHEMA = {
@@ -185,7 +185,7 @@ export const ENROLLMENT_SOA_DATA_SCHEMA = {
       description: 'Final remaining net balance due to be paid.',
     },
   },
-  required: ['total_assessment'],
+  required: ['detected_document_type'],
 };
 
 export const CONSOLIDATED_ENROLLMENT_DATA_SCHEMA = {
@@ -237,5 +237,5 @@ export const CONSOLIDATED_ENROLLMENT_DATA_SCHEMA = {
       },
     },
   },
-  required: ['subjects', 'total_assessment'],
+  required: ['detected_document_type'],
 };

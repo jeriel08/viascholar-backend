@@ -113,7 +113,11 @@ export class EnrollmentOcrService {
         'The uploaded document is a Statement of Account or Tuition Fee Assessment. Please upload your Proof of Enrolled Subjects (Certificate of Registration / Class Schedule) in this input, or switch to Consolidated mode if your form contains both.',
       );
     }
-    if (raw.detected_document_type === 'OTHER') {
+    if (
+      raw.detected_document_type === 'OTHER' ||
+      !raw.subjects ||
+      raw.subjects.length === 0
+    ) {
       throw new BadRequestException(
         'The uploaded document does not appear to be an official Certificate of Registration or Class Schedule. Please upload a valid enrollment document.',
       );

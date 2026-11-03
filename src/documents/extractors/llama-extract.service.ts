@@ -792,7 +792,8 @@ CRITICAL DOCUMENT TYPE CLASSIFICATION:
    - 'OTHER': Unrelated document (ID card, grade report, receipt, etc.).
 2. Set is_class_schedule to true ONLY if the document explicitly contains registered/enrolled subjects or course schedule table.
 3. Set is_assessment_form to true if the document is primarily an assessment of fees or statement of account.
-4. DO NOT treat tuition fee lines, miscellaneous fees, or payment breakdowns as academic subjects! Only parse actual course offerings/subjects (e.g. Computer Programming, Data Structures, English, Calculus).`;
+4. DO NOT treat tuition fee lines, miscellaneous fees, or payment breakdowns as academic subjects! Only parse actual course offerings/subjects (e.g. Computer Programming, Data Structures, English, Calculus).
+5. FAST WRONG DOCUMENT CLASSIFICATION: If the document is NOT a Certificate of Registration or Class Schedule (e.g. it is an ID card, receipt, grade report, or other unrelated document), immediately classify detected_document_type as 'OTHER' or 'STATEMENT_OF_ACCOUNT' and return subjects as an empty array ([]). Do NOT spend extra time searching or hallucinating subjects if none are present.`;
 
     const rawData = await this.executeExtraction<any>(
       input,
@@ -815,7 +816,8 @@ CRITICAL DOCUMENT TYPE CLASSIFICATION:
    - 'OTHER': Unrelated document (ID card, grade card, receipt, etc.).
 2. Set is_assessment_form to true ONLY if the document explicitly contains tuition fees, assessment breakdown, or balance due.
 3. Set is_class_schedule to true if the document is primarily a class schedule.
-4. If the document is purely a class schedule with no tuition fees or balance due, classify it as 'CERTIFICATE_OF_REGISTRATION' and set is_assessment_form to false.`;
+4. If the document is purely a class schedule with no tuition fees or balance due, classify it as 'CERTIFICATE_OF_REGISTRATION' and set is_assessment_form to false.
+5. FAST WRONG DOCUMENT CLASSIFICATION: If the document is NOT a Statement of Account, Tuition Fee Assessment, or Student Ledger (e.g. it is an ID card, grade report, receipt, or unrelated document), immediately classify detected_document_type as 'OTHER' or 'CERTIFICATE_OF_REGISTRATION' and return total_assessment as 0. Do NOT spend extra time searching or hallucinating fees if none are present.`;
 
     const rawData = await this.executeExtraction<any>(
       input,

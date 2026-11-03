@@ -20,6 +20,8 @@ export class CloudinaryService implements OnModuleInit {
       cloud_name: this.configService.get<string>('CLOUDINARY_CLOUD_NAME'),
       api_key: this.configService.get<string>('CLOUDINARY_API_KEY'),
       api_secret: this.configService.get<string>('CLOUDINARY_API_SECRET'),
+      secure: true,
+      timeout: 120000,
     });
   }
 
@@ -33,10 +35,23 @@ export class CloudinaryService implements OnModuleInit {
   ): Promise<UploadApiResponse> {
     let lastError: any;
 
+    const isPdf =
+      file.mimetype?.toLowerCase().includes('pdf') ||
+      file.originalname?.toLowerCase().endsWith('.pdf');
+
+    const uploadOptions: Record<string, any> = {
+      folder,
+      resource_type: isPdf ? 'auto' : 'image',
+      timeout: 120000,
+    };
+    if (!isPdf && allowedFormats && allowedFormats.length > 0) {
+      uploadOptions.allowed_formats = allowedFormats.filter((f) => f !== 'pdf');
+    }
+
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         if (attempt > 0) {
-          const delayMs = attempt * 1200;
+          const delayMs = attempt * 1500;
           this.logger.warn(
             `Retrying Cloudinary upload in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries + 1})...`,
           );
@@ -46,10 +61,7 @@ export class CloudinaryService implements OnModuleInit {
         const result = await new Promise<UploadApiResponse>(
           (resolve, reject) => {
             const uploadStream = cloudinary.uploader.upload_stream(
-              {
-                folder: folder,
-                allowed_formats: allowedFormats,
-              },
+              uploadOptions,
               (error, result) => {
                 if (error || !result) {
                   return reject(
@@ -75,7 +87,10 @@ export class CloudinaryService implements OnModuleInit {
         const isRateLimitOrTransient =
           error?.http_code === 429 ||
           error?.statusCode === 429 ||
+          error?.http_code === 499 ||
+          error?.name === 'TimeoutError' ||
           error?.name === 'UnexpectedResponse' ||
+          String(error?.message).toLowerCase().includes('timeout') ||
           String(error?.message).includes('429');
 
         this.logger.warn(
