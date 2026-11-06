@@ -15,6 +15,22 @@ export class ProspectusTransitionService {
     private readonly cacheService: AppCacheService,
   ) {}
 
+  private normalizeSubjectCode(code?: string | null): string {
+    if (!code) return '';
+    return code
+      .trim()
+      .toUpperCase()
+      .replace(/[\s\-_./\\]+/g, '')
+      .replace(/(?<=[A-Z])III$/g, '3')
+      .replace(/(?<=[A-Z])II$/g, '2')
+      .replace(/(?<=[A-Z])I$/g, '1');
+  }
+
+  private normalizeText(text?: string | null): string {
+    if (!text) return '';
+    return text.trim().toUpperCase().replace(/[^A-Z0-9]/gi, '');
+  }
+
   /**
    * Transitions ENROLLED / UNTAKEN subjects in the scholar's prospectus to PASSED or FAILED
    */
@@ -39,42 +55,56 @@ export class ProspectusTransitionService {
 
     if (!prospectus || !prospectus.subjects?.length) return;
 
-    const clean = (s?: string | null) =>
-      (s || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    const matchedSubjectIds = new Set<number>();
 
     for (const item of gradeItems) {
-      const normCode = clean(item.subject_code);
-      const normName = clean(item.subject_name);
+      const normCode = this.normalizeSubjectCode(item.subject_code);
+      const normTitle = this.normalizeText(item.subject_name);
 
-      const match = prospectus.subjects.find((ps) => {
-        const psCode = clean(ps.subject_code);
-        const psTitle = clean(ps.descriptive_title);
-        if (
-          normCode &&
-          psCode &&
-          (psCode === normCode ||
-            psCode.includes(normCode) ||
-            normCode.includes(psCode))
-        )
-          return true;
-        if (
-          normName &&
-          psTitle &&
-          (psTitle === normName ||
-            psTitle.includes(normName) ||
-            normName.includes(psTitle))
-        )
-          return true;
-        if (
-          normCode &&
-          psTitle &&
-          (psTitle === normCode || psTitle.includes(normCode))
-        )
-          return true;
-        return false;
+      // Prioritized matching:
+      // Tier 1: Exact code match on an ENROLLED subject for this active term
+      let match = prospectus.subjects.find((ps) => {
+        if (matchedSubjectIds.has(ps.subject_id)) return false;
+        if (ps.status !== 'ENROLLED') return false;
+        return normCode && this.normalizeSubjectCode(ps.subject_code) === normCode;
       });
 
+      // Tier 2: Exact code match in the matching semester
+      if (!match && normCode) {
+        match = prospectus.subjects.find((ps) => {
+          if (matchedSubjectIds.has(ps.subject_id)) return false;
+          if (ps.semester !== semester) return false;
+          return this.normalizeSubjectCode(ps.subject_code) === normCode;
+        });
+      }
+
+      // Tier 3: Exact code match anywhere in prospectus
+      if (!match && normCode) {
+        match = prospectus.subjects.find((ps) => {
+          if (matchedSubjectIds.has(ps.subject_id)) return false;
+          return this.normalizeSubjectCode(ps.subject_code) === normCode;
+        });
+      }
+
+      // Tier 4: Exact title match on an ENROLLED subject
+      if (!match && normTitle) {
+        match = prospectus.subjects.find((ps) => {
+          if (matchedSubjectIds.has(ps.subject_id)) return false;
+          if (ps.status !== 'ENROLLED') return false;
+          return this.normalizeText(ps.descriptive_title) === normTitle;
+        });
+      }
+
+      // Tier 5: Exact title match anywhere in prospectus
+      if (!match && normTitle) {
+        match = prospectus.subjects.find((ps) => {
+          if (matchedSubjectIds.has(ps.subject_id)) return false;
+          return this.normalizeText(ps.descriptive_title) === normTitle;
+        });
+      }
+
       if (match) {
+        matchedSubjectIds.add(match.subject_id);
         const numGrade = Number(item.grade);
         const isPassing = schoolConfig
           ? this.settingsService.evaluateStudentGrade(item.grade, schoolConfig)
