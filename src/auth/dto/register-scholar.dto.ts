@@ -2,6 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import {
   IsEmail,
   IsNotEmpty,
+  Matches,
   IsOptional,
   IsString,
   MinLength,
@@ -21,11 +22,17 @@ export class RegisterScholarDto {
   @ApiProperty({ description: 'The first name of the scholar' })
   @IsString()
   @IsNotEmpty()
+  @Matches(/^[a-zA-ZÀ-ÿñÑ\s]+$/, {
+    message: 'First name cannot contain numbers or special characters.',
+  })
   first_name: string;
 
   @ApiProperty({ description: 'The last name of the scholar' })
   @IsString()
   @IsNotEmpty()
+  @Matches(/^[a-zA-ZÀ-ÿñÑ\s]+$/, {
+    message: 'Last name cannot contain numbers or special characters.',
+  })
   last_name: string;
 
   @ApiProperty({

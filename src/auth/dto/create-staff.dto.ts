@@ -29,16 +29,16 @@ export class CreateStaffDto {
   @ApiProperty({ description: 'The first name of the staff' })
   @IsString()
   @IsNotEmpty()
-  @Matches(/^[^0-9]+$/, {
-    message: 'First name cannot contain numerical characters.',
+  @Matches(/^[a-zA-ZÀ-ÿñÑ\s]+$/, {
+    message: 'First name cannot contain numbers or special characters.',
   })
   first_name: string;
 
   @ApiProperty({ description: 'The last name of the staff' })
   @IsString()
   @IsNotEmpty()
-  @Matches(/^[^0-9]+$/, {
-    message: 'Last name cannot contain numerical characters.',
+  @Matches(/^[a-zA-ZÀ-ÿñÑ\s]+$/, {
+    message: 'Last name cannot contain numbers or special characters.',
   })
   last_name: string;
 

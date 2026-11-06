@@ -6,11 +6,17 @@ export class UpdateProfileDto {
   @ApiProperty({ description: 'The first name of the user' })
   @IsString()
   @IsOptional()
+  @Matches(/^[a-zA-ZÀ-ÿñÑ\s]+$/, {
+    message: 'First name cannot contain numbers or special characters.',
+  })
   first_name?: string;
 
   @ApiProperty({ description: 'The last name of the user' })
   @IsString()
   @IsOptional()
+  @Matches(/^[a-zA-ZÀ-ÿñÑ\s]+$/, {
+    message: 'Last name cannot contain numbers or special characters.',
+  })
   last_name?: string;
 
   @ApiProperty({ description: 'The bio of the user', required: false })
