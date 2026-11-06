@@ -28,6 +28,10 @@ export class AnalyticsQueryDto {
   @IsOptional()
   @IsString()
   academicYear?: string;
+
+  @IsOptional()
+  @IsString()
+  semester?: string;
 }
 
 export class ExplainChartDto {
