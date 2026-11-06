@@ -4,7 +4,8 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '../generated/prisma/client.js';
+import { Prisma, Role } from '../generated/prisma/client.js';
+import { AppCacheService } from '../common/cache/app-cache.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { MailService } from '../mail/mail.service.js';
@@ -21,6 +22,7 @@ export class ApplicationsService {
     private mailService: MailService,
     private eventsGateway: EventsGateway,
     private notificationsService: NotificationsService,
+    private cacheService: AppCacheService,
   ) {}
 
   // 1. Scholar submits or updates their application details
@@ -83,18 +85,156 @@ export class ApplicationsService {
       }
     }
 
-    let matchedSchoolId = scholar.school_id;
-    if (dto.school_name) {
-      const matched = await this.prisma.schoolGradingSystem.findFirst({
+    const applicantName =
+      `${scholar.first_name || ''} ${scholar.last_name || ''}`.trim() ||
+      'An applicant';
+
+    let scholarProfileSchoolId: number | null = scholar.school_id;
+
+    if (dto.school_name?.trim()) {
+      const trimmedSchool = dto.school_name.trim();
+
+      // Check existing in schools table
+      const existingSchool = await this.prisma.school.findFirst({
         where: {
-          school_name: {
-            equals: dto.school_name.trim(),
-            mode: 'insensitive',
-          },
+          school_name: { equals: trimmedSchool, mode: 'insensitive' },
         },
       });
-      if (matched) {
-        matchedSchoolId = matched.school_id;
+
+      // Check existing in school_grading_systems
+      const matchedGrading = await this.prisma.schoolGradingSystem.findFirst({
+        where: {
+          school_name: { equals: trimmedSchool, mode: 'insensitive' },
+        },
+      });
+
+      if (matchedGrading) {
+        scholarProfileSchoolId = matchedGrading.school_id;
+      } else {
+        scholarProfileSchoolId = null;
+      }
+
+      if (!existingSchool) {
+        // Propose new school: registered as inactive (pending staff verification)
+        const sWords = trimmedSchool
+          .replace(/[^a-zA-Z0-9\s]/g, '')
+          .split(/\s+/)
+          .filter((w) => w.length > 0 && !/^(of|the|and|in|at|de|del|la|for)$/i.test(w));
+        let generatedCode = sWords.map((w) => w[0]?.toUpperCase()).join('').slice(0, 10);
+        if (generatedCode.length < 2) {
+          generatedCode = trimmedSchool.replace(/[^A-Za-z0-9]/g, '').slice(0, 6).toUpperCase();
+        }
+
+        const codeExists = await this.prisma.school.findUnique({
+          where: { school_code: generatedCode },
+        });
+        const finalCode = codeExists ? null : (generatedCode || null);
+
+        const newSchool = await this.prisma.school.create({
+          data: {
+            school_name: trimmedSchool,
+            school_code: finalCode,
+            address: dto.school_address?.trim() || null,
+            is_active: false, // Pending verification
+            grading_system_id: matchedGrading?.school_id || null,
+          },
+        });
+
+        await this.cacheService.delPattern('settings:schools_list:');
+        this.eventsGateway.emitToAll('school:created', newSchool);
+
+        // Notify Coordinator, Grantor, and Admin
+        await this.notificationsService.createForRoles(
+          [Role.COORDINATOR, Role.GRANTOR, Role.ADMIN],
+          {
+            title: 'New School Proposed',
+            message: `${applicantName} proposed new school "${trimmedSchool}". Review and verify to make it available for all applicants.`,
+            category: 'school',
+            link: '/Schools',
+          },
+        );
+      }
+    }
+
+    if (dto.course_of_study?.trim()) {
+      const trimmedCourse = dto.course_of_study.trim();
+      const existingProgram = await this.prisma.academicProgram.findFirst({
+        where: {
+          OR: [
+            { program_name: { equals: trimmedCourse, mode: 'insensitive' } },
+            { program_code: { equals: trimmedCourse.toUpperCase(), mode: 'insensitive' } },
+          ],
+        },
+      });
+
+      if (!existingProgram) {
+        // Propose new academic program: registered as inactive (pending staff verification)
+        const pWords = trimmedCourse
+          .replace(/[^a-zA-Z0-9\s-]/g, '')
+          .split(/[\s-]+/)
+          .filter((w) => w.length > 0);
+        let generatedProgramCode = '';
+        if (pWords[0]?.toUpperCase().startsWith('BS') && pWords[0].length > 2) {
+          generatedProgramCode = pWords[0].toUpperCase();
+        } else if (
+          ['BS', 'AB', 'BA', 'MS', 'MA', 'BEED', 'BSED'].includes(
+            pWords[0]?.toUpperCase(),
+          )
+        ) {
+          const prefix = pWords[0].toUpperCase();
+          const rest = pWords
+            .slice(1)
+            .filter((w) => !/^(in|of|and|the|for|major)$/i.test(w))
+            .map((w) => w[0]?.toUpperCase())
+            .join('');
+          generatedProgramCode = `${prefix}${rest}`.slice(0, 10);
+        } else {
+          generatedProgramCode = pWords
+            .filter((w) => !/^(in|of|and|the|for|major)$/i.test(w))
+            .map((w) => w[0]?.toUpperCase())
+            .join('')
+            .slice(0, 10);
+        }
+
+        if (!generatedProgramCode || generatedProgramCode.length < 2) {
+          generatedProgramCode = trimmedCourse
+            .replace(/[^A-Za-z0-9]/g, '')
+            .slice(0, 6)
+            .toUpperCase();
+        }
+
+        const pCodeExists = await this.prisma.academicProgram.findUnique({
+          where: { program_code: generatedProgramCode },
+        });
+        if (pCodeExists) {
+          generatedProgramCode = `${generatedProgramCode.slice(0, 8)}${Math.floor(
+            10 + Math.random() * 89,
+          )}`;
+        }
+
+        const newProgram = await this.prisma.academicProgram.create({
+          data: {
+            program_code: generatedProgramCode,
+            program_name: trimmedCourse,
+            category: 'College',
+            description: `Proposed by applicant (${applicantName})`,
+            is_active: false, // Pending verification
+          },
+        });
+
+        await this.cacheService.delPattern('settings:programs:');
+        this.eventsGateway.emitToAll('program:created', newProgram);
+
+        // Notify Coordinator, Grantor, and Admin
+        await this.notificationsService.createForRoles(
+          [Role.COORDINATOR, Role.GRANTOR, Role.ADMIN],
+          {
+            title: 'New Program Proposed',
+            message: `${applicantName} proposed new academic program "${trimmedCourse}". Review and verify to make it available for all applicants.`,
+            category: 'program',
+            link: '/AcademicPrograms',
+          },
+        );
       }
     }
 
@@ -105,7 +245,7 @@ export class ApplicationsService {
         scholarship_track: dto.scholarship_track,
         course_of_study: dto.course_of_study,
         school_name: dto.school_name,
-        school_id: matchedSchoolId,
+        school_id: scholarProfileSchoolId,
         student_number: dto.student_number,
         student_address: dto.student_address,
         school_address: dto.school_address,

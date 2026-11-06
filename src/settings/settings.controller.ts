@@ -111,14 +111,14 @@ export class SettingsController {
   }
 
   @Post('programs')
-  @Roles(Role.ADMIN, Role.GRANTOR)
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({ summary: 'Add a new academic program (Admin & Grantor)' })
   createProgram(@Request() req, @Body() dto: CreateAcademicProgramDto) {
     return this.settingsService.createProgram(req.user.user_id, dto);
   }
 
   @Patch('programs/:id')
-  @Roles(Role.ADMIN, Role.GRANTOR)
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({ summary: 'Update an existing academic program (Admin & Grantor)' })
   updateProgram(
     @Request() req,
@@ -152,21 +152,21 @@ export class SettingsController {
   }
 
   @Post('schools-list')
-  @Roles(Role.ADMIN, Role.GRANTOR)
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({ summary: 'Register a new school institution (Admin & Grantor)' })
   createSchoolEntity(@Request() req, @Body() dto: CreateSchoolDto) {
     return this.settingsService.createSchool(req.user.user_id, dto);
   }
 
   @Post('institutions')
-  @Roles(Role.ADMIN, Role.GRANTOR)
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({ summary: 'Register a new school institution (alias)' })
   createInstitution(@Request() req, @Body() dto: CreateSchoolDto) {
     return this.settingsService.createSchool(req.user.user_id, dto);
   }
 
   @Patch('schools-list/:id')
-  @Roles(Role.ADMIN, Role.GRANTOR)
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({ summary: 'Update a school institution (Admin & Grantor)' })
   updateSchoolEntity(
     @Request() req,
@@ -177,7 +177,7 @@ export class SettingsController {
   }
 
   @Patch('institutions/:id')
-  @Roles(Role.ADMIN, Role.GRANTOR)
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({ summary: 'Update a school institution (alias)' })
   updateInstitution(
     @Request() req,
