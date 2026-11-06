@@ -84,14 +84,22 @@ export class CloudinaryService implements OnModuleInit {
         return result;
       } catch (error: any) {
         lastError = error;
+        const errStr = `${error?.name || ''} ${error?.message || ''} ${error?.code || ''}`.toLowerCase();
         const isRateLimitOrTransient =
           error?.http_code === 429 ||
           error?.statusCode === 429 ||
           error?.http_code === 499 ||
-          error?.name === 'TimeoutError' ||
-          error?.name === 'UnexpectedResponse' ||
-          String(error?.message).toLowerCase().includes('timeout') ||
-          String(error?.message).includes('429');
+          error?.http_code === 502 ||
+          error?.http_code === 503 ||
+          error?.http_code === 504 ||
+          errStr.includes('timeout') ||
+          errStr.includes('429') ||
+          errStr.includes('econnreset') ||
+          errStr.includes('etimedout') ||
+          errStr.includes('enotfound') ||
+          errStr.includes('eai_again') ||
+          errStr.includes('socket hang up') ||
+          errStr.includes('unexpectedresponse');
 
         this.logger.warn(
           `Cloudinary upload attempt ${attempt + 1} failed: ${error?.message || error}`,

@@ -184,17 +184,10 @@ export class ScholarEnrollmentService {
     if (!file) throw new BadRequestException('No COR file uploaded.');
 
     // Concurrently upload to Cloudinary and parse via OCR
-    const uploadPromise = this.cloudinaryService
-      .uploadDocument(file, 'viascholar/enrollment/cor')
-      .catch((err) => {
-        this.logger.warn(
-          `Cloudinary COR upload warning: ${err?.message || err}. Using local placeholder URL.`,
-        );
-        return {
-          secure_url: `/uploads/documents/${file.originalname}`,
-          public_id: `cor_doc_${Date.now()}`,
-        } as any;
-      });
+    const uploadPromise = this.cloudinaryService.uploadDocument(
+      file,
+      'viascholar/enrollment/cor',
+    );
 
     const [uploadRes, extractedData] = await Promise.all([
       uploadPromise,
@@ -312,17 +305,10 @@ export class ScholarEnrollmentService {
     if (!file) throw new BadRequestException('No SOA file uploaded.');
 
     // Concurrently upload to Cloudinary and parse via OCR
-    const uploadPromise = this.cloudinaryService
-      .uploadDocument(file, 'viascholar/enrollment/soa')
-      .catch((err) => {
-        this.logger.warn(
-          `Cloudinary SOA upload warning: ${err?.message || err}. Using local placeholder URL.`,
-        );
-        return {
-          secure_url: `/uploads/documents/${file.originalname}`,
-          public_id: `soa_doc_${Date.now()}`,
-        } as any;
-      });
+    const uploadPromise = this.cloudinaryService.uploadDocument(
+      file,
+      'viascholar/enrollment/soa',
+    );
 
     const [uploadRes, extractedData] = await Promise.all([
       uploadPromise,
@@ -468,17 +454,10 @@ export class ScholarEnrollmentService {
     if (!file) throw new BadRequestException('No consolidated file uploaded.');
 
     // Concurrently upload to Cloudinary and parse via OCR
-    const uploadPromise = this.cloudinaryService
-      .uploadDocument(file, 'viascholar/enrollment/consolidated')
-      .catch((err) => {
-        this.logger.warn(
-          `Cloudinary Consolidated upload warning: ${err?.message || err}. Using local placeholder URL.`,
-        );
-        return {
-          secure_url: `/uploads/documents/${file.originalname}`,
-          public_id: `cons_doc_${Date.now()}`,
-        } as any;
-      });
+    const uploadPromise = this.cloudinaryService.uploadDocument(
+      file,
+      'viascholar/enrollment/consolidated',
+    );
 
     const [uploadRes, extractedData] = await Promise.all([
       uploadPromise,

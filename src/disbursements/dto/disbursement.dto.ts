@@ -74,6 +74,10 @@ export class SubmitOfficialReceiptDto {
   file_url: string;
 
   @IsOptional()
+  @IsNumber()
+  or_amount?: number;
+
+  @IsOptional()
   @IsString()
   file_name?: string;
 

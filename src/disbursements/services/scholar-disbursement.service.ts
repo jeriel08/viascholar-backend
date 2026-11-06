@@ -142,6 +142,26 @@ export class ScholarDisbursementService {
       );
     }
 
+    // Validate that the receipt amount matches the required disbursement amount
+    const expectedAmount = Number(disbursement.amount || 0);
+    const receiptAmount =
+      dto.or_amount != null
+        ? Number(dto.or_amount)
+        : dto.extracted_data && (dto.extracted_data as any).amount_paid != null
+          ? Number((dto.extracted_data as any).amount_paid)
+          : null;
+
+    if (receiptAmount != null && Math.abs(receiptAmount - expectedAmount) > 0.01) {
+      await this.auditService.log(
+        userId,
+        'REJECT_OFFICIAL_RECEIPT_SUBMISSION',
+        `Scholar ${profile.first_name} ${profile.last_name} attempted to submit Official Receipt with wrong amount PHP ${receiptAmount} (Expected PHP ${expectedAmount}) for disbursement #${disbursementId}`,
+      );
+      throw new BadRequestException(
+        `Official Receipt rejected: The receipt amount (PHP ${receiptAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}) does not match the issued check amount (PHP ${expectedAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}). Please upload a receipt with the exact disbursed amount.`,
+      );
+    }
+
     // Save Official Receipt document & update disbursement in transaction
     const result = await this.prisma.$transaction(async (tx) => {
       // 1. Create or update ScholarDocument for Official Receipt
