@@ -67,6 +67,7 @@ export class DocumentConfirmationService {
       );
     }
 
+    let activeEnrollment: any = null;
     if (doc.document_type === 'CCG') {
       const unresolvedReport = await this.prisma.gradeReport.findFirst({
         where: {
@@ -86,7 +87,7 @@ export class DocumentConfirmationService {
         throw new BadRequestException(msg);
       }
 
-      const activeEnrollment = await this.prisma.termEnrollment.findFirst({
+      activeEnrollment = await this.prisma.termEnrollment.findFirst({
         where: {
           scholar_profile_id: doc.scholar_profile_id,
           status: { not: 'COMPLETED' },
@@ -125,6 +126,70 @@ export class DocumentConfirmationService {
             units: i.units != null ? Number(i.units) : 1,
             grade: Number(i.grade),
           }));
+
+        if (doc.document_type === 'CCG' && activeEnrollment) {
+      const enrolledSubjects = (Array.isArray(activeEnrollment.enrolled_subjects)
+        ? activeEnrollment.enrolled_subjects
+        : []) as Array<{ subject_code?: string; descriptive_title?: string; units?: number }>;
+
+      if (enrolledSubjects.length > 0) {
+        const enrolledMap = new Map<string, { subject_code?: string; descriptive_title?: string }>();
+        for (const sub of enrolledSubjects) {
+          const norm = this.normalizeSubjectCode(sub.subject_code);
+          if (norm) {
+            enrolledMap.set(norm, sub);
+          }
+        }
+
+        const matchedEnrolledCodes = new Set<string>();
+        const extraSubjects: string[] = [];
+        const missingGrades: string[] = [];
+
+        for (const item of gradeItems) {
+          const norm = this.normalizeSubjectCode(item.subject_code);
+          if (!enrolledMap.has(norm)) {
+            extraSubjects.push(item.subject_code || item.subject_name || 'N/A');
+          } else {
+            matchedEnrolledCodes.add(norm);
+            if (item.grade == null || isNaN(Number(item.grade)) || Number(item.grade) <= 0) {
+              missingGrades.push(item.subject_code || item.subject_name || 'N/A');
+            }
+          }
+        }
+
+        const missingEnrolled: string[] = [];
+        for (const sub of enrolledSubjects) {
+          const norm = this.normalizeSubjectCode(sub.subject_code);
+          if (!matchedEnrolledCodes.has(norm)) {
+            missingEnrolled.push(sub.subject_code || 'N/A');
+          }
+        }
+
+        if (
+          missingEnrolled.length > 0 ||
+          extraSubjects.length > 0 ||
+          missingGrades.length > 0 ||
+          gradeItems.length === 0
+        ) {
+          const reasons: string[] = [];
+          if (gradeItems.length === 0) {
+            reasons.push('No course grades detected or provided');
+          }
+          if (missingEnrolled.length > 0) {
+            reasons.push(`Missing enrolled course(s): ${missingEnrolled.join(', ')}`);
+          }
+          if (extraSubjects.length > 0) {
+            reasons.push(`Course(s) not in approved enrollment: ${extraSubjects.join(', ')}`);
+          }
+          if (missingGrades.length > 0) {
+            reasons.push(`Course(s) missing valid numeric grade: ${missingGrades.join(', ')}`);
+          }
+          throw new BadRequestException(
+            `Subject mismatch: The submitted grades do not match your approved enrolled subjects for this term. ${reasons.join('; ')}`,
+          );
+        }
+      }
+    }
 
     const confirmedData: ConfirmedGradeData = {
       academic_year: dto.academic_year || extracted.academic_year || undefined,
@@ -305,5 +370,15 @@ export class DocumentConfirmationService {
     });
 
     return updated;
+  }
+  private normalizeSubjectCode(code?: string): string {
+    if (!code) return '';
+    return code
+      .trim()
+      .toUpperCase()
+      .replace(/[\s\-_./\\]+/g, '')
+      .replace(/(?<=[A-Z])III$/g, '3')
+      .replace(/(?<=[A-Z])II$/g, '2')
+      .replace(/(?<=[A-Z])I$/g, '1');
   }
 }
