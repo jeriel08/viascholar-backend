@@ -46,6 +46,16 @@ export const OFFICIAL_RECEIPT_DATA_SCHEMA = {
       description:
         "Any additional details, cashier window number, term/semester reference (e.g. '1st Sem 2026-2027 Tuition Fee', 'Cashier Window 4').",
     },
+    academic_year: {
+      type: 'string',
+      description:
+        "Academic Year or School Year printed on the receipt (e.g. '2026-2027', '2026-27', 'SY 2026-2027', 'A.Y. 2026-2027'). Strip prefixes like 'SY', 'A.Y.', 'School Year' if possible, or extract the school year interval (e.g. '2026-2027'). May appear near 'TERM', 'SEMESTER', or in payment description lines.",
+    },
+    semester: {
+      type: 'string',
+      description:
+        "Enrolled term or semester printed on the receipt (e.g. '1st Semester', '2nd Semester', 'Summer', '1st Trimester', '1st Sem', '2nd Sem'). Look for 'TERM', 'SEMESTER', 'SEM', or cashier description lines like '1st Sem Tuition Fee'.",
+    },
   },
   required: ['or_number', 'amount_paid'],
 };
@@ -60,4 +70,6 @@ export interface ExtractedReceiptData {
   payment_mode?: string;
   check_number_reference?: string;
   remarks?: string;
+  academic_year?: string;
+  semester?: string;
 }

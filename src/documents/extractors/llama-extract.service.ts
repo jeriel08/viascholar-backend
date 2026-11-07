@@ -849,13 +849,40 @@ IMPORTANT EXTRACTION GUIDELINES:
 1. Philippine university receipts (e.g. from University of Mindanao / UM, Ateneo, UIC, USEP, HCDC) are frequently printed on continuous pre-printed dot-matrix forms or thermal paper slips.
 2. Text and numbers may be printed out of place, misaligned with pre-printed form boxes, or overlapping cashier stamps ("PAID", date stamps, cashier signature).
 3. The Official Receipt Number (OR #) is frequently composite, hyphenated, or alphanumeric with trailing letters (e.g. '46127-004084B', '109284-B', '0048192'). Extract the complete, exact alphanumeric string. CRITICAL: Do NOT confuse the pre-printed booklet/serial number (e.g. '3236889' printed in red at the top right) with the university cashier's electronic OR number (e.g. '46127-004084B'). Always prioritize the cashier-printed or portal-recorded alphanumeric transaction code (often formatted as StudentID-SequenceSeries like '46127-004084B' or 'OR-102948') over any pre-printed booklet sequence number.
-4. Extract the Student ID Number (e.g. '46127' or '2021-00123'), full Student/Payor Name, total numeric Amount Paid (PHP), cashier transaction date (YYYY-MM-DD), issuing University Name, and Payment Mode (e.g., 'CHECK', 'CASH').`;
+4. Extract the Student ID Number (e.g. '46127' or '2021-00123'), full Student/Payor Name, total numeric Amount Paid (PHP), cashier transaction date (YYYY-MM-DD), issuing University Name, Payment Mode (e.g., 'CHECK', 'CASH'), Academic Year / School Year (e.g. '2026-2027'), and Term / Semester (e.g. '1st Semester', '2nd Semester', 'Summer').`;
 
     const rawData = await this.executeExtraction<ExtractedReceiptData>(
       input,
       OFFICIAL_RECEIPT_DATA_SCHEMA,
       systemPrompt,
     );
+
+    // Fallback heuristic: check if semester or academic year was captured in remarks or payment descriptions
+    if (rawData) {
+      if (!rawData.semester && rawData.remarks) {
+        const lower = rawData.remarks.toLowerCase();
+        if (lower.includes('summer') || lower.includes('midyear')) {
+          rawData.semester = 'Summer';
+        } else if (lower.includes('2nd sem') || lower.includes('second sem') || lower.includes('2nd term')) {
+          rawData.semester = '2nd Semester';
+        } else if (lower.includes('3rd tri') || lower.includes('third tri') || lower.includes('3rd sem')) {
+          rawData.semester = '3rd Trimester';
+        } else if (lower.includes('1st sem') || lower.includes('first sem') || lower.includes('1st term')) {
+          rawData.semester = '1st Semester';
+        }
+      }
+      if (!rawData.academic_year && rawData.remarks) {
+        const match = rawData.remarks.match(/(\d{4}|\d{2})\s*[-/]\s*(\d{4}|\d{2})/);
+        if (match) {
+          let y1 = match[1];
+          let y2 = match[2];
+          if (y1.length === 2) y1 = `20${y1}`;
+          if (y2.length === 2) y2 = `20${y2}`;
+          rawData.academic_year = `${y1}-${y2}`;
+        }
+      }
+    }
+
     return rawData;
   }
 }

@@ -162,6 +162,48 @@ export class ScholarDisbursementService {
       );
     }
 
+    // Validate that the scanned semester and school year match the enrolled term for this tuition disbursement
+    const expectedAcademicYear = disbursement.academic_year;
+    const expectedSemester = disbursement.semester;
+
+    const extractedAcademicYear =
+      (dto.extracted_data as any)?.academic_year ||
+      (dto.extracted_data as any)?.school_year;
+    const extractedSemester = (dto.extracted_data as any)?.semester;
+
+    const termMismatches: string[] = [];
+
+    if (extractedAcademicYear && expectedAcademicYear) {
+      const normExtractedAy = this.normalizeAcademicYear(extractedAcademicYear);
+      const normExpectedAy = this.normalizeAcademicYear(expectedAcademicYear);
+      if (normExtractedAy && normExpectedAy && normExtractedAy !== normExpectedAy) {
+        termMismatches.push(
+          `School Year (Receipt: "${extractedAcademicYear}" vs Enrolled: "${expectedAcademicYear}")`,
+        );
+      }
+    }
+
+    if (extractedSemester && expectedSemester) {
+      const normExtractedSem = this.normalizeSemester(extractedSemester);
+      const normExpectedSem = this.normalizeSemester(expectedSemester);
+      if (normExtractedSem && normExpectedSem && normExtractedSem !== normExpectedSem) {
+        termMismatches.push(
+          `Semester (Receipt: "${extractedSemester}" vs Enrolled: "${expectedSemester}")`,
+        );
+      }
+    }
+
+    if (termMismatches.length > 0) {
+      await this.auditService.log(
+        userId,
+        'REJECT_OFFICIAL_RECEIPT_SUBMISSION',
+        `Scholar ${profile.first_name} ${profile.last_name} attempted to submit Official Receipt with term mismatch: ${termMismatches.join(', ')} for disbursement #${disbursementId}`,
+      );
+      throw new BadRequestException(
+        `Official Receipt rejected: The scanned term does not match your enrolled semester and school year (${termMismatches.join(' and ')}). Please upload the Official Receipt issued for ${expectedAcademicYear} ${expectedSemester}.`,
+      );
+    }
+
     // Save Official Receipt document & update disbursement in transaction
     const result = await this.prisma.$transaction(async (tx) => {
       // 1. Create or update ScholarDocument for Official Receipt
@@ -226,5 +268,39 @@ export class ScholarDisbursementService {
         'Official Receipt successfully submitted for coordinator verification.',
       disbursement: result.updatedDisbursement,
     };
+  }
+
+  private normalizeSemester(sem?: string | null): string {
+    if (!sem) return '';
+    const s = sem.trim().toLowerCase();
+    if (s.includes('summer') || s.includes('midyear') || s.includes('mid-year')) {
+      return 'Summer';
+    }
+    if (s.includes('3rd') || s.includes('third') || s.includes('tri 3') || s.includes('trimest 3')) {
+      return '3rd Trimester';
+    }
+    if (s.includes('2nd') || s.includes('second') || s.includes('sem 2') || s.includes('term 2')) {
+      return '2nd Semester';
+    }
+    if (s.includes('1st') || s.includes('first') || s.includes('sem 1') || s.includes('term 1')) {
+      return '1st Semester';
+    }
+    return sem.trim();
+  }
+
+  private normalizeAcademicYear(ay?: string | null): string {
+    if (!ay) return '';
+    const clean = ay
+      .replace(/^(A\.?Y\.?|S\.?Y\.?|SCHOOL\s+YEAR|ACADEMIC\s+YEAR)[:\s]*/i, '')
+      .trim();
+    const match = clean.match(/(\d{2,4})\s*[-/]\s*(\d{2,4})/);
+    if (match) {
+      let startYear = match[1];
+      let endYear = match[2];
+      if (startYear.length === 2) startYear = `20${startYear}`;
+      if (endYear.length === 2) endYear = `20${endYear}`;
+      return `${startYear}-${endYear}`;
+    }
+    return clean.replace(/\s+/g, '');
   }
 }
