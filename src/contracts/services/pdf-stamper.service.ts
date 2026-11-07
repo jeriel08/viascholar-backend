@@ -200,7 +200,7 @@ export class PdfStamperService {
 
     const termYearText =
       params.termYear ||
-      `A.Y. ${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
+      `A.Y. ${new Date().getFullYear()}-${new Date().getFullYear() + 4}`;
     page.drawText(termYearText, {
       x: topX,
       y: 770,

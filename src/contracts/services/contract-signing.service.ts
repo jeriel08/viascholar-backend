@@ -180,6 +180,14 @@ export class ContractSigningService {
       'Scholar';
     const signedAt = new Date();
 
+    const baseEffectiveYear = (
+      contract.effective_date ? new Date(contract.effective_date) : new Date()
+    ).getFullYear();
+    const termYear =
+      contract.effective_date && contract.expiry_date
+        ? `A.Y. ${new Date(contract.effective_date).getFullYear()}-${new Date(contract.expiry_date).getFullYear()}`
+        : `A.Y. ${baseEffectiveYear}-${baseEffectiveYear + 4}`;
+
     // 3. Stamp Signature, Metadata, Verification QR Code, and Audit Certificate onto PDF
     const stampResult = await this.pdfStamperService.stampContract({
       signatureBuffer: sigBuffer,
@@ -191,6 +199,7 @@ export class ContractSigningService {
       schoolName: contract.scholar_profile?.school_name || undefined,
       schoolAddress: contract.scholar_profile?.school_address || undefined,
       courseName: contract.scholar_profile?.course_of_study || undefined,
+      termYear,
       scholarshipName:
         contract.scholar_profile?.scholarship_track ||
         'Francisco & Laureanne Lorenzo Scholarship Program (FLLSP)',

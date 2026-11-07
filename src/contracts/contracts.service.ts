@@ -63,6 +63,15 @@ export class ContractsService {
       ? new Date(dto.effective_date)
       : undefined;
 
+    const baseEffective = effectiveDate || new Date();
+    const defaultExpiry = new Date(baseEffective);
+    defaultExpiry.setFullYear(defaultExpiry.getFullYear() + 4);
+    const expiryDate = dto.expiry_date
+      ? new Date(dto.expiry_date)
+      : defaultExpiry;
+
+    const termYear = `A.Y. ${baseEffective.getFullYear()}-${expiryDate.getFullYear()}`;
+
     // Auto-generate unsigned draft PDF with pre-filled student details
     const draftPdfBuffer = await this.pdfStamperService.generateUnsignedDraft({
       studentName,
@@ -73,6 +82,7 @@ export class ContractsService {
       schoolName: scholar.school_name || undefined,
       schoolAddress: scholar.school_address || undefined,
       courseName: scholar.course_of_study || undefined,
+      termYear,
       scholarshipName:
         scholar.scholarship_track ||
         'Francisco & Laureanne Lorenzo Scholarship Program (FLLSP)',
@@ -94,7 +104,7 @@ export class ContractsService {
         contract_number: dto.contract_number,
         status: 'PENDING',
         effective_date: effectiveDate,
-        expiry_date: dto.expiry_date ? new Date(dto.expiry_date) : undefined,
+        expiry_date: expiryDate,
         document_url: draftUpload.secure_url,
       },
     });
