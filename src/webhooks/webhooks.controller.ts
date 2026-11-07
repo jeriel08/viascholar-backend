@@ -14,6 +14,12 @@ import { Prisma } from '../generated/prisma/client.js';
 import { DocumentReconciliationService } from '../documents/services/document-reconciliation.service.js';
 import { ForensicMetadataResult } from '../documents/services/file-forensics.service.js';
 import { EventsGateway } from '../events/events.gateway.js';
+import {
+  formatNameMismatchMessage,
+  getNameCheckedDocumentLabel,
+  matchApplicantName,
+  requiresApplicantNameMatch,
+} from '../documents/utils/name-match.util.js';
 
 type ParseurFieldSet = { grades?: unknown[] } & Record<string, unknown>;
 
@@ -97,7 +103,19 @@ export class WebhooksController {
     // Parseur "Document Processed" payloads are flat; some variants nest under fields
     const fields: ParseurFieldSet = payload?.fields ?? { ...payload };
     const hasGrades = Array.isArray(fields.grades) && fields.grades.length > 0;
-    const validationStatus = hasGrades ? 'PASSED_PRECHECK' : 'NEEDS_REUPLOAD';
+    const nameMatch = requiresApplicantNameMatch(doc.document_type)
+      ? matchApplicantName(doc.scholar_profile, fields.student_name)
+      : null;
+    const nameMismatch = nameMatch ? !nameMatch.matched : false;
+    const nameMismatchMessage =
+      nameMatch && !nameMatch.matched
+        ? formatNameMismatchMessage(
+            nameMatch,
+            getNameCheckedDocumentLabel(doc.document_type),
+          )
+        : null;
+    const validationStatus =
+      hasGrades && !nameMismatch ? 'PASSED_PRECHECK' : 'NEEDS_REUPLOAD';
 
     // Retrieve any initial metadata forensics stored on the doc during upload
     const existingExtracted = (doc.extracted_data ??
@@ -125,9 +143,9 @@ export class WebhooksController {
         status: validationStatus,
         extracted_data: mergedExtractedData as unknown as Prisma.InputJsonValue,
         ...(parseurDocId ? { parseur_doc_id: parseurDocId } : {}),
-        rejection_reason: hasGrades
-          ? null
-          : 'Unreadable document or missing grade records.',
+        rejection_reason:
+          nameMismatchMessage ??
+          (hasGrades ? null : 'Unreadable document or missing grade records.'),
       },
     });
 

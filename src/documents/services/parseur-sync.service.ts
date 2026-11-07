@@ -12,6 +12,12 @@ import { EventsGateway } from '../../events/events.gateway.js';
 import { Prisma } from '../../generated/prisma/client.js';
 import { DocumentReconciliationService } from './document-reconciliation.service.js';
 import { ForensicMetadataResult } from './file-forensics.service.js';
+import {
+  formatNameMismatchMessage,
+  getNameCheckedDocumentLabel,
+  matchApplicantName,
+  requiresApplicantNameMatch,
+} from '../utils/name-match.util.js';
 
 interface ParseurFieldSet {
   grades?: unknown[];
@@ -189,7 +195,19 @@ export class ParseurSyncService {
     }
 
     const hasGrades = Array.isArray(fields.grades) && fields.grades.length > 0;
-    const validationStatus = hasGrades ? 'PASSED_PRECHECK' : 'NEEDS_REUPLOAD';
+    const nameMatch = requiresApplicantNameMatch(doc.document_type)
+      ? matchApplicantName(doc.scholar_profile, fields.student_name)
+      : null;
+    const nameMismatch = nameMatch ? !nameMatch.matched : false;
+    const nameMismatchMessage =
+      nameMatch && !nameMatch.matched
+        ? formatNameMismatchMessage(
+            nameMatch,
+            getNameCheckedDocumentLabel(doc.document_type),
+          )
+        : null;
+    const validationStatus =
+      hasGrades && !nameMismatch ? 'PASSED_PRECHECK' : 'NEEDS_REUPLOAD';
 
     const existingExtracted = (doc.extracted_data ??
       {}) as ExtractedDocumentData;
@@ -214,9 +232,9 @@ export class ParseurSyncService {
       data: {
         status: validationStatus,
         extracted_data: mergedExtractedData as unknown as Prisma.InputJsonValue,
-        rejection_reason: hasGrades
-          ? null
-          : 'Unreadable document or missing grade records.',
+        rejection_reason:
+          nameMismatchMessage ??
+          (hasGrades ? null : 'Unreadable document or missing grade records.'),
       },
     });
 

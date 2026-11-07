@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { ForensicMetadataResult } from './file-forensics.service.js';
 import { GradeCalculatorService } from './grade-calculator.service.js';
+import {
+  matchApplicantName,
+  requiresApplicantNameMatch,
+} from '../utils/name-match.util.js';
 
 export type ForensicRiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
 
@@ -203,22 +207,19 @@ export class DocumentReconciliationService {
       }
     }
 
-    // 3. Student Identity Matching
-    if (profile) {
-      const extractedName = String(
-        extractedData.student_name || extractedData.name || '',
-      ).toLowerCase();
-      const firstName = (profile.first_name || '').toLowerCase();
-      const lastName = (profile.last_name || '').toLowerCase();
-
-      if (extractedName.length > 3 && (firstName || lastName)) {
-        const hasFirst = firstName && extractedName.includes(firstName);
-        const hasLast = lastName && extractedName.includes(lastName);
-        if (!hasFirst && !hasLast) {
-          flags.push('STUDENT_NAME_MISMATCH');
-        }
+    // 3. Student Identity Matching (format tolerant; scope: TOR / Form 138 /
+    // Form 9 / CCG only)
+    if (profile && requiresApplicantNameMatch(documentType)) {
+      const nameMatch = matchApplicantName(
+        profile,
+        extractedData.student_name ?? extractedData.name,
+      );
+      if (!nameMatch.matched) {
+        flags.push('STUDENT_NAME_MISMATCH');
       }
+    }
 
+    if (profile) {
       if (!isForm138 && profile.course_of_study && extractedData.course_name) {
         const extractedCourse = String(extractedData.course_name).toLowerCase();
         const registeredCourse = profile.course_of_study.toLowerCase();

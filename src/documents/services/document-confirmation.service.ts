@@ -15,6 +15,12 @@ import {
   normalizeAcademicYear,
   normalizeSemester,
 } from '../utils/academic-term.util.js';
+import {
+  formatNameMismatchMessage,
+  getNameCheckedDocumentLabel,
+  matchApplicantName,
+  requiresApplicantNameMatch,
+} from '../utils/name-match.util.js';
 
 interface ConfirmedGradeData {
   academic_year?: string;
@@ -32,6 +38,8 @@ interface ExtractedDocData {
   academic_year?: string;
   semester?: string;
   general_average?: number | string;
+  student_name?: string;
+  name?: string;
   grades?: {
     subject_code?: string;
     subject_name?: string;
@@ -107,6 +115,26 @@ export class DocumentConfirmationService {
     }
 
     const extracted = (doc.extracted_data ?? {}) as ExtractedDocData;
+
+    // Identity check at confirmation time as a second layer behind OCR
+    // pre-check. TOR / Form 138 (Form 9) and CCG documents must be issued
+    // under the applicant's registered name.
+    if (requiresApplicantNameMatch(doc.document_type)) {
+      const nameMatch = matchApplicantName(
+        doc.scholar_profile,
+        extracted.student_name ?? extracted.name,
+      );
+
+      if (!nameMatch.matched) {
+        throw new BadRequestException(
+          formatNameMismatchMessage(
+            nameMatch,
+            getNameCheckedDocumentLabel(doc.document_type),
+          ),
+        );
+      }
+    }
+
     const generalAverage =
       dto.general_average != null
         ? Number(dto.general_average)

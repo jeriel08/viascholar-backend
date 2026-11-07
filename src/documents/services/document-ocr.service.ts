@@ -16,6 +16,12 @@ import { DocumentReconciliationService } from './document-reconciliation.service
 import { DocumentSchoolLinkerService } from './document-school-linker.service.js';
 import { ParseurSyncService } from './parseur-sync.service.js';
 import { DocumentDataQueryService } from './document-data-query.service.js';
+import {
+  formatNameMismatchMessage,
+  getNameCheckedDocumentLabel,
+  matchApplicantName,
+  requiresApplicantNameMatch,
+} from '../utils/name-match.util.js';
 
 interface ExtractedDocumentData {
   academic_year?: string;
@@ -167,6 +173,26 @@ export class DocumentOcrService {
               ? 'Transcript of Records (TOR)'
               : 'Certificate of Grades'
           } was detected. Please remove this document and upload your high school report card.`;
+        }
+      }
+
+      // Identity check: TOR / Form 138 (Form 9) and CCG documents must be
+      // issued under the applicant's registered name. The check is format
+      // tolerant (order, middle names, initials) and fails closed when the
+      // printed name cannot be read.
+      const effectiveDocumentType = doc.document_type || documentType;
+      if (requiresApplicantNameMatch(effectiveDocumentType)) {
+        const nameMatch = matchApplicantName(
+          doc.scholar_profile,
+          extractedData.student_name ?? extractedData.name,
+        );
+
+        if (!nameMatch.matched && !isInvalidOrMismatchedType) {
+          isInvalidOrMismatchedType = true;
+          mismatchRejectionReason = formatNameMismatchMessage(
+            nameMatch,
+            getNameCheckedDocumentLabel(effectiveDocumentType),
+          );
         }
       }
 

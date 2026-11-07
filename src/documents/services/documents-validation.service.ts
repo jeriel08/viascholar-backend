@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { DocumentStatus } from '../../generated/prisma/enums.js';
+import {
+  matchApplicantName,
+  requiresApplicantNameMatch,
+} from '../utils/name-match.util.js';
 
 @Injectable()
 export class DocumentValidationService {
@@ -17,15 +21,12 @@ export class DocumentValidationService {
     const profile = doc.scholar_profile;
     const flags: string[] = [];
 
-    // 1. Name Check (Handles "SANAO, JERIEL LIAN DANGO" vs "Jeriel Lian Sanao")
-    const extractedName = (parseurData.student_name || '').toLowerCase();
-    const firstName = profile.first_name.toLowerCase();
-    const lastName = profile.last_name.toLowerCase();
-
-    const nameMatches =
-      extractedName.includes(firstName) || extractedName.includes(lastName);
-    if (!nameMatches && extractedName.length > 0) {
-      flags.push('STUDENT_NAME_MISMATCH');
+    // 1. Name Check (format tolerant: token order, middle names, initials)
+    if (requiresApplicantNameMatch(doc.document_type)) {
+      const nameMatch = matchApplicantName(profile, parseurData.student_name);
+      if (!nameMatch.matched) {
+        flags.push('STUDENT_NAME_MISMATCH');
+      }
     }
 
     // 2. Soft Course Check (Only evaluate if course_name exists on the document)
