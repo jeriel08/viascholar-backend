@@ -15,6 +15,11 @@ import { VerifyDocumentDto } from '../dto/verify-document.dto.js';
 import { SchoolGradingSystem } from '../../generated/prisma/client.js';
 import { Role } from '../../generated/prisma/enums.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
+import {
+  findMatchingTermEnrollment,
+  normalizeAcademicYear,
+  normalizeSemester,
+} from '../utils/academic-term.util.js';
 
 interface ConfirmedGradeData {
   academic_year?: string;
@@ -120,11 +125,19 @@ export class DocumentEvaluationService {
       );
     }
 
-    const rawAY =
-      dto.academic_year ??
-      confirmed?.academic_year ??
-      extracted.academic_year ??
-      '';
+    const isCcg = doc.document_type === 'CCG';
+    // For CCGs the scholar-confirmed term has already been canonicalized to the
+    // approved enrollment term, so a coordinator override must not replace it.
+    // Other grade documents keep the existing override behavior.
+    const rawAY = isCcg
+      ? (confirmed?.academic_year ??
+        extracted.academic_year ??
+        dto.academic_year ??
+        '')
+      : (dto.academic_year ??
+        confirmed?.academic_year ??
+        extracted.academic_year ??
+        '');
     const academicYear = typeof rawAY === 'string' ? rawAY : '';
     const isForm138 = this.gradeCalculatorService.isForm138(
       doc.document_type || '',
@@ -153,12 +166,16 @@ export class DocumentEvaluationService {
       });
 
     const normalizedAY =
+      normalizeAcademicYear(academicYear) ||
       this.gradeCalculatorService.normalizeAcademicYear(academicYear);
-    const normalizedSem = this.gradeCalculatorService.normalizeSemester(
-      confirmed?.semester ?? extracted.semester,
-      academicYear,
-      isForm138,
-    );
+    const rawSemester = confirmed?.semester ?? extracted.semester;
+    const normalizedSem =
+      normalizeSemester(rawSemester) ||
+      this.gradeCalculatorService.normalizeSemester(
+        rawSemester,
+        academicYear,
+        isForm138,
+      );
 
     const globalSettings = await this.settingsService.getSettings();
     const meetsThreshold = this.settingsService.evaluateGwaThreshold(
@@ -174,14 +191,32 @@ export class DocumentEvaluationService {
         ? 'ACADEMIC_FAILURE'
         : 'CLEARED';
 
-    // Find active term enrollment for this academic term
-    const termEnrollment = await this.prisma.termEnrollment.findFirst({
-      where: {
-        scholar_profile_id: doc.scholar_profile_id,
-        academic_year: normalizedAY,
-        semester: normalizedSem,
-      },
+    // Find the term enrollment for this academic term. CCG/grade audits must
+    // map to a real enrollment so a document for a different school year or
+    // semester cannot create a phantom term in reports and analytics.
+    const scholarEnrollments = await this.prisma.termEnrollment.findMany({
+      where: { scholar_profile_id: doc.scholar_profile_id },
+      orderBy: { created_at: 'desc' },
     });
+    const termEnrollment = findMatchingTermEnrollment(
+      scholarEnrollments,
+      normalizedAY,
+      normalizedSem,
+    );
+
+    if (isCcg) {
+      if (!termEnrollment) {
+        throw new BadRequestException(
+          `Academic term mismatch: This CCG is marked as ${normalizedAY} • ${normalizedSem}, but no term enrollment exists for that term. Please verify the CCG's school year and semester against the scholar's approved enrollment.`,
+        );
+      }
+
+      if (!['APPROVED', 'COMPLETED'].includes(termEnrollment.status)) {
+        throw new BadRequestException(
+          `Academic term mismatch: The scholar's ${normalizedAY} • ${normalizedSem} enrollment is not approved (status: ${termEnrollment.status}). Grade audits can only be verified against an approved term enrollment.`,
+        );
+      }
+    }
 
     // Create GradeReport record
     const report = await this.prisma.gradeReport.create({
@@ -229,11 +264,15 @@ export class DocumentEvaluationService {
 
     // If eligible, update TermEnrollment status to COMPLETED
     if (termEnrollment && isEligible) {
+      const verificationNote = `Term grades verified (GWA: ${computedGwa.toFixed(2)}). Cleared for subsequent semester.`;
+
       await this.prisma.termEnrollment.update({
         where: { enrollment_id: termEnrollment.enrollment_id },
         data: {
           status: 'COMPLETED',
-          coordinator_notes: `Term grades verified (GWA: ${computedGwa.toFixed(2)}). Cleared for subsequent semester.`,
+          coordinator_notes: termEnrollment.coordinator_notes
+            ? `${termEnrollment.coordinator_notes} | ${verificationNote}`
+            : verificationNote,
         },
       });
     }

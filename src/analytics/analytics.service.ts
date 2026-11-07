@@ -5,6 +5,7 @@ import { SettingsService } from '../settings/settings.service.js';
 import { Role } from '../generated/prisma/enums.js';
 import { AnalyticsQueryDto, ExplainChartDto } from './dto/analytics.dto.js';
 import { AppCacheService } from '../common/cache/app-cache.service.js';
+import { normalizeAcademicYear } from '../documents/utils/academic-term.util.js';
 
 export interface DescriptiveStats {
   count: number;
@@ -242,7 +243,6 @@ export class AnalyticsService {
           scholarProfiles,
           allEnrollments,
           allDisbursements,
-          allGradeReports,
         ] = await Promise.all([
           this.prisma.systemSetting.findFirst(),
           this.prisma.scholarProfile.findMany({
@@ -300,18 +300,6 @@ export class AnalyticsService {
               status: true,
             },
           }),
-          this.prisma.gradeReport.findMany({
-            select: {
-              academic_year: true,
-              semester: true,
-              document: {
-                select: {
-                  document_type: true,
-                  label: true,
-                },
-              },
-            },
-          }),
         ]);
 
         const gradeThreshold = systemSetting?.grade_threshold
@@ -348,11 +336,11 @@ export class AnalyticsService {
         for (const d of allDisbursements) {
           registerTerm(d.academic_year, d.semester);
         }
-        for (const g of allGradeReports) {
-          if (!this.isForm9OrApplicationGrade(g)) {
-            registerTerm(g.academic_year, g.semester);
-          }
-        }
+        // Grade reports intentionally do NOT register term filters on their own.
+        // A CCG/grade report can carry a stale or mismatched school year (e.g.
+        // an SY 2024-25 CCG submitted against an SY 2023-24 enrollment), which
+        // would otherwise introduce a phantom term into the analytics filters.
+        // Valid terms come from enrollments and disbursements only.
 
         // Natural sort order for Semesters, Trimesters, and Summer terms
         const SEMESTER_ORDER: Record<string, number> = {
@@ -396,15 +384,8 @@ export class AnalyticsService {
         }
 
         // Helper to normalize academic year strings (e.g. "2023-24" vs "2023-2024")
-        const normalizeAy = (ayStr?: string | null) => {
-          if (!ayStr) return '';
-          const trimmed = ayStr.trim().toLowerCase();
-          const parts = trimmed.split('-');
-          if (parts.length === 2 && parts[1].length === 2) {
-            return `${parts[0]}-20${parts[1]}`;
-          }
-          return trimmed;
-        };
+        const normalizeAy = (ayStr?: string | null) =>
+          normalizeAcademicYear(ayStr) || (ayStr || '').trim().toLowerCase();
 
         // 2. Resolve Active / Filtered Term
         const selectedAcademicYear =

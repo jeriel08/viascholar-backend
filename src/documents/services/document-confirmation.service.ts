@@ -11,6 +11,10 @@ import { ConfirmDocumentDto } from '../dto/confirm-document.dto.js';
 import { Prisma } from '../../generated/prisma/client.js';
 import { Role } from '../../generated/prisma/enums.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
+import {
+  normalizeAcademicYear,
+  normalizeSemester,
+} from '../utils/academic-term.util.js';
 
 interface ConfirmedGradeData {
   academic_year?: string;
@@ -127,7 +131,54 @@ export class DocumentConfirmationService {
             grade: Number(i.grade),
           }));
 
-        if (doc.document_type === 'CCG' && activeEnrollment) {
+    const submittedAcademicYears = [dto.academic_year, extracted.academic_year]
+      .map((value) => (typeof value === 'string' ? value.trim() : ''))
+      .filter(Boolean);
+    const submittedSemesters = [dto.semester, extracted.semester]
+      .map((value) => (typeof value === 'string' ? value.trim() : ''))
+      .filter(Boolean);
+
+    let confirmedAcademicYear =
+      dto.academic_year?.trim() || extracted.academic_year?.trim() || undefined;
+    let confirmedSemester =
+      dto.semester?.trim() || extracted.semester?.trim() || undefined;
+
+    if (doc.document_type === 'CCG' && activeEnrollment) {
+      const enrollmentAcademicYear = normalizeAcademicYear(
+        activeEnrollment.academic_year,
+      );
+      const enrollmentSemester = normalizeSemester(activeEnrollment.semester);
+
+      if (enrollmentAcademicYear) {
+        const mismatchedYear = submittedAcademicYears
+          .map(normalizeAcademicYear)
+          .find((year) => year && year !== enrollmentAcademicYear);
+
+        if (mismatchedYear) {
+          throw new BadRequestException(
+            `Academic term mismatch: The uploaded CCG is for AY ${mismatchedYear}, but your approved enrollment is for AY ${enrollmentAcademicYear} (${activeEnrollment.semester}). Please upload the CCG that matches your enrolled term.`,
+          );
+        }
+      }
+
+      if (enrollmentSemester) {
+        const mismatchedSemester = submittedSemesters
+          .map(normalizeSemester)
+          .find((sem) => sem && sem !== enrollmentSemester);
+
+        if (mismatchedSemester) {
+          throw new BadRequestException(
+            `Academic term mismatch: The uploaded CCG is for ${mismatchedSemester}, but your approved enrollment is for ${activeEnrollment.semester}. Please upload the CCG that matches your enrolled term.`,
+          );
+        }
+      }
+
+      // The approved enrollment is the single source of truth for the CCG term.
+      confirmedAcademicYear = activeEnrollment.academic_year;
+      confirmedSemester = activeEnrollment.semester;
+    }
+
+    if (doc.document_type === 'CCG' && activeEnrollment) {
       const enrolledSubjects = (Array.isArray(activeEnrollment.enrolled_subjects)
         ? activeEnrollment.enrolled_subjects
         : []) as Array<{ subject_code?: string; descriptive_title?: string; units?: number }>;
@@ -192,8 +243,8 @@ export class DocumentConfirmationService {
     }
 
     const confirmedData: ConfirmedGradeData = {
-      academic_year: dto.academic_year || extracted.academic_year || undefined,
-      semester: dto.semester || extracted.semester || undefined,
+      academic_year: confirmedAcademicYear,
+      semester: confirmedSemester,
       general_average: generalAverage,
       grade_items: gradeItems,
     };
@@ -260,35 +311,25 @@ export class DocumentConfirmationService {
       });
     }
 
-    if (doc.document_type === 'CCG') {
-      const activeEnrollment = await this.prisma.termEnrollment.findFirst({
-        where: {
-          scholar_profile_id: doc.scholar_profile_id,
-          status: 'APPROVED',
+    if (doc.document_type === 'CCG' && activeEnrollment) {
+      await this.prisma.termEnrollment.update({
+        where: { enrollment_id: activeEnrollment.enrollment_id },
+        data: {
+          status: 'COMPLETED',
+          coordinator_notes: activeEnrollment.coordinator_notes
+            ? `${activeEnrollment.coordinator_notes} | Semester concluded with CCG submission.`
+            : 'Semester concluded with CCG submission. Ready for next term enrollment.',
         },
-        orderBy: { created_at: 'desc' },
       });
 
-      if (activeEnrollment) {
-        await this.prisma.termEnrollment.update({
-          where: { enrollment_id: activeEnrollment.enrollment_id },
-          data: {
-            status: 'COMPLETED',
-            coordinator_notes: activeEnrollment.coordinator_notes
-              ? `${activeEnrollment.coordinator_notes} | Semester concluded with CCG submission.`
-              : 'Semester concluded with CCG submission. Ready for next term enrollment.',
-          },
-        });
-
-        this.eventsGateway.emitToUser(
-          doc.scholar_profile.user_id,
-          'enrollment:updated',
-          {
-            enrollment_id: activeEnrollment.enrollment_id,
-            status: 'COMPLETED',
-          },
-        );
-      }
+      this.eventsGateway.emitToUser(
+        doc.scholar_profile.user_id,
+        'enrollment:updated',
+        {
+          enrollment_id: activeEnrollment.enrollment_id,
+          status: 'COMPLETED',
+        },
+      );
     }
 
     return updated;
