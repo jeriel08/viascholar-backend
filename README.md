@@ -24,6 +24,7 @@ The platform eliminates manual grade encoding and eligibility verification bottl
 - **Media & Cloud Storage:** [Cloudinary SDK](https://cloudinary.com/) (Streaming buffers)
 - **Document Processing & OCR:** [Parseur Vision AI](https://parseur.com/) (Zero-template OCR Webhooks) & `pdf-lib` (multi-page image-to-PDF compilation)
 - **API Documentation:** OpenAPI / Swagger
+- **Testing:** [Vitest](https://vitest.dev/) with `@swc/core` for NestJS decorator metadata
 
 ---
 
@@ -83,6 +84,66 @@ The platform eliminates manual grade encoding and eligibility verification bottl
 | **Disbursements & Accounting** |   `Pending`   | Stipend tranches, release dates, and official receipt (OR) uploads.                |
 | **Analytics & Reports**        |   `Pending`   | Grantor visual dashboards, GWA trendline tracking, and at-risk scholar alerts.     |
 | **In-App Notifications**       |   `Pending`   | Real-time deficiency notices, event reminders, and review alerts.                  |
+
+---
+
+## 🧪 Testing
+
+Unit tests live next to the code they cover as `*.spec.ts` files. Test names are
+written as behavior sentences inside nested `describe` blocks, so the terminal
+output reads like a specification:
+
+```text
+✓ src/auth/auth.service.spec.ts (33 tests)
+  ✓ AuthService (33)
+    ✓ registerScholar (4)
+      ✓ rejects an email that is already registered
+      ✓ creates an applicant account with a hashed password and returns a token
+    ✓ login (5)
+      ✓ rejects a disabled account
+      ✓ updates the last login, audits the login, and returns a token
+```
+
+```bash
+# Run every unit test once (tree output shows every scenario)
+npm test
+
+# Compact summary only (one line per spec file)
+npm run test:summary
+
+# Flat list of every test name
+npm run test:verbose
+
+# Re-run tests on file changes
+npm run test:watch
+
+# Run coverage (HTML report is written to coverage/)
+npm run test:cov
+
+# Run a single module/folder (e.g. auth or academic-baseline)
+npm run test:module -- src/auth
+npm run test:module -- src/academic-baseline
+
+# Run end-to-end tests
+npm run test:e2e
+```
+
+Tests import their APIs explicitly from `vitest` (no Jest globals), and NestJS
+dependency injection continues to work because SWC emits decorator metadata.
+
+When adding a test, put the class or function under test in the outer
+`describe`, the method/scenario in a nested `describe`, and the expected
+behavior in `it(...)`:
+
+```ts
+describe('AuthService', () => {
+  describe('login', () => {
+    it('rejects a disabled account', async () => {
+      // ...
+    });
+  });
+});
+```
 
 ---
 

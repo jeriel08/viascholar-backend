@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { ProspectusOcrService } from './prospectus-ocr.service.js';
 import { LlamaExtractService } from '../documents/extractors/llama-extract.service.js';
@@ -13,8 +14,8 @@ describe('ProspectusOcrService', () => {
         {
           provide: LlamaExtractService,
           useValue: {
-            extractProspectusData: jest.fn(),
-            extractData: jest.fn(),
+            extractProspectusData: vi.fn(),
+            extractData: vi.fn(),
           },
         },
       ],

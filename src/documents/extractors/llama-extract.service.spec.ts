@@ -1,30 +1,32 @@
 import {
-  jest,
-  describe,
-  it,
-  expect,
-  beforeEach,
   afterEach,
-} from '@jest/globals';
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type Mock,
+} from 'vitest';
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { LlamaExtractService } from './llama-extract.service.js';
 
 describe('LlamaExtractService', () => {
   let service: LlamaExtractService;
-  let mockFilesCreate: jest.Mock;
-  let mockFilesDelete: jest.Mock;
-  let mockExtractCreate: jest.Mock;
-  let mockExtractGet: jest.Mock;
+  let mockFilesCreate: Mock;
+  let mockFilesDelete: Mock;
+  let mockExtractCreate: Mock;
+  let mockExtractGet: Mock;
 
   beforeEach(async () => {
-    mockFilesCreate = jest.fn().mockResolvedValue({ id: 'file-123' } as any);
-    mockFilesDelete = jest.fn().mockResolvedValue(undefined as any);
-    mockExtractCreate = jest.fn().mockResolvedValue({
+    mockFilesCreate = vi.fn().mockResolvedValue({ id: 'file-123' } as any);
+    mockFilesDelete = vi.fn().mockResolvedValue(undefined as any);
+    mockExtractCreate = vi.fn().mockResolvedValue({
       id: 'job-123',
       status: 'PENDING',
     } as any);
-    mockExtractGet = jest.fn().mockResolvedValue({
+    mockExtractGet = vi.fn().mockResolvedValue({
       id: 'job-123',
       status: 'COMPLETED',
       extract_result: {
@@ -63,7 +65,7 @@ describe('LlamaExtractService', () => {
 
     service = module.get<LlamaExtractService>(LlamaExtractService);
 
-    jest.spyOn(service as any, 'getClient').mockReturnValue({
+    vi.spyOn(service as any, 'getClient').mockReturnValue({
       files: {
         create: mockFilesCreate,
         delete: mockFilesDelete,
@@ -76,7 +78,7 @@ describe('LlamaExtractService', () => {
   });
 
   afterEach(() => {
-    jest.restoreAllMocks();
+    vi.restoreAllMocks();
   });
 
   it('should be defined', () => {
@@ -104,7 +106,7 @@ describe('LlamaExtractService', () => {
         configuration: expect.objectContaining({
           extraction_target: 'per_doc',
           tier: 'agentic',
-        }),
+        }) as unknown,
       }),
     );
     expect(mockExtractGet).toHaveBeenCalledWith('job-123');
@@ -185,7 +187,7 @@ describe('LlamaExtractService', () => {
         purpose: 'extract',
         external_file_id: expect.stringContaining(
           'form138_page1_merged_2pages.pdf',
-        ),
+        ) as unknown,
       }),
     );
     expect(mockExtractCreate).toHaveBeenCalledWith(

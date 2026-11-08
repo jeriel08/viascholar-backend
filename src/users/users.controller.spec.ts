@@ -1,4 +1,5 @@
-import { jest } from '@jest/globals';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { UsersController } from './users.controller.js';
 import { UsersService } from './users.service.js';
@@ -14,19 +15,19 @@ describe('UsersController', () => {
         {
           provide: UsersService,
           useValue: {
-            findAll: jest.fn(),
-            findOne: jest.fn(),
-            updateStatus: jest.fn(),
-            resetPassword: jest.fn(),
-            getAdminDashboardSummary: jest.fn(),
-            getCoordinatorDashboardSummary: jest.fn(),
-            getGrantorDashboardSummary: jest.fn(),
+            findAll: vi.fn(),
+            findOne: vi.fn(),
+            updateStatus: vi.fn(),
+            resetPassword: vi.fn(),
+            getAdminDashboardSummary: vi.fn(),
+            getCoordinatorDashboardSummary: vi.fn(),
+            getGrantorDashboardSummary: vi.fn(),
           },
         },
         {
           provide: AuditService,
           useValue: {
-            getLogs: jest.fn(),
+            getLogs: vi.fn(),
           },
         },
       ],

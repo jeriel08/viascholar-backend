@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { AcademicBaselineService } from './academic-baseline.service.js';
 import { ScholarBaselineService } from './services/scholar-baseline.service.js';
@@ -6,47 +7,91 @@ import { BaselineDocumentIngestionService } from './services/baseline-document-i
 import { CoordinatorBaselineService } from './services/coordinator-baseline.service.js';
 import { ActiveScholarsAnalyticsService } from './services/active-scholars-analytics.service.js';
 
+const createScholarBaselineServiceMock = () => ({
+  getScholarBaselineState: vi.fn(),
+  selectOrProposeSchool: vi.fn(),
+  updateProspectusSubjects: vi.fn(),
+  submitForReview: vi.fn(),
+});
+
+const createBaselineDocumentIngestionServiceMock = () => ({
+  uploadProspectus: vi.fn(),
+  uploadHistoricalCcg: vi.fn(),
+});
+
+const createCoordinatorBaselineServiceMock = () => ({
+  getCoordinatorPendingBaselines: vi.fn(),
+  getCoordinatorBaselineReview: vi.fn(),
+  coordinatorUpdateSubjects: vi.fn(),
+  freezeBaseline: vi.fn(),
+  unfreezeBaseline: vi.fn(),
+});
+
+const createActiveScholarsAnalyticsServiceMock = () => ({
+  getCoordinatorActiveScholars: vi.fn(),
+});
+
 describe('AcademicBaselineService', () => {
   let service: AcademicBaselineService;
-  let scholarBaselineServiceMock: any;
-  let baselineDocumentIngestionServiceMock: any;
-  let coordinatorBaselineServiceMock: any;
-  let activeScholarsAnalyticsServiceMock: any;
+  let scholarBaselineServiceMock: ReturnType<
+    typeof createScholarBaselineServiceMock
+  >;
+  let baselineDocumentIngestionServiceMock: ReturnType<
+    typeof createBaselineDocumentIngestionServiceMock
+  >;
+  let coordinatorBaselineServiceMock: ReturnType<
+    typeof createCoordinatorBaselineServiceMock
+  >;
+  let activeScholarsAnalyticsServiceMock: ReturnType<
+    typeof createActiveScholarsAnalyticsServiceMock
+  >;
 
   beforeEach(async () => {
-    scholarBaselineServiceMock = {
-      getScholarBaselineState: jest
-        .fn()
-        .mockResolvedValue({ profile_id: 1 } as never),
-      selectOrProposeSchool: jest
-        .fn()
-        .mockResolvedValue({ message: 'OK' } as never),
-      updateProspectusSubjects: jest
-        .fn()
-        .mockResolvedValue({ message: 'OK' } as never),
-      submitForReview: jest.fn().mockResolvedValue({ message: 'OK' } as never),
-    };
+    scholarBaselineServiceMock = createScholarBaselineServiceMock();
+    scholarBaselineServiceMock.getScholarBaselineState.mockResolvedValue({
+      profile_id: 1,
+    });
+    scholarBaselineServiceMock.selectOrProposeSchool.mockResolvedValue({
+      message: 'OK',
+    });
+    scholarBaselineServiceMock.updateProspectusSubjects.mockResolvedValue({
+      message: 'OK',
+    });
+    scholarBaselineServiceMock.submitForReview.mockResolvedValue({
+      message: 'OK',
+    });
 
-    baselineDocumentIngestionServiceMock = {
-      uploadProspectus: jest.fn().mockResolvedValue({ message: 'OK' } as never),
-      uploadHistoricalCcg: jest
-        .fn()
-        .mockResolvedValue({ message: 'OK' } as never),
-    };
+    baselineDocumentIngestionServiceMock =
+      createBaselineDocumentIngestionServiceMock();
+    baselineDocumentIngestionServiceMock.uploadProspectus.mockResolvedValue({
+      message: 'OK',
+    });
+    baselineDocumentIngestionServiceMock.uploadHistoricalCcg.mockResolvedValue({
+      message: 'OK',
+    });
 
-    coordinatorBaselineServiceMock = {
-      getCoordinatorPendingBaselines: jest.fn().mockResolvedValue([] as never),
-      getCoordinatorBaselineReview: jest.fn().mockResolvedValue({} as never),
-      coordinatorUpdateSubjects: jest
-        .fn()
-        .mockResolvedValue({ message: 'OK' } as never),
-      freezeBaseline: jest.fn().mockResolvedValue({ message: 'OK' } as never),
-      unfreezeBaseline: jest.fn().mockResolvedValue({ message: 'OK' } as never),
-    };
+    coordinatorBaselineServiceMock = createCoordinatorBaselineServiceMock();
+    coordinatorBaselineServiceMock.getCoordinatorPendingBaselines.mockResolvedValue(
+      [],
+    );
+    coordinatorBaselineServiceMock.getCoordinatorBaselineReview.mockResolvedValue(
+      {},
+    );
+    coordinatorBaselineServiceMock.coordinatorUpdateSubjects.mockResolvedValue({
+      message: 'OK',
+    });
+    coordinatorBaselineServiceMock.freezeBaseline.mockResolvedValue({
+      message: 'OK',
+    });
+    coordinatorBaselineServiceMock.unfreezeBaseline.mockResolvedValue({
+      message: 'OK',
+    });
 
-    activeScholarsAnalyticsServiceMock = {
-      getCoordinatorActiveScholars: jest.fn().mockResolvedValue([] as never),
-    };
+    activeScholarsAnalyticsServiceMock =
+      createActiveScholarsAnalyticsServiceMock();
+    activeScholarsAnalyticsServiceMock.getCoordinatorActiveScholars.mockResolvedValue(
+      [],
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -85,7 +130,9 @@ describe('AcademicBaselineService', () => {
   });
 
   it('delegates uploadProspectus to BaselineDocumentIngestionService', async () => {
-    const files = [{ originalname: 'prospectus.pdf' }] as any;
+    const files = [
+      { originalname: 'prospectus.pdf' },
+    ] as unknown as Express.Multer.File[];
     await service.uploadProspectus(123, files);
     expect(
       baselineDocumentIngestionServiceMock.uploadProspectus,

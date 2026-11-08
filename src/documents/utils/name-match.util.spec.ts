@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest';
+
 import {
   formatNameMismatchMessage,
   getNameCheckedDocumentLabel,
@@ -14,11 +16,15 @@ describe('name-match.util', () => {
 
   describe('matchApplicantName', () => {
     it('matches common printed name formats for the same applicant', () => {
-      expect(matchApplicantName(profile, 'JERIEL LIAN D. SANAO')).toMatchObject({
-        matched: true,
-        reason: 'MATCH',
-      });
-      expect(matchApplicantName(profile, 'SANAO, JERIEL LIAN D.')).toMatchObject({
+      expect(matchApplicantName(profile, 'JERIEL LIAN D. SANAO')).toMatchObject(
+        {
+          matched: true,
+          reason: 'MATCH',
+        },
+      );
+      expect(
+        matchApplicantName(profile, 'SANAO, JERIEL LIAN D.'),
+      ).toMatchObject({
         matched: true,
         reason: 'MATCH',
       });
@@ -93,9 +99,7 @@ describe('name-match.util', () => {
         matched: false,
         reason: 'MISSING_NAME_TOKENS',
       });
-      expect(
-        matchApplicantName(profile, 'DELA CRUZ, JERIEL'),
-      ).toMatchObject({
+      expect(matchApplicantName(profile, 'DELA CRUZ, JERIEL')).toMatchObject({
         matched: false,
         reason: 'MISSING_NAME_TOKENS',
       });
@@ -123,7 +127,12 @@ describe('name-match.util', () => {
     });
 
     it('fails closed when the registered name is incomplete', () => {
-      expect(matchApplicantName({ first_name: '', last_name: 'Sanao' }, 'SANAO, JERIEL')).toMatchObject({
+      expect(
+        matchApplicantName(
+          { first_name: '', last_name: 'Sanao' },
+          'SANAO, JERIEL',
+        ),
+      ).toMatchObject({
         matched: false,
         reason: 'REGISTERED_NAME_MISSING',
       });

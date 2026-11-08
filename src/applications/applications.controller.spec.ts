@@ -1,3 +1,5 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { ApplicationsController } from './applications.controller.js';
 import { ApplicationsService } from './applications.service.js';

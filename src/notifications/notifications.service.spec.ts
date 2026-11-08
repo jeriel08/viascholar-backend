@@ -1,31 +1,35 @@
-import { jest } from '@jest/globals';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotificationsService } from './notifications.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { EventsGateway } from '../events/events.gateway.js';
 
+const createPrismaMock = () => ({
+  notification: {
+    findMany: vi.fn(),
+    count: vi.fn(),
+    updateMany: vi.fn(),
+    deleteMany: vi.fn(),
+    create: vi.fn(),
+  },
+  user: {
+    findMany: vi.fn(),
+  },
+});
+
+const createEventsGatewayMock = () => ({
+  emitToUser: vi.fn(),
+});
+
 describe('NotificationsService', () => {
   let service: NotificationsService;
-  let mockPrisma: any;
-  let mockEventsGateway: any;
+  let mockPrisma: ReturnType<typeof createPrismaMock>;
+  let mockEventsGateway: ReturnType<typeof createEventsGatewayMock>;
 
   beforeEach(async () => {
-    mockPrisma = {
-      notification: {
-        findMany: jest.fn(),
-        count: jest.fn(),
-        updateMany: jest.fn(),
-        deleteMany: jest.fn(),
-        create: jest.fn(),
-      },
-      user: {
-        findMany: jest.fn(),
-      },
-    };
-
-    mockEventsGateway = {
-      emitToUser: jest.fn(),
-    };
+    mockPrisma = createPrismaMock();
+    mockEventsGateway = createEventsGatewayMock();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [

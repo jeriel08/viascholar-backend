@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest';
+
 import {
   calculateScholarGwa,
   evaluateGwaThreshold,
@@ -64,7 +66,10 @@ describe('Scholar Evaluation Utilities', () => {
     it('marks flagged reports as bad', () => {
       const scholar = {
         academic_baseline_status: 'ACTIVE',
-        school_grading_system: { grading_scale: 'PERCENTAGE_100', passing_grade: 75 },
+        school_grading_system: {
+          grading_scale: 'PERCENTAGE_100',
+          passing_grade: 75,
+        },
       };
       const report = { status: 'FLAGGED' };
       expect(evaluateScholarHealth(88, scholar, report, 90)).toBe('bad');
@@ -73,7 +78,10 @@ describe('Scholar Evaluation Utilities', () => {
     it('marks probation as warn', () => {
       const scholar = {
         academic_baseline_status: 'ON_PROBATION',
-        school_grading_system: { grading_scale: 'PERCENTAGE_100', passing_grade: 75 },
+        school_grading_system: {
+          grading_scale: 'PERCENTAGE_100',
+          passing_grade: 75,
+        },
       };
       expect(evaluateScholarHealth(92, scholar, null, 90)).toBe('warn');
     });
@@ -81,7 +89,10 @@ describe('Scholar Evaluation Utilities', () => {
     it('marks high-performing compliant scholar as good', () => {
       const scholar = {
         academic_baseline_status: 'ACTIVE',
-        school_grading_system: { grading_scale: 'PERCENTAGE_100', passing_grade: 75 },
+        school_grading_system: {
+          grading_scale: 'PERCENTAGE_100',
+          passing_grade: 75,
+        },
       };
       expect(evaluateScholarHealth(94, scholar, null, 90)).toBe('good');
     });

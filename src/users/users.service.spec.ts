@@ -1,4 +1,5 @@
-import { jest } from '@jest/globals';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { UsersService } from './users.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -17,32 +18,32 @@ describe('UsersService', () => {
       providers: [
         UsersService,
         { provide: PrismaService, useValue: {} },
-        { provide: AuditService, useValue: { log: jest.fn() } },
+        { provide: AuditService, useValue: { log: vi.fn() } },
         {
           provide: EventsGateway,
-          useValue: { emitToAdmin: jest.fn(), emitToUser: jest.fn() },
+          useValue: { emitToAdmin: vi.fn(), emitToUser: vi.fn() },
         },
         {
           provide: AppCacheService,
           useValue: {
-            get: jest.fn(),
-            set: jest.fn(),
-            del: jest.fn(),
-            delPattern: jest.fn(),
-            wrap: jest.fn(),
+            get: vi.fn(),
+            set: vi.fn(),
+            del: vi.fn(),
+            delPattern: vi.fn(),
+            wrap: vi.fn(),
           },
         },
         {
           provide: AdminDashboardService,
-          useValue: { getAdminDashboardSummary: jest.fn() },
+          useValue: { getAdminDashboardSummary: vi.fn() },
         },
         {
           provide: CoordinatorDashboardService,
-          useValue: { getCoordinatorDashboardSummary: jest.fn() },
+          useValue: { getCoordinatorDashboardSummary: vi.fn() },
         },
         {
           provide: GrantorDashboardService,
-          useValue: { getGrantorDashboardSummary: jest.fn() },
+          useValue: { getGrantorDashboardSummary: vi.fn() },
         },
       ],
     }).compile();

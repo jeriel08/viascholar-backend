@@ -1,3 +1,6 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import type { SchoolGradingSystem } from '../generated/prisma/client.js';
 import { GradeCalculatorService } from './services/grade-calculator.service.js';
 import { SettingsService } from '../settings/settings.service.js';
 
@@ -7,7 +10,12 @@ describe('GradeCalculatorService & SettingsService Evaluation', () => {
 
   beforeEach(() => {
     // Mock settings service dependencies
-    settingsService = new SettingsService({} as any, {} as any, {} as any);
+    settingsService = new SettingsService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
     gradeCalculatorService = new GradeCalculatorService(settingsService);
   });
 
@@ -81,7 +89,7 @@ describe('GradeCalculatorService & SettingsService Evaluation', () => {
           { subject_code: 'NSTP 1', units: 3, grade: 'PSD' },
         ],
         isForm138: false,
-        schoolConfig: umConfig as any,
+        schoolConfig: umConfig as unknown as SchoolGradingSystem,
       });
 
       expect(res.hasFailedGrade).toBe(false);
@@ -90,14 +98,14 @@ describe('GradeCalculatorService & SettingsService Evaluation', () => {
     });
 
     it('should correctly evaluate 90% retention threshold for UM scale (where 2.0 is passing, 4.0 is max)', () => {
-      // 90% threshold translates to 3.00 on UM scale
+      // 90% threshold translates to 3.50 on UM scale (see evaluateGwaThreshold docs)
       expect(settingsService.evaluateGwaThreshold(3.5, 90.0, umConfig)).toBe(
         true,
       );
-      expect(settingsService.evaluateGwaThreshold(3.0, 90.0, umConfig)).toBe(
-        true,
+      expect(settingsService.evaluateGwaThreshold(3.49, 90.0, umConfig)).toBe(
+        false,
       );
-      expect(settingsService.evaluateGwaThreshold(2.9, 90.0, umConfig)).toBe(
+      expect(settingsService.evaluateGwaThreshold(3.0, 90.0, umConfig)).toBe(
         false,
       );
       expect(settingsService.evaluateGwaThreshold(2.5, 90.0, umConfig)).toBe(

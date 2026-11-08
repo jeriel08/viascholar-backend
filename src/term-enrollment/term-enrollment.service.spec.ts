@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { EnrollmentAuditEngineService } from './services/enrollment-audit-engine.service.js';
 import { EnrollmentOcrService } from './services/enrollment-ocr.service.js';
@@ -8,25 +9,24 @@ import { LlamaExtractService } from '../documents/extractors/llama-extract.servi
 describe('TermEnrollment Services', () => {
   let ocrService: EnrollmentOcrService;
   let auditEngine: EnrollmentAuditEngineService;
-  let prisma: PrismaService;
 
   const mockPrisma = {
     scholarProspectus: {
-      findUnique: jest.fn<any>(),
+      findUnique: vi.fn<any>(),
     },
     scholarProfile: {
-      findUnique: jest.fn<any>(),
+      findUnique: vi.fn<any>(),
     },
     termEnrollment: {
-      findFirst: jest.fn<any>(),
-      upsert: jest.fn<any>(),
+      findFirst: vi.fn<any>(),
+      upsert: vi.fn<any>(),
     },
   };
 
   const mockLlamaExtract = {
-    extractEnrollmentCorData: jest.fn(),
-    extractEnrollmentSoaData: jest.fn(),
-    extractConsolidatedEnrollmentData: jest.fn(),
+    extractEnrollmentCorData: vi.fn(),
+    extractEnrollmentSoaData: vi.fn(),
+    extractConsolidatedEnrollmentData: vi.fn(),
   };
 
   beforeEach(async () => {
@@ -43,7 +43,6 @@ describe('TermEnrollment Services', () => {
     auditEngine = module.get<EnrollmentAuditEngineService>(
       EnrollmentAuditEngineService,
     );
-    prisma = module.get<PrismaService>(PrismaService);
   });
 
   describe('EnrollmentOcrService Normalization', () => {

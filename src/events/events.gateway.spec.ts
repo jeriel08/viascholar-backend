@@ -1,3 +1,5 @@
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { EventsGateway } from './events.gateway.js';
 import { JwtService } from '@nestjs/jwt';
@@ -6,15 +8,15 @@ import type { Socket, Server } from 'socket.io';
 
 describe('EventsGateway', () => {
   let gateway: EventsGateway;
-  let mockJwtService: { verifyAsync: jest.Mock };
-  let mockConfigService: { get: jest.Mock };
+  let mockJwtService: { verifyAsync: Mock };
+  let mockConfigService: { get: Mock };
 
   beforeEach(async () => {
     mockJwtService = {
-      verifyAsync: jest.fn(),
+      verifyAsync: vi.fn(),
     };
     mockConfigService = {
-      get: jest.fn().mockReturnValue('test-secret'),
+      get: vi.fn().mockReturnValue('test-secret'),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -44,8 +46,8 @@ describe('EventsGateway', () => {
         auth: {},
         query: {},
       },
-      disconnect: jest.fn(),
-      join: jest.fn(),
+      disconnect: vi.fn(),
+      join: vi.fn(),
     };
 
     await gateway.handleConnection(mockSocket as unknown as Socket);
@@ -59,6 +61,11 @@ describe('EventsGateway', () => {
       role: 'COORDINATOR',
     });
 
+    gateway.server = {
+      emit: vi.fn(),
+      to: vi.fn().mockReturnValue({ emit: vi.fn() }),
+    } as unknown as Server;
+
     const mockSocket = {
       id: 'test-socket-id',
       handshake: {
@@ -67,8 +74,9 @@ describe('EventsGateway', () => {
         query: {},
       },
       data: {} as Record<string, unknown>,
-      disconnect: jest.fn(),
-      join: jest.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn(),
+      emit: vi.fn(),
+      join: vi.fn().mockResolvedValue(undefined),
     };
 
     await gateway.handleConnection(mockSocket as unknown as Socket);
@@ -95,8 +103,8 @@ describe('EventsGateway', () => {
         query: {},
       },
       data: {},
-      disconnect: jest.fn(),
-      join: jest.fn(),
+      disconnect: vi.fn(),
+      join: vi.fn(),
     };
 
     await gateway.handleConnection(mockSocket as unknown as Socket);
@@ -104,9 +112,9 @@ describe('EventsGateway', () => {
   });
 
   it('should emit to staff room', () => {
-    const mockEmit = jest.fn();
-    const mockTo = jest.fn().mockReturnValue({ emit: mockEmit });
-    gateway.server = { to: mockTo, emit: jest.fn() } as unknown as Server;
+    const mockEmit = vi.fn();
+    const mockTo = vi.fn().mockReturnValue({ emit: mockEmit });
+    gateway.server = { to: mockTo, emit: vi.fn() } as unknown as Server;
 
     gateway.emitToStaff('application:submitted', { id: 1 });
     expect(mockTo).toHaveBeenCalledWith('staff');
@@ -114,9 +122,9 @@ describe('EventsGateway', () => {
   });
 
   it('should emit to user room', () => {
-    const mockEmit = jest.fn();
-    const mockTo = jest.fn().mockReturnValue({ emit: mockEmit });
-    gateway.server = { to: mockTo, emit: jest.fn() } as unknown as Server;
+    const mockEmit = vi.fn();
+    const mockTo = vi.fn().mockReturnValue({ emit: mockEmit });
+    gateway.server = { to: mockTo, emit: vi.fn() } as unknown as Server;
 
     gateway.emitToUser(99, 'application:stage_updated', { status: 'APPROVED' });
     expect(mockTo).toHaveBeenCalledWith('user_99');
