@@ -42,17 +42,20 @@ export class AdminDashboardService {
           this.prisma.user.count({
             where: {
               role: { in: ['SCHOLAR', 'APPLICANT'] },
+              scholar_profile: { is: { archived_at: null } },
             },
           }),
           this.prisma.user.count({
             where: {
               role: 'SCHOLAR',
               is_active: true,
+              scholar_profile: { is: { archived_at: null } },
             },
           }),
           this.prisma.user.count({
             where: {
               role: 'APPLICANT',
+              scholar_profile: { is: { archived_at: null } },
             },
           }),
           this.prisma.schoolGradingSystem.findMany({

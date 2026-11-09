@@ -92,6 +92,10 @@ model User {
   systemSettings SystemSetting[] @relation("SettingsUpdatedBy")
   notifications             Notification[]
 
+  archived_schools          School[]         @relation("SchoolArchivedBy")
+  archived_programs         AcademicProgram[] @relation("ProgramArchivedBy")
+  archived_scholar_profiles ScholarProfile[] @relation("ScholarArchivedBy")
+
   @@map("users")
 }
 
@@ -142,8 +146,13 @@ model ScholarProfile {
   bio                      String? @db.Text
   avatar_url               String? @db.VarChar(255)
   banner_url               String? @db.VarChar(255)
+  archived_at              DateTime?
+  archived_by_user_id      Int?
+  archive_reason           String? @db.VarChar(100) // "GRADUATED", "FAILED_SECOND_CHANCE", "WITHDRAWN", "APPLICATION_REJECTED", "OTHER"
+  archive_notes            String? @db.Text
 
   user                  User                 @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+  archived_by           User?                @relation("ScholarArchivedBy", fields: [archived_by_user_id], references: [user_id], onDelete: SetNull)
   school_grading_system SchoolGradingSystem? @relation(fields: [school_id], references: [school_id], onDelete: SetNull, map: "scholar_profiles_school_grading_fkey")
   school                School?              @relation(fields: [school_id], references: [school_id], onDelete: SetNull, map: "scholar_profiles_school_fkey")
 
@@ -156,6 +165,7 @@ model ScholarProfile {
   prospectus    ScholarProspectus?
   enrollments   TermEnrollment[]
 
+  @@index([archived_at])
   @@map("scholar_profiles")
 }
 
@@ -180,11 +190,13 @@ model Application {
   provider_notes              String?           @db.Text
   rejection_reason            String?           @db.Text
   closed_at                   DateTime?
+  archived_at                 DateTime?
 
   scholar_profile      ScholarProfile @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
   reviewed_by_employee Employee?       @relation("EmployeeReviewedApplications", fields: [reviewed_by_employee_id], references: [employee_id])
   meeting              Meeting?
 
+  @@index([archived_at])
   @@map("applications")
 }
 
@@ -488,12 +500,18 @@ model School {
   contact_number    String?              @db.VarChar(50)
   is_active         Boolean              @default(true)
   grading_system_id Int?
+  archived_at       DateTime?
+  archived_by_user_id Int?
+  archive_reason    String?              @db.VarChar(100) // "SCHOOL_CLOSED", "OTHER"
+  archive_notes     String?              @db.Text
   created_at        DateTime             @default(now())
   updated_at        DateTime             @updatedAt
 
   grading_system   SchoolGradingSystem? @relation("SchoolGradingScale", fields: [grading_system_id], references: [school_id], onDelete: SetNull)
+  archived_by      User?                @relation("SchoolArchivedBy", fields: [archived_by_user_id], references: [user_id], onDelete: SetNull)
   scholar_profiles ScholarProfile[]
 
+  @@index([archived_at])
   @@map("schools")
 }
 
@@ -504,9 +522,16 @@ model AcademicProgram {
   category     String?  @default("College") @db.VarChar(50)
   description  String?  @db.Text
   is_active    Boolean  @default(true)
+  archived_at  DateTime?
+  archived_by_user_id Int?
+  archive_reason String? @db.VarChar(100) // "PROGRAM_OUTDATED", "PROGRAM_REMOVED", "OTHER"
+  archive_notes String?  @db.Text
   created_at   DateTime @default(now())
   updated_at   DateTime @updatedAt
 
+  archived_by User? @relation("ProgramArchivedBy", fields: [archived_by_user_id], references: [user_id], onDelete: SetNull)
+
+  @@index([archived_at])
   @@map("academic_programs")
 }
 

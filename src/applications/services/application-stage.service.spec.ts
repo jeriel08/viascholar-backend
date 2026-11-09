@@ -1,4 +1,4 @@
-﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -8,6 +8,7 @@ import { AuditService } from '../../audit/audit.service.js';
 import { MailService } from '../../mail/mail.service.js';
 import { EventsGateway } from '../../events/events.gateway.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
+import { AppCacheService } from '../../common/cache/app-cache.service.js';
 import { ApplicationStatus } from '../../generated/prisma/enums.js';
 import type { UpdateApplicationStageDto } from '../dto/update-stage.dto.js';
 
@@ -27,7 +28,16 @@ const createPrismaMock = () => ({
   scholarDocument: {
     findMany: vi.fn(),
   },
+  scholarProfile: {
+    findUnique: vi.fn(),
+    update: vi.fn(),
+  },
+  user: {
+    update: vi.fn(),
+  },
 });
+
+const createCacheMock = () => ({ delPattern: vi.fn() });
 
 const createAuditMock = () => ({ log: vi.fn() });
 const createMailMock = () => ({
@@ -97,6 +107,16 @@ describe('ApplicationStageService', () => {
     prisma.scholarDocument.findMany.mockResolvedValue([
       { document_id: 1, status: 'STUDENT_CONFIRMED' },
     ]);
+    prisma.scholarProfile.findUnique.mockResolvedValue({
+      profile_id: 11,
+      user_id: 7,
+      archived_at: null,
+      archive_reason: null,
+      first_name: 'Juan',
+      last_name: 'Dela Cruz',
+    });
+    prisma.scholarProfile.update.mockResolvedValue({});
+    prisma.user.update.mockResolvedValue({});
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -106,6 +126,7 @@ describe('ApplicationStageService', () => {
         { provide: MailService, useValue: mail },
         { provide: EventsGateway, useValue: events },
         { provide: NotificationsService, useValue: notifications },
+        { provide: AppCacheService, useValue: createCacheMock() },
       ],
     }).compile();
 
@@ -485,6 +506,80 @@ describe('ApplicationStageService', () => {
         2,
         'APPLICATION_STAGE_UPDATED',
         expect.stringContaining("stage updated to 'Recommended'"),
+      );
+    });
+  });
+
+  describe('auto archive on rejection', () => {
+    it('archives the applicant and deactivates their account when rejected', async () => {
+      await service.updateStage(
+        2,
+        42,
+        makeStageDto({
+          status: 'REJECTED',
+          stage: 'Rejected',
+          rejection_reason: 'GWA did not meet the threshold.',
+        }),
+        'GRANTOR',
+      );
+
+      expect(prisma.application.update).toHaveBeenCalledWith({
+        where: { application_id: 42 },
+        data: expect.objectContaining({
+          archived_at: expect.any(Date),
+        }),
+      });
+      expect(prisma.scholarProfile.update).toHaveBeenCalledWith({
+        where: { profile_id: 11 },
+        data: objectMatching({
+          archive_reason: 'APPLICATION_REJECTED',
+          archive_notes: 'GWA did not meet the threshold.',
+        }),
+      });
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { user_id: 7 },
+        data: { is_active: false },
+      });
+      expect(audit.log).toHaveBeenCalledWith(
+        2,
+        'APPLICANT_ARCHIVED',
+        expect.any(String),
+      );
+    });
+
+    it('restores the applicant when the decision is reversed to APPROVED', async () => {
+      prisma.scholarProfile.findUnique.mockResolvedValue({
+        profile_id: 11,
+        user_id: 7,
+        archived_at: new Date('2026-10-01T00:00:00.000Z'),
+        archive_reason: 'APPLICATION_REJECTED',
+        first_name: 'Juan',
+        last_name: 'Dela Cruz',
+      });
+
+      await service.updateStage(
+        2,
+        42,
+        makeStageDto({
+          status: 'APPROVED',
+          stage: 'Approved',
+          confirm_without_meeting: true,
+        }),
+        'GRANTOR',
+      );
+
+      expect(prisma.scholarProfile.update).toHaveBeenCalledWith({
+        where: { profile_id: 11 },
+        data: objectMatching({ archived_at: null, archive_reason: null }),
+      });
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { user_id: 7 },
+        data: { is_active: true },
+      });
+      expect(audit.log).toHaveBeenCalledWith(
+        2,
+        'APPLICANT_RESTORED',
+        expect.any(String),
       );
     });
   });

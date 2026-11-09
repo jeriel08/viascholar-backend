@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -503,12 +504,15 @@ export class SettingsService implements OnModuleInit {
   // ==========================================
 
   // 1. Get all academic programs (optionally filter by active status)
-  async getPrograms(onlyActive = false) {
+  async getPrograms(onlyActive = false, includeArchived = false) {
     return this.cacheService.wrap(
-      `settings:programs:${onlyActive ? 'active' : 'all'}`,
+      `settings:programs:${onlyActive ? 'active' : 'all'}:${includeArchived ? 'archived' : 'live'}`,
       async () => {
         return this.prisma.academicProgram.findMany({
-          where: onlyActive ? { is_active: true } : undefined,
+          where: {
+            ...(onlyActive ? { is_active: true } : {}),
+            ...(includeArchived ? {} : { archived_at: null }),
+          },
           orderBy: [{ category: 'asc' }, { program_name: 'asc' }],
         });
       },
@@ -574,6 +578,12 @@ export class SettingsService implements OnModuleInit {
       throw new NotFoundException(`Academic program with ID ${id} not found.`);
     }
 
+    if (existing.archived_at) {
+      throw new BadRequestException(
+        `Program '${existing.program_name}' is archived. Restore it before making changes.`,
+      );
+    }
+
     const code = dto.program_code?.trim().toUpperCase();
     const name = dto.program_name?.trim();
 
@@ -620,7 +630,7 @@ export class SettingsService implements OnModuleInit {
     return updated;
   }
 
-  // 4. Delete an academic program
+  // 4. Archive an academic program (replaces hard delete to preserve records)
   async deleteProgram(userId: number, id: number) {
     const existing = await this.prisma.academicProgram.findUnique({
       where: { program_id: id },
@@ -630,21 +640,35 @@ export class SettingsService implements OnModuleInit {
       throw new NotFoundException(`Academic program with ID ${id} not found.`);
     }
 
-    await this.prisma.academicProgram.delete({
+    if (existing.archived_at) {
+      return {
+        message: `Program '${existing.program_name}' is already archived.`,
+        program: existing,
+      };
+    }
+
+    const archived = await this.prisma.academicProgram.update({
       where: { program_id: id },
+      data: {
+        archived_at: new Date(),
+        archived_by_user_id: userId,
+        archive_reason: 'PROGRAM_REMOVED',
+        is_active: false,
+      },
     });
 
     await this.auditService.log(
       userId,
-      'PROGRAM_DELETED',
-      `Deleted academic program '${existing.program_name}' (${existing.program_code})`,
+      'PROGRAM_ARCHIVED',
+      `Archived academic program '${existing.program_name}' (${existing.program_code})`,
     );
 
     await this.cacheService.delPattern('settings:programs:');
     this.eventsGateway.emitToAll('program:deleted', { program_id: id });
 
     return {
-      message: `Program '${existing.program_name}' deleted successfully.`,
+      message: `Program '${existing.program_name}' archived successfully.`,
+      program: archived,
     };
   }
 
@@ -653,13 +677,16 @@ export class SettingsService implements OnModuleInit {
   // ==========================================
 
   // 1. Get all configured schools (institutions)
-  async getSchools(onlyActive = false) {
-    const cacheKey = `settings:schools_list:${onlyActive ? 'active' : 'all'}`;
+  async getSchools(onlyActive = false, includeArchived = false) {
+    const cacheKey = `settings:schools_list:${onlyActive ? 'active' : 'all'}:${includeArchived ? 'archived' : 'live'}`;
     const cached = await this.cacheService.get(cacheKey);
     if (cached) return cached;
 
     const schools = await this.prisma.school.findMany({
-      where: onlyActive ? { is_active: true } : undefined,
+      where: {
+        ...(onlyActive ? { is_active: true } : {}),
+        ...(includeArchived ? {} : { archived_at: null }),
+      },
       include: {
         grading_system: true,
       },
@@ -847,6 +874,12 @@ export class SettingsService implements OnModuleInit {
       throw new NotFoundException(`School with ID ${id} not found.`);
     }
 
+    if (existing.archived_at) {
+      throw new BadRequestException(
+        `School '${existing.school_name}' is archived. Restore it before making changes.`,
+      );
+    }
+
     const schoolName = dto.school_name?.trim();
     const schoolCode = dto.school_code?.trim().toUpperCase();
 
@@ -926,7 +959,7 @@ export class SettingsService implements OnModuleInit {
     return updated;
   }
 
-  // 4. Delete a school institution
+  // 4. Archive a school institution (replaces hard delete to preserve records)
   async deleteSchool(userId: number, id: number) {
     const existing = await this.prisma.school.findUnique({
       where: { school_id: id },
@@ -939,44 +972,38 @@ export class SettingsService implements OnModuleInit {
       throw new NotFoundException(`School with ID ${id} not found.`);
     }
 
-    // If scholars are associated with this school, soft-deactivate instead of hard delete
-    if (existing.scholar_profiles.length > 0) {
-      const deactivated = await this.prisma.school.update({
-        where: { school_id: id },
-        data: { is_active: false },
-        include: { grading_system: true },
-      });
-
-      await this.auditService.log(
-        userId,
-        'SCHOOL_DEACTIVATED',
-        `Deactivated school '${existing.school_name}' because scholars are currently associated with it`,
-      );
-
-      await this.cacheService.delPattern('settings:schools_list:');
-      this.eventsGateway.emitToAll('school:updated', deactivated);
-
+    if (existing.archived_at) {
       return {
-        message: `School '${existing.school_name}' is associated with scholars and has been deactivated instead of deleted.`,
-        school: deactivated,
+        message: `School '${existing.school_name}' is already archived.`,
+        school: existing,
       };
     }
 
-    await this.prisma.school.delete({
+    // Always archive instead of hard deleting so scholar/grade records
+    // referencing this school remain intact.
+    const archived = await this.prisma.school.update({
       where: { school_id: id },
+      data: {
+        archived_at: new Date(),
+        archived_by_user_id: userId,
+        archive_reason: 'SCHOOL_CLOSED',
+        is_active: false,
+      },
+      include: { grading_system: true },
     });
 
     await this.auditService.log(
       userId,
-      'SCHOOL_DELETED',
-      `Deleted school '${existing.school_name}'`,
+      'SCHOOL_ARCHIVED',
+      `Archived school '${existing.school_name}' (${existing.school_code || 'N/A'}). Scholars linked: ${existing.scholar_profiles.length > 0 ? 'yes' : 'none'}.`,
     );
 
     await this.cacheService.delPattern('settings:schools_list:');
     this.eventsGateway.emitToAll('school:deleted', { school_id: id });
 
     return {
-      message: `School '${existing.school_name}' deleted successfully.`,
+      message: `School '${existing.school_name}' has been archived.`,
+      school: archived,
     };
   }
 }

@@ -17,4 +17,12 @@ export class QueryApplicationsDto {
   @IsString()
   @IsOptional()
   search?: string;
+
+  @ApiPropertyOptional({
+    example: 'true',
+    description: 'Include archived (auto-archived rejected) applications',
+  })
+  @IsString()
+  @IsOptional()
+  include_archived?: string;
 }

@@ -58,6 +58,32 @@ export class AcademicAppealService {
       );
     }
 
+    // A scholar is entitled to only one second chance appeal ever. Once an
+    // appeal has been approved or denied, they can never appeal again.
+    const priorAppeal = await this.prisma.gradeReport.findFirst({
+      where: {
+        scholar_profile_id: scholar.profile_id,
+        report_id: { not: reportId },
+        appeal_status: { in: ['PENDING_GRANTOR', 'APPROVED', 'DENIED'] },
+      },
+      select: { report_id: true, appeal_status: true },
+    });
+
+    const alreadyDecided =
+      report.appeal_status === 'APPROVED' ||
+      report.appeal_status === 'DENIED';
+
+    if (
+      scholar.archived_at ||
+      scholar.academic_baseline_status === 'DISCONTINUED' ||
+      alreadyDecided ||
+      priorAppeal
+    ) {
+      throw new ForbiddenException(
+        'You have already used your second chance appeal. You are no longer eligible to submit another appeal.',
+      );
+    }
+
     // Update GradeReport with appeal details
     const updatedReport = await this.prisma.gradeReport.update({
       where: { report_id: reportId },
@@ -268,7 +294,31 @@ export class AcademicAppealService {
         where: { profile_id: report.scholar_profile_id },
         data: {
           academic_baseline_status: 'DISCONTINUED',
+          archived_at: new Date(),
+          archived_by_user_id: grantorUserId,
+          archive_reason: 'FAILED_SECOND_CHANCE',
+          archive_notes:
+            dto.decision_notes?.trim() ||
+            `Second chance appeal denied for ${report.academic_year} ${report.semester}.`,
         },
+      });
+
+      await this.prisma.user.update({
+        where: { user_id: report.scholar_profile.user_id },
+        data: { is_active: false },
+      });
+
+      const deniedScholarName = `${report.scholar_profile.first_name} ${report.scholar_profile.last_name}`.trim();
+
+      await this.auditService.log(
+        grantorUserId,
+        'SCHOLAR_ARCHIVED',
+        `Automatically archived scholar '${deniedScholarName}' (Profile #${report.scholar_profile_id}) after the second chance appeal was denied.`,
+      );
+
+      this.eventsGateway.emitToStaff('scholar:archived', {
+        profile_id: report.scholar_profile_id,
+        report_id: reportId,
       });
 
       await this.prisma.disbursement.updateMany({

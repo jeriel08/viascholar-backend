@@ -112,22 +112,34 @@ describe('SettingsController', () => {
     void controller.getPrograms('true');
     void controller.getPrograms('false');
 
-    expect(serviceMock.getPrograms).toHaveBeenNthCalledWith(1, true);
-    expect(serviceMock.getPrograms).toHaveBeenNthCalledWith(2, false);
+    expect(serviceMock.getPrograms).toHaveBeenNthCalledWith(1, true, false);
+    expect(serviceMock.getPrograms).toHaveBeenNthCalledWith(2, false, false);
+  });
+
+  it('parses the include_archived query flag for getPrograms', () => {
+    void controller.getPrograms(undefined, 'true');
+
+    expect(serviceMock.getPrograms).toHaveBeenCalledWith(false, true);
   });
 
   it('parses the only_active query flag for institutions endpoints', () => {
     void controller.getInstitutions('true');
     void controller.getInstitutions(undefined);
 
-    expect(serviceMock.getSchools).toHaveBeenNthCalledWith(1, true);
-    expect(serviceMock.getSchools).toHaveBeenNthCalledWith(2, false);
+    expect(serviceMock.getSchools).toHaveBeenNthCalledWith(1, true, false);
+    expect(serviceMock.getSchools).toHaveBeenNthCalledWith(2, false, false);
   });
 
   it('delegates getSchoolsList with the only_active flag', () => {
     void controller.getSchoolsList('true');
 
-    expect(serviceMock.getSchools).toHaveBeenCalledWith(true);
+    expect(serviceMock.getSchools).toHaveBeenCalledWith(true, false);
+  });
+
+  it('delegates getSchoolsList with the include_archived flag', () => {
+    void controller.getSchoolsList(undefined, 'true');
+
+    expect(serviceMock.getSchools).toHaveBeenCalledWith(false, true);
   });
 
   it('delegates createProgram with user and dto', () => {

@@ -17,4 +17,12 @@ export class QueryUsersDto {
   @IsString()
   @IsOptional()
   search?: string;
+
+  @ApiPropertyOptional({
+    example: 'true',
+    description: 'Include archived scholars/applicants in the list',
+  })
+  @IsString()
+  @IsOptional()
+  include_archived?: string;
 }

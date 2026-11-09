@@ -434,6 +434,7 @@ export class ApplicationsService {
   async findAll(query: QueryApplicationsDto) {
     const where: Prisma.ApplicationWhereInput = {
       stage: { not: 'Draft' },
+      ...(query.include_archived === 'true' ? {} : { archived_at: null }),
     };
 
     if (query.status) {

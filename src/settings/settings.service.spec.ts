@@ -746,16 +746,16 @@ describe('SettingsService', () => {
   });
 
   describe('getPrograms', () => {
-    it('caches and returns the full program list by default', async () => {
+    it('caches and returns the full program list by default (excluding archived)', async () => {
       const result = await service.getPrograms();
 
       expect(cache.wrap).toHaveBeenCalledWith(
-        'settings:programs:all',
+        'settings:programs:all:live',
         anyArg(Function),
         5 * 60 * 1000,
       );
       expect(prisma.academicProgram.findMany).toHaveBeenCalledWith(
-        objectMatching({ where: undefined }),
+        objectMatching({ where: { archived_at: null } }),
       );
       expect(result).toEqual([makeProgram()]);
     });
@@ -764,12 +764,12 @@ describe('SettingsService', () => {
       await service.getPrograms(true);
 
       expect(cache.wrap).toHaveBeenCalledWith(
-        'settings:programs:active',
+        'settings:programs:active:live',
         anyArg(Function),
         5 * 60 * 1000,
       );
       expect(prisma.academicProgram.findMany).toHaveBeenCalledWith(
-        objectMatching({ where: { is_active: true } }),
+        objectMatching({ where: { is_active: true, archived_at: null } }),
       );
     });
   });
@@ -934,24 +934,37 @@ describe('SettingsService', () => {
       );
     });
 
-    it('deletes the program, audits, invalidates cache, and emits event', async () => {
+    it('archives the program, audits, invalidates cache, and emits event', async () => {
+      prisma.academicProgram.update.mockResolvedValue(
+        makeProgram({ archived_at: new Date('2026-11-09T00:00:00.000Z'), is_active: false }),
+      );
+
       const result = await service.deleteProgram(7, 1);
 
-      expect(prisma.academicProgram.delete).toHaveBeenCalledWith({
+      expect(prisma.academicProgram.update).toHaveBeenCalledWith({
         where: { program_id: 1 },
+        data: objectMatching({
+          archive_reason: 'PROGRAM_REMOVED',
+          is_active: false,
+          archived_by_user_id: 7,
+        }),
       });
+      expect(prisma.academicProgram.delete).not.toHaveBeenCalled();
       expect(audit.log).toHaveBeenCalledWith(
         7,
-        'PROGRAM_DELETED',
-        "Deleted academic program 'BS Information Technology' (BSIT)",
+        'PROGRAM_ARCHIVED',
+        "Archived academic program 'BS Information Technology' (BSIT)",
       );
       expect(cache.delPattern).toHaveBeenCalledWith('settings:programs:');
       expect(events.emitToAll).toHaveBeenCalledWith('program:deleted', {
         program_id: 1,
       });
-      expect(result).toEqual({
-        message: "Program 'BS Information Technology' deleted successfully.",
-      });
+      expect(result).toEqual(
+        objectMatching({
+          message:
+            "Program 'BS Information Technology' archived successfully.",
+        }),
+      );
     });
   });
 
@@ -967,15 +980,15 @@ describe('SettingsService', () => {
       expect(cache.set).not.toHaveBeenCalled();
     });
 
-    it('queries and caches schools when not cached', async () => {
+    it('queries and caches schools when not cached (excluding archived)', async () => {
       cache.get.mockResolvedValue(undefined);
       const result = await service.getSchools();
 
       expect(prisma.school.findMany).toHaveBeenCalledWith(
-        objectMatching({ where: undefined }),
+        objectMatching({ where: { archived_at: null } }),
       );
       expect(cache.set).toHaveBeenCalledWith(
-        'settings:schools_list:all',
+        'settings:schools_list:all:live',
         [makeSchool()],
         300,
       );
@@ -987,9 +1000,9 @@ describe('SettingsService', () => {
 
       await service.getSchools(true);
 
-      expect(cache.get).toHaveBeenCalledWith('settings:schools_list:active');
+      expect(cache.get).toHaveBeenCalledWith('settings:schools_list:active:live');
       expect(prisma.school.findMany).toHaveBeenCalledWith(
-        objectMatching({ where: { is_active: true } }),
+        objectMatching({ where: { is_active: true, archived_at: null } }),
       );
     });
   });
@@ -1216,49 +1229,63 @@ describe('SettingsService', () => {
       );
     });
 
-    it('soft-deactivates schools that still have scholars attached', async () => {
+    it('archives schools that still have scholars attached', async () => {
       prisma.school.findUnique.mockResolvedValue(
         makeSchool({ scholar_profiles: [{ profile_id: 11 }] }),
       );
-      prisma.school.update.mockResolvedValue(makeSchool({ is_active: false }));
+      prisma.school.update.mockResolvedValue(
+        makeSchool({ is_active: false, archived_at: new Date(), archive_reason: 'SCHOOL_CLOSED' }),
+      );
 
       const result = await service.deleteSchool(7, 5);
 
       expect(prisma.school.update).toHaveBeenCalledWith({
         where: { school_id: 5 },
-        data: { is_active: false },
+        data: objectMatching({
+          archive_reason: 'SCHOOL_CLOSED',
+          is_active: false,
+          archived_by_user_id: 7,
+        }),
         include: { grading_system: true },
       });
       expect(prisma.school.delete).not.toHaveBeenCalled();
       expect(audit.log).toHaveBeenCalledWith(
         7,
-        'SCHOOL_DEACTIVATED',
-        "Deactivated school 'University of Mindanao' because scholars are currently associated with it",
+        'SCHOOL_ARCHIVED',
+        expect.any(String),
       );
-      expect(result.message).toContain('deactivated instead of deleted');
+      expect(result.message).toContain('archived');
     });
 
-    it('hard-deletes schools without scholars', async () => {
+    it('archives schools without scholars instead of deleting them', async () => {
       prisma.school.findUnique.mockResolvedValue(
         makeSchool({ scholar_profiles: [] }),
+      );
+      prisma.school.update.mockResolvedValue(
+        makeSchool({ is_active: false, archived_at: new Date(), archive_reason: 'SCHOOL_CLOSED' }),
       );
 
       const result = await service.deleteSchool(7, 5);
 
-      expect(prisma.school.delete).toHaveBeenCalledWith({
+      expect(prisma.school.update).toHaveBeenCalledWith({
         where: { school_id: 5 },
+        data: objectMatching({
+          archive_reason: 'SCHOOL_CLOSED',
+          is_active: false,
+          archived_by_user_id: 7,
+        }),
+        include: { grading_system: true },
       });
+      expect(prisma.school.delete).not.toHaveBeenCalled();
       expect(audit.log).toHaveBeenCalledWith(
         7,
-        'SCHOOL_DELETED',
-        "Deleted school 'University of Mindanao'",
+        'SCHOOL_ARCHIVED',
+        expect.any(String),
       );
       expect(events.emitToAll).toHaveBeenCalledWith('school:deleted', {
         school_id: 5,
       });
-      expect(result).toEqual({
-        message: "School 'University of Mindanao' deleted successfully.",
-      });
+      expect(result.message).toContain('archived');
     });
   });
 });

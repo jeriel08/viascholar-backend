@@ -584,7 +584,7 @@ describe('ApplicationsService', () => {
 
       expect(prisma.application.findMany).toHaveBeenCalledWith(
         objectMatching({
-          where: { stage: { not: 'Draft' }, status: 'PENDING' },
+          where: { stage: { not: 'Draft' }, status: 'PENDING', archived_at: null },
         }),
       );
     });

@@ -25,6 +25,7 @@ import { TermEnrollmentModule } from './term-enrollment/term-enrollment.module.j
 import { DisbursementsModule } from './disbursements/disbursements.module.js';
 import { AnalyticsModule } from './analytics/analytics.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
+import { ArchiveModule } from './archive/archive.module.js';
 import { AppController } from './app.controller.js';
 
 @Module({
@@ -58,6 +59,7 @@ import { AppController } from './app.controller.js';
     ChatModule,
     ForumModule,
     NotificationsModule,
+    ArchiveModule,
   ],
   controllers: [AppController],
   providers: [

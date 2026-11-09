@@ -18,6 +18,16 @@ import type { AdminResetPasswordDto } from './dto/reset-password.dto.js';
 // Asymmetric matchers are untyped; cast once so nested properties satisfy the linter.
 const objectMatching = (shape: Record<string, unknown>) =>
   expect.objectContaining(shape) as Record<string, unknown>;
+const notArchivedFilter = {
+  AND: [
+    {
+      OR: [
+        { scholar_profile: null },
+        { scholar_profile: { is: { archived_at: null } } },
+      ],
+    },
+  ],
+};
 
 describe('UsersService', () => {
   let service: UsersService;
@@ -90,7 +100,7 @@ describe('UsersService', () => {
       await expect(service.findAll({})).resolves.toBe(users);
 
       expect(prisma.user.findMany).toHaveBeenCalledWith({
-        where: {},
+        where: notArchivedFilter,
         orderBy: { created_at: 'desc' },
         select: objectMatching({
           user_id: true,
@@ -115,7 +125,7 @@ describe('UsersService', () => {
 
       expect(prisma.user.findMany).toHaveBeenCalledWith(
         objectMatching({
-          where: { role: Role.COORDINATOR },
+          where: { role: Role.COORDINATOR, ...notArchivedFilter },
         }),
       );
     });
@@ -127,7 +137,10 @@ describe('UsersService', () => {
 
       expect(prisma.user.findMany).toHaveBeenCalledWith(
         objectMatching({
-          where: { role: { in: ['APPLICANT', 'SCHOLAR', 'GRANTOR'] } },
+          where: {
+            role: { in: ['APPLICANT', 'SCHOLAR', 'GRANTOR'] },
+            ...notArchivedFilter,
+          },
         }),
       );
     });
@@ -136,7 +149,7 @@ describe('UsersService', () => {
       await service.findAll({ roles: ' , , ' });
 
       expect(prisma.user.findMany).toHaveBeenCalledWith(
-        objectMatching({ where: {} }),
+        objectMatching({ where: notArchivedFilter }),
       );
     });
 
@@ -147,7 +160,7 @@ describe('UsersService', () => {
       });
 
       expect(prisma.user.findMany).toHaveBeenCalledWith(
-        objectMatching({ where: { role: Role.ADMIN } }),
+        objectMatching({ where: { role: Role.ADMIN, ...notArchivedFilter } }),
       );
     });
 

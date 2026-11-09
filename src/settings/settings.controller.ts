@@ -106,8 +106,14 @@ export class SettingsController {
 
   @Get('programs')
   @ApiOperation({ summary: 'Get all configured academic programs' })
-  getPrograms(@Query('only_active') onlyActive?: string) {
-    return this.settingsService.getPrograms(onlyActive === 'true');
+  getPrograms(
+    @Query('only_active') onlyActive?: string,
+    @Query('include_archived') includeArchived?: string,
+  ) {
+    return this.settingsService.getPrograms(
+      onlyActive === 'true',
+      includeArchived === 'true',
+    );
   }
 
   @Post('programs')
@@ -141,14 +147,26 @@ export class SettingsController {
 
   @Get('schools-list')
   @ApiOperation({ summary: 'Get all registered school institutions' })
-  getSchoolsList(@Query('only_active') onlyActive?: string) {
-    return this.settingsService.getSchools(onlyActive === 'true');
+  getSchoolsList(
+    @Query('only_active') onlyActive?: string,
+    @Query('include_archived') includeArchived?: string,
+  ) {
+    return this.settingsService.getSchools(
+      onlyActive === 'true',
+      includeArchived === 'true',
+    );
   }
 
   @Get('institutions')
   @ApiOperation({ summary: 'Get all registered school institutions (alias)' })
-  getInstitutions(@Query('only_active') onlyActive?: string) {
-    return this.settingsService.getSchools(onlyActive === 'true');
+  getInstitutions(
+    @Query('only_active') onlyActive?: string,
+    @Query('include_archived') includeArchived?: string,
+  ) {
+    return this.settingsService.getSchools(
+      onlyActive === 'true',
+      includeArchived === 'true',
+    );
   }
 
   @Post('schools-list')

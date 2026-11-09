@@ -10,6 +10,13 @@ import { MailService } from '../../mail/mail.service.js';
 import { UpdateApplicationStageDto } from '../dto/update-stage.dto.js';
 import { EventsGateway } from '../../events/events.gateway.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
+import { AppCacheService } from '../../common/cache/app-cache.service.js';
+
+function studentNameHelper(
+  profile?: { first_name: string | null; last_name: string | null } | null,
+) {
+  return `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim() || 'Applicant';
+}
 
 @Injectable()
 export class ApplicationStageService {
@@ -19,6 +26,7 @@ export class ApplicationStageService {
     private mailService: MailService,
     private eventsGateway: EventsGateway,
     private notificationsService: NotificationsService,
+    private cacheService: AppCacheService,
   ) {}
 
   // Staff updates application stage (Review, Schedule Interview, Approve, Reject)
@@ -116,6 +124,10 @@ export class ApplicationStageService {
       });
     }
 
+    const decisionAt = ['APPROVED', 'REJECTED'].includes(dto.status)
+      ? new Date()
+      : null;
+
     const updated = await this.prisma.application.update({
       where: { application_id: applicationId },
       data: {
@@ -132,11 +144,83 @@ export class ApplicationStageService {
             ? dto.rejection_reason?.trim() || null
             : null,
         reviewed_by_employee_id: employee.employee_id,
-        decision_at: ['APPROVED', 'REJECTED'].includes(dto.status)
-          ? new Date()
-          : null,
+        decision_at: decisionAt,
+        archived_at:
+          dto.status === 'REJECTED' ? new Date() : dto.status === 'APPROVED' ? null : undefined,
       },
     });
+
+    // Applicants whose application is rejected are automatically archived.
+    // If the decision is reversed to APPROVED, they are restored.
+    if (dto.status === 'REJECTED') {
+      const rejectionReason =
+        dto.rejection_reason?.trim() || 'Application rejected by staff.';
+
+      await this.prisma.scholarProfile.update({
+        where: { profile_id: application.scholar_profile_id },
+        data: {
+          archived_at: new Date(),
+          archived_by_user_id: employeeUserId,
+          archive_reason: 'APPLICATION_REJECTED',
+          archive_notes: rejectionReason,
+        },
+      });
+
+      if (application.scholar_profile?.user_id) {
+        await this.prisma.user.update({
+          where: { user_id: application.scholar_profile.user_id },
+          data: { is_active: false },
+        });
+      }
+
+      await this.auditService.log(
+        employeeUserId,
+        'APPLICANT_ARCHIVED',
+        `Automatically archived applicant '${studentNameHelper(application.scholar_profile)}' (Profile #${application.scholar_profile_id}) because the application was REJECTED.`,
+      );
+
+      await this.cacheService.delPattern('dashboard:');
+      this.eventsGateway.emitToStaff('applicant:archived', {
+        profile_id: application.scholar_profile_id,
+        application_id: applicationId,
+      });
+    } else if (dto.status === 'APPROVED') {
+      const profile = await this.prisma.scholarProfile.findUnique({
+        where: { profile_id: application.scholar_profile_id },
+      });
+
+      if (
+        profile?.archived_at &&
+        profile.archive_reason === 'APPLICATION_REJECTED'
+      ) {
+        await this.prisma.scholarProfile.update({
+          where: { profile_id: profile.profile_id },
+          data: {
+            archived_at: null,
+            archived_by_user_id: null,
+            archive_reason: null,
+            archive_notes: null,
+          },
+        });
+
+        await this.prisma.user.update({
+          where: { user_id: profile.user_id },
+          data: { is_active: true },
+        });
+
+        await this.auditService.log(
+          employeeUserId,
+          'APPLICANT_RESTORED',
+          `Restored applicant '${studentNameHelper(profile)}' (Profile #${profile.profile_id}) because the application was re-approved.`,
+        );
+
+        await this.cacheService.delPattern('dashboard:');
+        this.eventsGateway.emitToStaff('applicant:restored', {
+          profile_id: profile.profile_id,
+          application_id: applicationId,
+        });
+      }
+    }
 
     // Audit log stage transition
     await this.auditService.log(

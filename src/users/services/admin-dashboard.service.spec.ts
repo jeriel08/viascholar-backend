@@ -117,13 +117,23 @@ describe('AdminDashboardService', () => {
     expect(summary.metrics.totalSchools).toBe(12);
     expect(summary.metrics.verifiedSchools).toBe(9);
     expect(prisma.user.count).toHaveBeenNthCalledWith(1, {
-      where: { role: { in: ['SCHOLAR', 'APPLICANT'] } },
+      where: {
+        role: { in: ['SCHOLAR', 'APPLICANT'] },
+        scholar_profile: { is: { archived_at: null } },
+      },
     });
     expect(prisma.user.count).toHaveBeenNthCalledWith(2, {
-      where: { role: 'SCHOLAR', is_active: true },
+      where: {
+        role: 'SCHOLAR',
+        is_active: true,
+        scholar_profile: { is: { archived_at: null } },
+      },
     });
     expect(prisma.user.count).toHaveBeenNthCalledWith(3, {
-      where: { role: 'APPLICANT' },
+      where: {
+        role: 'APPLICANT',
+        scholar_profile: { is: { archived_at: null } },
+      },
     });
     expect(prisma.schoolGradingSystem.count).toHaveBeenNthCalledWith(1);
     expect(prisma.schoolGradingSystem.count).toHaveBeenNthCalledWith(2, {

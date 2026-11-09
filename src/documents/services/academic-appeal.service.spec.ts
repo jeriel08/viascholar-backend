@@ -29,11 +29,13 @@ const createPrismaMock = () => ({
   },
   gradeReport: {
     findUnique: vi.fn(),
+    findFirst: vi.fn(),
     findMany: vi.fn(),
     update: vi.fn(),
   },
   user: {
     findMany: vi.fn(),
+    update: vi.fn(),
   },
   conversation: {
     findUnique: vi.fn(),
@@ -135,6 +137,7 @@ describe('AcademicAppealService', () => {
       user: { user_id: 42 },
     });
     prisma.gradeReport.findUnique.mockResolvedValue(makeReport());
+    prisma.gradeReport.findFirst.mockResolvedValue(null);
     prisma.gradeReport.findMany.mockResolvedValue([makeReport()]);
     prisma.gradeReport.update.mockImplementation(
       ({ data }: { data: Record<string, unknown> }) =>
@@ -221,6 +224,35 @@ describe('AcademicAppealService', () => {
       ).rejects.toThrow(
         new BadRequestException(
           'An academic appeal is already under review for this term.',
+        ),
+      );
+    });
+
+    it('throws ForbiddenException when the scholar already used their second chance appeal', async () => {
+      prisma.gradeReport.findFirst.mockResolvedValue({
+        report_id: 70,
+        appeal_status: 'DENIED',
+      });
+
+      await expect(
+        service.submitAppeal(7, 71, makeSubmitDto()),
+      ).rejects.toThrow(
+        new ForbiddenException(
+          'You have already used your second chance appeal. You are no longer eligible to submit another appeal.',
+        ),
+      );
+    });
+
+    it('throws ForbiddenException when the scholar is archived', async () => {
+      prisma.scholarProfile.findUnique.mockResolvedValue(
+        makeScholar({ archived_at: new Date('2026-10-01T00:00:00.000Z') }),
+      );
+
+      await expect(
+        service.submitAppeal(7, 71, makeSubmitDto()),
+      ).rejects.toThrow(
+        new ForbiddenException(
+          'You have already used your second chance appeal. You are no longer eligible to submit another appeal.',
         ),
       );
     });
@@ -419,8 +451,20 @@ describe('AcademicAppealService', () => {
       );
       expect(prisma.scholarProfile.update).toHaveBeenCalledWith({
         where: { profile_id: 11 },
-        data: { academic_baseline_status: 'DISCONTINUED' },
+        data: objectMatching({
+          academic_baseline_status: 'DISCONTINUED',
+          archive_reason: 'FAILED_SECOND_CHANCE',
+        }),
       });
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { user_id: 7 },
+        data: { is_active: false },
+      });
+      expect(audit.log).toHaveBeenCalledWith(
+        42,
+        'SCHOLAR_ARCHIVED',
+        stringMatching(/Profile #11/),
+      );
       expect(prisma.contract.updateMany).toHaveBeenCalledWith({
         where: {
           scholar_profile_id: 11,

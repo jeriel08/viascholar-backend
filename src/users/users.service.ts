@@ -43,6 +43,18 @@ export class UsersService {
       }
     }
 
+    // Archived scholars/applicants are hidden by default
+    if (query.include_archived !== 'true') {
+      where.AND = [
+        {
+          OR: [
+            { scholar_profile: null },
+            { scholar_profile: { is: { archived_at: null } } },
+          ],
+        },
+      ];
+    }
+
     if (query.search) {
       where.OR = [
         { email: { contains: query.search, mode: 'insensitive' } },
