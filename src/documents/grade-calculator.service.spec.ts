@@ -167,3 +167,245 @@ describe('GradeCalculatorService & SettingsService Evaluation', () => {
     });
   });
 });
+
+describe('GradeCalculatorService direct unit tests', () => {
+  const makeService = () => {
+    const settings = new SettingsService(
+      {} as unknown as ConstructorParameters<typeof SettingsService>[0],
+      {} as unknown as ConstructorParameters<typeof SettingsService>[1],
+      {} as unknown as ConstructorParameters<typeof SettingsService>[2],
+      {} as unknown as ConstructorParameters<typeof SettingsService>[3],
+    );
+    return new GradeCalculatorService(settings);
+  };
+
+  describe('isForm138', () => {
+    it('matches high school document types and labels', () => {
+      const service = makeService();
+      expect(service.isForm138('Form 138', '')).toBe(true);
+      expect(service.isForm138('Report Card', '')).toBe(true);
+      expect(service.isForm138('TOR', 'Senior High')).toBe(true);
+      expect(service.isForm138('TOR', '')).toBe(false);
+      expect(service.isForm138(undefined, 'High School')).toBe(true);
+    });
+  });
+
+  describe('computeGwa', () => {
+    const um = {
+      grading_scale: 'NUMERIC_4_POINT',
+      highest_grade: 4.0,
+      passing_grade: 2.0,
+      failing_grade: 1.0,
+      special_codes: { PSD: 'PASSED', TWE: 'TOTAL_WITHDRAWAL' },
+    } as unknown as SchoolGradingSystem;
+
+    it('respects the explicit general average without touching weighted math', () => {
+      const service = makeService();
+      const res = service.computeGwa({
+        gradeItems: [{ subject_code: 'A', units: 3, grade: 1.0 }],
+        isForm138: false,
+        explicitGeneralAvg: 1.75,
+        schoolConfig: um,
+      });
+
+      expect(res.computedGwa).toBe(1.75);
+      expect(res.hasFailedGrade).toBe(true); // 1.0 fails on UM scale
+    });
+
+    it('excludes PSD from unit weighting but counts it as non-failing', () => {
+      const service = makeService();
+      const res = service.computeGwa({
+        gradeItems: [
+          { subject_code: 'A', units: 2, grade: 3.0 },
+          { subject_code: 'B', units: 2, grade: 'PSD' },
+        ],
+        isForm138: false,
+        schoolConfig: um,
+      });
+
+      expect(res.totalUnits).toBe(2);
+      expect(res.computedGwa).toBe(3.0);
+      expect(res.hasFailedGrade).toBe(false);
+    });
+
+    it('computes the arithmetic mean on the Form 138 path', () => {
+      const service = makeService();
+      const res = service.computeGwa({
+        gradeItems: [
+          { subject_code: 'Math', units: 1, grade: 90 },
+          { subject_code: 'English', units: 1, grade: 80 },
+          { subject_code: 'Science', units: 1, grade: 70 },
+        ],
+        isForm138: true,
+      });
+
+      expect(res.computedGwa).toBe(80);
+      expect(res.hasFailedGrade).toBe(true); // 70 < 75
+    });
+
+    it('deduplicates MAPEH sub-components when the parent MAPEH line exists', () => {
+      const service = makeService();
+      const res = service.computeGwa({
+        gradeItems: [
+          { subject_code: 'MAPEH', subject_name: 'MAPEH', units: 4, grade: 92 },
+          { subject_code: 'MUSIC', subject_name: 'Music', units: 1, grade: 10 },
+          {
+            subject_code: 'PE',
+            subject_name: 'Physical Education',
+            units: 1,
+            grade: 10,
+          },
+        ],
+        isForm138: true,
+      });
+
+      expect(res.computedGwa).toBe(92); // sub-items dropped
+      expect(res.hasFailedGrade).toBe(false);
+    });
+
+    it('keeps MAPEH sub-components when the parent MAPEH line is missing', () => {
+      const service = makeService();
+      const res = service.computeGwa({
+        gradeItems: [
+          { subject_code: 'MUSIC', subject_name: 'Music', units: 1, grade: 90 },
+          {
+            subject_code: 'PE',
+            subject_name: 'Physical Education',
+            units: 1,
+            grade: 70,
+          },
+        ],
+        isForm138: true,
+      });
+
+      expect(res.computedGwa).toBe(80);
+      expect(res.hasFailedGrade).toBe(true);
+    });
+
+    it('returns zero when there are no numeric grades on the college path', () => {
+      const service = makeService();
+      const res = service.computeGwa({
+        gradeItems: [
+          { subject_code: 'A', units: 3, grade: 'PSD' },
+          { subject_code: 'B', units: 3, grade: 'TWE' },
+        ],
+        isForm138: false,
+        schoolConfig: um,
+      });
+
+      expect(res.computedGwa).toBe(0);
+      expect(res.totalUnits).toBe(0);
+      expect(res.hasFailedGrade).toBe(true); // TWE fails on UM scale
+    });
+
+    it('flags failure for passing-range numeric grades on an unconfigured college path', () => {
+      const service = makeService();
+      const res = service.computeGwa({
+        gradeItems: [{ subject_code: 'A', units: 3, grade: 4.0 }],
+        isForm138: false,
+      });
+
+      expect(res.hasFailedGrade).toBe(true); // 3.0 < grade <= 5.0 implies failed
+    });
+
+    it('flags failure via evaluateStudentGrade on a Form 138 path with school config', () => {
+      const service = makeService();
+      const res = service.computeGwa({
+        gradeItems: [{ subject_code: 'A', units: 4, grade: 1.0 }],
+        isForm138: true,
+        schoolConfig: um,
+      });
+
+      expect(res.hasFailedGrade).toBe(true);
+    });
+  });
+
+  describe('normalizeAcademicYear', () => {
+    it('extracts the 4-4 year pattern with optional spacing', () => {
+      const service = makeService();
+      expect(service.normalizeAcademicYear('AY 2026 - 2027')).toBe('2026-2027');
+      expect(service.normalizeAcademicYear('2026-2027')).toBe('2026-2027');
+    });
+
+    it('falls back to a 15-char slice and finally AY', () => {
+      const service = makeService();
+      expect(
+        service.normalizeAcademicYear('AcademicYearTestFallbackString'),
+      ).toBe('AcademicYearTes');
+      expect(service.normalizeAcademicYear('')).toBe('AY');
+      expect(service.normalizeAcademicYear(undefined)).toBe('AY');
+    });
+  });
+
+  describe('normalizeSemester', () => {
+    it('detects each semester keyword case-insensitively', () => {
+      const service = makeService();
+      expect(service.normalizeSemester('SECOND SEMESTER')).toBe('2nd Semester');
+      expect(service.normalizeSemester('1st Sem')).toBe('1st Semester');
+      expect(service.normalizeSemester('3rd Semester')).toBe('3rd Semester');
+      expect(service.normalizeSemester('Summer 2026')).toBe('Summer');
+      expect(service.normalizeSemester('midyear term')).toBe('Summer');
+    });
+
+    it('returns Annual on the Form 138 path with no semester keyword', () => {
+      const service = makeService();
+      expect(service.normalizeSemester('2026-2027', '2026-2027', true)).toBe(
+        'Annual',
+      );
+    });
+
+    it('passes through free text and defaults to 1st Semester', () => {
+      const service = makeService();
+      expect(service.normalizeSemester('Fourth Term')).toBe('Fourth Term');
+      expect(service.normalizeSemester(undefined)).toBe('1st Semester');
+    });
+  });
+
+  describe('normalizeGwaToPercentage', () => {
+    it('returns 0 for nullish or NaN input', () => {
+      const service = makeService();
+      expect(service.normalizeGwaToPercentage(NaN)).toBe(0);
+    });
+
+    it('clamps Percentage_100 or Form 138 values to the 0-100 range', () => {
+      const service = makeService();
+      expect(service.normalizeGwaToPercentage(105)).toBe(100);
+      expect(service.normalizeGwaToPercentage(-3)).toBe(0);
+      expect(service.normalizeGwaToPercentage(87.456, undefined, true)).toBe(
+        87.46,
+      );
+    });
+
+    it('maps the inverted 5-point scale to the 100/75/failing bands', () => {
+      const service = makeService();
+      const config = {
+        highest_grade: 1.0,
+        passing_grade: 3.0,
+        failing_grade: 5.0,
+        grading_scale: 'NUMERIC_5_POINT',
+      } as unknown as SchoolGradingSystem;
+
+      expect(service.normalizeGwaToPercentage(1.0, config)).toBe(100);
+      // Between highest and passing: 100 - ((gwa-highest)/(passing-highest))*25, floored at 75
+      expect(service.normalizeGwaToPercentage(2.0, config)).toBe(87.5);
+      // Below passing falls below 75
+      const failScore = service.normalizeGwaToPercentage(4.0, config);
+      expect(failScore).toBeLessThan(75);
+      expect(failScore).toBeGreaterThanOrEqual(0);
+    });
+
+    it('maps the direct 4-point scale to the 100/75/failing bands', () => {
+      const service = makeService();
+      const config = {
+        highest_grade: 4.0,
+        passing_grade: 2.0,
+        failing_grade: 1.0,
+        grading_scale: 'NUMERIC_4_POINT',
+      } as unknown as SchoolGradingSystem;
+
+      expect(service.normalizeGwaToPercentage(4.0, config)).toBe(100);
+      expect(service.normalizeGwaToPercentage(3.0, config)).toBe(87.5);
+      expect(service.normalizeGwaToPercentage(1.5, config)).toBeLessThan(75);
+    });
+  });
+});
