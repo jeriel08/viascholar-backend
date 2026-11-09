@@ -32,8 +32,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       },
     });
 
-    if (!user || !user.is_active) {
+    if (!user) {
       throw new UnauthorizedException('User account is inactive or missing.');
+    }
+
+    if (!user.is_active) {
+      if (user.role === 'APPLICANT' && user.scholar_profile?.archived_at) {
+        await this.prisma.user.update({
+          where: { user_id: user.user_id },
+          data: { is_active: true },
+        });
+        user.is_active = true;
+      } else {
+        throw new UnauthorizedException('User account is inactive or missing.');
+      }
     }
 
     const { password_hash, ...result } = user;

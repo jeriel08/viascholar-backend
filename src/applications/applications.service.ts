@@ -36,6 +36,15 @@ export class ApplicationsService {
       throw new NotFoundException('Scholar profile not found.');
     }
 
+    if (
+      scholar.archived_at ||
+      scholar.applications.some((app) => app.status === 'REJECTED')
+    ) {
+      throw new BadRequestException(
+        'Your application review has concluded and can no longer be modified.',
+      );
+    }
+
     // Verify student_number uniqueness across other profiles
     if (dto.student_number) {
       const duplicateStudentNum = await this.prisma.scholarProfile.findFirst({
@@ -311,6 +320,15 @@ export class ApplicationsService {
     if (!scholar || scholar.applications.length === 0) {
       throw new NotFoundException(
         'No active application found. Please complete your applicant details first.',
+      );
+    }
+
+    if (
+      scholar.archived_at ||
+      scholar.applications.some((app) => app.status === 'REJECTED')
+    ) {
+      throw new BadRequestException(
+        'Your application review has concluded and can no longer be modified.',
       );
     }
 

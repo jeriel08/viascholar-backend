@@ -165,9 +165,18 @@ export class AuthService {
     }
 
     if (!user.is_active) {
-      throw new UnauthorizedException(
-        'Account is disabled. Please contact the administrator.',
-      );
+      // Allow archived/rejected applicants to log in so they can view the company verdict on Stage 3
+      if (user.role === Role.APPLICANT && user.scholar_profile?.archived_at) {
+        await this.prisma.user.update({
+          where: { user_id: user.user_id },
+          data: { is_active: true },
+        });
+        user.is_active = true;
+      } else {
+        throw new UnauthorizedException(
+          'Account is disabled. Please contact the administrator.',
+        );
+      }
     }
 
     const isPasswordValid = await bcrypt.compare(
@@ -213,9 +222,18 @@ export class AuthService {
     }
 
     if (!user.is_active) {
-      throw new UnauthorizedException(
-        'Account is disabled. Please contact the administrator.',
-      );
+      // Allow archived/rejected applicants to log in so they can view the company verdict on Stage 3
+      if (user.role === Role.APPLICANT && user.scholar_profile?.archived_at) {
+        await this.prisma.user.update({
+          where: { user_id: user.user_id },
+          data: { is_active: true },
+        });
+        user.is_active = true;
+      } else {
+        throw new UnauthorizedException(
+          'Account is disabled. Please contact the administrator.',
+        );
+      }
     }
 
     return this.generateToken(
@@ -408,9 +426,20 @@ export class AuthService {
 
     if (existingUser) {
       if (!existingUser.is_active) {
-        throw new UnauthorizedException(
-          'Your account has been deactivated. Please contact the administrator.',
-        );
+        if (
+          existingUser.role === Role.APPLICANT &&
+          existingUser.scholar_profile?.archived_at
+        ) {
+          await this.prisma.user.update({
+            where: { user_id: existingUser.user_id },
+            data: { is_active: true },
+          });
+          existingUser.is_active = true;
+        } else {
+          throw new UnauthorizedException(
+            'Your account has been deactivated. Please contact the administrator.',
+          );
+        }
       }
 
       authenticatedUser = await this.prisma.user.update({

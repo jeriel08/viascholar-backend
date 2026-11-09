@@ -511,7 +511,7 @@ describe('ApplicationStageService', () => {
   });
 
   describe('auto archive on rejection', () => {
-    it('archives the applicant and deactivates their account when rejected', async () => {
+    it('archives the applicant while keeping their account active when rejected', async () => {
       await service.updateStage(
         2,
         42,
@@ -536,7 +536,7 @@ describe('ApplicationStageService', () => {
           archive_notes: 'GWA did not meet the threshold.',
         }),
       });
-      expect(prisma.user.update).toHaveBeenCalledWith({
+      expect(prisma.user.update).not.toHaveBeenCalledWith({
         where: { user_id: 7 },
         data: { is_active: false },
       });

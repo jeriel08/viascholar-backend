@@ -777,10 +777,6 @@ export class ArchiveService {
         where: { scholar_profile_id: profileId, archived_at: null },
         data: { archived_at: now },
       }),
-      this.prisma.user.update({
-        where: { user_id: applicant.user_id },
-        data: { is_active: false },
-      }),
     ]);
 
     const updated = await this.prisma.scholarProfile.findUnique({

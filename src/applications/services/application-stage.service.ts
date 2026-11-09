@@ -146,12 +146,14 @@ export class ApplicationStageService {
         reviewed_by_employee_id: employee.employee_id,
         decision_at: decisionAt,
         archived_at:
-          dto.status === 'REJECTED' ? new Date() : dto.status === 'APPROVED' ? null : undefined,
+          dto.status === 'REJECTED' ? new Date() : null,
       },
     });
 
-    // Applicants whose application is rejected are automatically archived.
-    // If the decision is reversed to APPROVED, they are restored.
+    // Applicants whose application is rejected are automatically archived,
+    // while keeping their user account active so they can still log in and
+    // view the company's verdict on the 3rd stage.
+    // If the decision is reversed or reopened, they are restored.
     if (dto.status === 'REJECTED') {
       const rejectionReason =
         dto.rejection_reason?.trim() || 'Application rejected by staff.';
@@ -166,13 +168,6 @@ export class ApplicationStageService {
         },
       });
 
-      if (application.scholar_profile?.user_id) {
-        await this.prisma.user.update({
-          where: { user_id: application.scholar_profile.user_id },
-          data: { is_active: false },
-        });
-      }
-
       await this.auditService.log(
         employeeUserId,
         'APPLICANT_ARCHIVED',
@@ -184,7 +179,7 @@ export class ApplicationStageService {
         profile_id: application.scholar_profile_id,
         application_id: applicationId,
       });
-    } else if (dto.status === 'APPROVED') {
+    } else {
       const profile = await this.prisma.scholarProfile.findUnique({
         where: { profile_id: application.scholar_profile_id },
       });
@@ -211,7 +206,7 @@ export class ApplicationStageService {
         await this.auditService.log(
           employeeUserId,
           'APPLICANT_RESTORED',
-          `Restored applicant '${studentNameHelper(profile)}' (Profile #${profile.profile_id}) because the application was re-approved.`,
+          `Restored applicant '${studentNameHelper(profile)}' (Profile #${profile.profile_id}) because the application was reopened or approved.`,
         );
 
         await this.cacheService.delPattern('dashboard:');
