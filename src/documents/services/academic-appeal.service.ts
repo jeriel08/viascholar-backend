@@ -4,11 +4,13 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { AuditService } from '../../audit/audit.service.js';
 import { MailService } from '../../mail/mail.service.js';
 import { EventsGateway } from '../../events/events.gateway.js';
+import { AppCacheService } from '../../common/cache/app-cache.service.js';
 import { SubmitAppealDto } from '../dto/submit-appeal.dto.js';
 import { ReviewAppealDto } from '../dto/review-appeal.dto.js';
 
@@ -21,6 +23,7 @@ export class AcademicAppealService {
     private readonly auditService: AuditService,
     private readonly mailService: MailService,
     private readonly eventsGateway: EventsGateway,
+    @Optional() private readonly cacheService?: AppCacheService,
   ) {}
 
   // 1. Scholar submits a Second Chance Academic Appeal for a flagged Grade Report
@@ -210,6 +213,15 @@ export class AcademicAppealService {
     };
 
     this.eventsGateway.emitToStaff('grade_report:appealed', appealPayload);
+    this.eventsGateway.emitToStaff('academic_appeal:submitted', appealPayload);
+    this.eventsGateway.emitToStaff('appeal:submitted', appealPayload);
+
+    try {
+      await this.cacheService?.delPattern('dashboard:grantor:');
+      await this.cacheService?.delPattern('dashboard:coordinator:');
+    } catch (cacheErr) {
+      this.logger.warn(`Failed to clear dashboard cache on appeal submit: ${cacheErr}`);
+    }
 
     return updatedReport;
   }
@@ -445,11 +457,30 @@ export class AcademicAppealService {
     };
 
     this.eventsGateway.emitToStaff('grade_report:appeal_decided', payload);
+    this.eventsGateway.emitToStaff('academic_appeal:reviewed', payload);
+    this.eventsGateway.emitToStaff('appeal:reviewed', payload);
     this.eventsGateway.emitToUser(
       report.scholar_profile.user_id,
       'grade_report:appeal_decided',
       payload,
     );
+    this.eventsGateway.emitToUser(
+      report.scholar_profile.user_id,
+      'academic_appeal:reviewed',
+      payload,
+    );
+    this.eventsGateway.emitToUser(
+      report.scholar_profile.user_id,
+      'appeal:reviewed',
+      payload,
+    );
+
+    try {
+      await this.cacheService?.delPattern('dashboard:grantor:');
+      await this.cacheService?.delPattern('dashboard:coordinator:');
+    } catch (cacheErr) {
+      this.logger.warn(`Failed to clear dashboard cache on appeal review: ${cacheErr}`);
+    }
 
     return updated;
   }
