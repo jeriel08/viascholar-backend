@@ -79,6 +79,28 @@ export class CoordinatorEnrollmentService {
       },
     });
 
+    if (Array.isArray(enrollments)) {
+      for (const item of enrollments) {
+        if (
+          item.status === 'COMPLETED' &&
+          (item as any).reviewed_by_employee_id === null &&
+          (item as any).disbursement_id === null &&
+          typeof item.coordinator_notes === 'string' &&
+          item.coordinator_notes.includes('Term concluded with CCG submission.')
+        ) {
+          await this.prisma.termEnrollment.update({
+            where: { enrollment_id: item.enrollment_id },
+            data: {
+              status: 'PENDING_REVIEW',
+              coordinator_notes: null,
+            },
+          });
+          item.status = 'PENDING_REVIEW';
+          item.coordinator_notes = null;
+        }
+      }
+    }
+
     return enrollments;
   }
 
@@ -116,6 +138,26 @@ export class CoordinatorEnrollmentService {
       );
     }
 
+    if (
+      enrollment.status === 'COMPLETED' &&
+      (enrollment as any).reviewed_by_employee_id === null &&
+      (enrollment as any).disbursement_id === null &&
+      typeof enrollment.coordinator_notes === 'string' &&
+      enrollment.coordinator_notes.includes(
+        'Term concluded with CCG submission.',
+      )
+    ) {
+      await this.prisma.termEnrollment.update({
+        where: { enrollment_id: enrollment.enrollment_id },
+        data: {
+          status: 'PENDING_REVIEW',
+          coordinator_notes: null,
+        },
+      });
+      enrollment.status = 'PENDING_REVIEW';
+      enrollment.coordinator_notes = null;
+    }
+
     return enrollment;
   }
 
@@ -141,6 +183,19 @@ export class CoordinatorEnrollmentService {
       throw new NotFoundException(
         `Term enrollment #${enrollmentId} not found.`,
       );
+    }
+
+    if (
+      enrollment.status === 'COMPLETED' &&
+      (enrollment as any).reviewed_by_employee_id === null &&
+      (enrollment as any).disbursement_id === null &&
+      typeof enrollment.coordinator_notes === 'string' &&
+      enrollment.coordinator_notes.includes(
+        'Term concluded with CCG submission.',
+      )
+    ) {
+      enrollment.status = 'PENDING_REVIEW';
+      enrollment.coordinator_notes = null;
     }
 
     if (enrollment.status === 'APPROVED' || enrollment.status === 'COMPLETED') {
@@ -190,19 +245,74 @@ export class CoordinatorEnrollmentService {
           Array.isArray(enrolledSubs) &&
           enrollment.scholar_profile.prospectus
         ) {
-          const prospectusId =
-            enrollment.scholar_profile.prospectus.prospectus_id;
+          const prospectusSubjects =
+            enrollment.scholar_profile.prospectus.subjects || [];
+          const normalizeTitle = (title: string) =>
+            (title || '')
+              .toLowerCase()
+              .replace(/\b(lab|laboratory|lec|lecture)\b/g, '')
+              .replace(/[^a-z0-9]/g, '')
+              .trim();
+
           for (const sub of enrolledSubs) {
             const normCode = this.enrollmentOcrService.normalizeSubjectCode(
               sub.subject_code,
             );
-            const matchingSubject =
-              enrollment.scholar_profile.prospectus.subjects.find(
-                (ps) =>
-                  this.enrollmentOcrService.normalizeSubjectCode(
-                    ps.subject_code,
-                  ) === normCode,
+            let matchingSubject = prospectusSubjects.find(
+              (ps) =>
+                this.enrollmentOcrService.normalizeSubjectCode(
+                  ps.subject_code,
+                ) === normCode,
+            );
+
+            if (!matchingSubject && sub.curriculum_subject_id) {
+              matchingSubject = prospectusSubjects.find(
+                (ps) => ps.subject_id === Number(sub.curriculum_subject_id),
               );
+            }
+
+            if (
+              !matchingSubject &&
+              typeof (this.enrollmentOcrService as any).getBaseSubjectCode ===
+                'function'
+            ) {
+              const baseCode = (
+                this.enrollmentOcrService as any
+              ).getBaseSubjectCode(sub.subject_code);
+              if (baseCode) {
+                matchingSubject =
+                  prospectusSubjects.find(
+                    (ps) =>
+                      (this.enrollmentOcrService as any).getBaseSubjectCode(
+                        ps.subject_code,
+                      ) === baseCode && ps.status === 'UNTAKEN',
+                  ) ||
+                  prospectusSubjects.find(
+                    (ps) =>
+                      (this.enrollmentOcrService as any).getBaseSubjectCode(
+                        ps.subject_code,
+                      ) === baseCode,
+                  );
+              }
+            }
+
+            if (!matchingSubject && sub.descriptive_title) {
+              const normTitle = normalizeTitle(sub.descriptive_title);
+              if (normTitle.length > 3) {
+                matchingSubject =
+                  prospectusSubjects.find(
+                    (ps: any) =>
+                      ps.descriptive_title &&
+                      normalizeTitle(ps.descriptive_title) === normTitle &&
+                      ps.status === 'UNTAKEN',
+                  ) ||
+                  prospectusSubjects.find(
+                    (ps: any) =>
+                      ps.descriptive_title &&
+                      normalizeTitle(ps.descriptive_title) === normTitle,
+                  );
+              }
+            }
 
             if (matchingSubject && matchingSubject.status === 'UNTAKEN') {
               await tx.prospectusSubject.update({
@@ -212,6 +322,7 @@ export class CoordinatorEnrollmentService {
                   remarks: `Enrolled in ${enrollment.academic_year} ${enrollment.semester}`,
                 },
               });
+              matchingSubject.status = 'ENROLLED';
             }
           }
         }
@@ -305,6 +416,27 @@ export class CoordinatorEnrollmentService {
         },
       });
 
+      const termRemark = `Enrolled in ${enrollment.academic_year} ${enrollment.semester}`;
+      const subjectsToRevert = (
+        enrollment.scholar_profile?.prospectus?.subjects || []
+      ).filter(
+        (ps: any) => ps.status === 'ENROLLED' && ps.remarks === termRemark,
+      );
+      if (subjectsToRevert.length > 0) {
+        for (const ps of subjectsToRevert) {
+          await this.prisma.prospectusSubject.update({
+            where: { subject_id: ps.subject_id },
+            data: { status: 'UNTAKEN', remarks: null },
+          });
+        }
+        await this.cacheService.del(
+          `baseline:scholar:${enrollment.scholar_profile.user_id}`,
+        );
+        await this.cacheService.del(
+          `baseline:review:${enrollment.scholar_profile.profile_id}`,
+        );
+      }
+
       await this.auditService.log(
         userId,
         'REQUEST_CHANGES_TERM_ENROLLMENT',
@@ -340,6 +472,27 @@ export class CoordinatorEnrollmentService {
           coordinator_notes: dto.coordinator_notes,
         },
       });
+
+      const termRemark = `Enrolled in ${enrollment.academic_year} ${enrollment.semester}`;
+      const subjectsToRevert = (
+        enrollment.scholar_profile?.prospectus?.subjects || []
+      ).filter(
+        (ps: any) => ps.status === 'ENROLLED' && ps.remarks === termRemark,
+      );
+      if (subjectsToRevert.length > 0) {
+        for (const ps of subjectsToRevert) {
+          await this.prisma.prospectusSubject.update({
+            where: { subject_id: ps.subject_id },
+            data: { status: 'UNTAKEN', remarks: null },
+          });
+        }
+        await this.cacheService.del(
+          `baseline:scholar:${enrollment.scholar_profile.user_id}`,
+        );
+        await this.cacheService.del(
+          `baseline:review:${enrollment.scholar_profile.profile_id}`,
+        );
+      }
 
       await this.auditService.log(
         userId,

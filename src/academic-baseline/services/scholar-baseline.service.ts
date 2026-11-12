@@ -72,6 +72,122 @@ export class ScholarBaselineService {
         }
 
         const subjects = scholar.prospectus?.subjects || [];
+
+        if (
+          subjects.length > 0 &&
+          typeof (this.prisma as any).termEnrollment?.findMany === 'function'
+        ) {
+          const enrollments =
+            (await (this.prisma as any).termEnrollment.findMany({
+              where: {
+                scholar_profile_id: scholar.profile_id,
+                status: { in: ['PENDING_REVIEW', 'APPROVED', 'COMPLETED'] },
+              },
+              orderBy: { created_at: 'desc' },
+            })) || [];
+
+          const normalizeCode = (code: string) =>
+            (code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+          const getBaseCode = (code: string) =>
+            normalizeCode(code).replace(/(LAB|LEC|L)$/, '');
+          const normalizeTitle = (title: string) =>
+            (title || '')
+              .toLowerCase()
+              .replace(/\b(lab|laboratory|lec|lecture)\b/g, '')
+              .replace(/[^a-z0-9]/g, '')
+              .trim();
+
+          for (const enr of enrollments) {
+            if (
+              enr.status === 'COMPLETED' &&
+              enr.reviewed_by_employee_id === null &&
+              enr.disbursement_id === null &&
+              typeof enr.coordinator_notes === 'string' &&
+              enr.coordinator_notes.includes(
+                'Term concluded with CCG submission.',
+              ) &&
+              typeof (this.prisma as any).termEnrollment?.update === 'function'
+            ) {
+              await (this.prisma as any).termEnrollment.update({
+                where: { enrollment_id: enr.enrollment_id },
+                data: { status: 'PENDING_REVIEW', coordinator_notes: null },
+              });
+              enr.status = 'PENDING_REVIEW';
+              enr.coordinator_notes = null;
+            }
+
+            if (enr.status === 'PENDING_REVIEW' || enr.status === 'APPROVED') {
+              const enrolledSubs = (enr.enrolled_subjects as any[]) || [];
+              for (const sub of enrolledSubs) {
+                let matchingSubject = sub.curriculum_subject_id
+                  ? subjects.find(
+                      (ps: any) =>
+                        ps.subject_id === Number(sub.curriculum_subject_id),
+                    )
+                  : undefined;
+
+                if (!matchingSubject && sub.subject_code) {
+                  const normCode = normalizeCode(sub.subject_code);
+                  matchingSubject = subjects.find(
+                    (ps: any) => normalizeCode(ps.subject_code) === normCode,
+                  );
+                }
+
+                if (!matchingSubject && sub.subject_code) {
+                  const baseCode = getBaseCode(sub.subject_code);
+                  if (baseCode) {
+                    matchingSubject =
+                      subjects.find(
+                        (ps: any) =>
+                          getBaseCode(ps.subject_code) === baseCode &&
+                          ps.status === 'UNTAKEN',
+                      ) ||
+                      subjects.find(
+                        (ps: any) => getBaseCode(ps.subject_code) === baseCode,
+                      );
+                  }
+                }
+
+                if (!matchingSubject && sub.descriptive_title) {
+                  const normTitle = normalizeTitle(sub.descriptive_title);
+                  if (normTitle.length > 3) {
+                    matchingSubject =
+                      subjects.find(
+                        (ps: any) =>
+                          ps.descriptive_title &&
+                          normalizeTitle(ps.descriptive_title) === normTitle &&
+                          ps.status === 'UNTAKEN',
+                      ) ||
+                      subjects.find(
+                        (ps: any) =>
+                          ps.descriptive_title &&
+                          normalizeTitle(ps.descriptive_title) === normTitle,
+                      );
+                  }
+                }
+
+                if (matchingSubject && matchingSubject.status === 'UNTAKEN') {
+                  const remark = `Enrolled in ${enr.academic_year} ${enr.semester}`;
+                  if (
+                    typeof (this.prisma as any).prospectusSubject?.update ===
+                    'function'
+                  ) {
+                    await (this.prisma as any).prospectusSubject.update({
+                      where: { subject_id: matchingSubject.subject_id },
+                      data: {
+                        status: 'ENROLLED',
+                        remarks: remark,
+                      },
+                    });
+                  }
+                  matchingSubject.status = 'ENROLLED';
+                  matchingSubject.remarks = remark;
+                }
+              }
+            }
+          }
+        }
+
         let totalUnits = 0;
         let creditedUnits = 0;
         let untakenUnits = 0;

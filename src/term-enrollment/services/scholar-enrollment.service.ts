@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { AuditService } from '../../audit/audit.service.js';
@@ -11,6 +12,7 @@ import { CloudinaryService } from '../../cloudinary/cloudinary.service.js';
 import { EnrollmentOcrService } from './enrollment-ocr.service.js';
 import { EnrollmentAuditEngineService } from './enrollment-audit-engine.service.js';
 import { SubmitEnrollmentDto } from '../dto/submit-enrollment.dto.js';
+import { AppCacheService } from '../../common/cache/app-cache.service.js';
 import { Express } from 'express';
 
 @Injectable()
@@ -24,7 +26,117 @@ export class ScholarEnrollmentService {
     private readonly cloudinaryService: CloudinaryService,
     private readonly enrollmentOcrService: EnrollmentOcrService,
     private readonly auditEngineService: EnrollmentAuditEngineService,
+    @Optional() private readonly cacheService?: AppCacheService,
   ) {}
+
+  private async syncEnrolledSubjectsToProspectus(
+    scholar: any,
+    enrolledSubjects: any[],
+    academicYear: string,
+    semester: string,
+    subjectsAudit?: any[],
+  ) {
+    if (!Array.isArray(enrolledSubjects) || enrolledSubjects.length === 0) {
+      return;
+    }
+    const prospectusSubjects = scholar.prospectus?.subjects;
+    if (!Array.isArray(prospectusSubjects) || prospectusSubjects.length === 0) {
+      return;
+    }
+    const prospectusSubjectModel = (this.prisma as any).prospectusSubject;
+    if (!prospectusSubjectModel?.update) {
+      return;
+    }
+
+    const normalizeCode = (code: string) =>
+      typeof (this.enrollmentOcrService as any)?.normalizeSubjectCode ===
+      'function'
+        ? (this.enrollmentOcrService as any).normalizeSubjectCode(code)
+        : (code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+    const getBaseCode = (code: string) =>
+      typeof (this.enrollmentOcrService as any)?.getBaseSubjectCode ===
+      'function'
+        ? (this.enrollmentOcrService as any).getBaseSubjectCode(code)
+        : normalizeCode(code).replace(/(LAB|LEC|L)$/, '');
+
+    const normalizeTitle = (title: string) =>
+      (title || '')
+        .toLowerCase()
+        .replace(/\b(lab|laboratory|lec|lecture)\b/g, '')
+        .replace(/[^a-z0-9]/g, '')
+        .trim();
+
+    let updatedCount = 0;
+
+    for (let i = 0; i < enrolledSubjects.length; i++) {
+      const sub = enrolledSubjects[i];
+      const auditItem = Array.isArray(subjectsAudit) ? subjectsAudit[i] : null;
+      const targetId =
+        sub.curriculum_subject_id || auditItem?.curriculum_subject_id;
+
+      let matchingSubject = targetId
+        ? prospectusSubjects.find(
+            (ps: any) => ps.subject_id === Number(targetId),
+          )
+        : undefined;
+
+      if (!matchingSubject && sub.subject_code) {
+        const normCode = normalizeCode(sub.subject_code);
+        matchingSubject = prospectusSubjects.find(
+          (ps: any) => normalizeCode(ps.subject_code) === normCode,
+        );
+      }
+
+      if (!matchingSubject && sub.subject_code) {
+        const baseCode = getBaseCode(sub.subject_code);
+        if (baseCode) {
+          matchingSubject =
+            prospectusSubjects.find(
+              (ps: any) =>
+                getBaseCode(ps.subject_code) === baseCode &&
+                ps.status === 'UNTAKEN',
+            ) ||
+            prospectusSubjects.find(
+              (ps: any) => getBaseCode(ps.subject_code) === baseCode,
+            );
+        }
+      }
+
+      if (!matchingSubject && sub.descriptive_title) {
+        const normTitle = normalizeTitle(sub.descriptive_title);
+        if (normTitle.length > 3) {
+          matchingSubject =
+            prospectusSubjects.find(
+              (ps: any) =>
+                normalizeTitle(ps.descriptive_title) === normTitle &&
+                ps.status === 'UNTAKEN',
+            ) ||
+            prospectusSubjects.find(
+              (ps: any) => normalizeTitle(ps.descriptive_title) === normTitle,
+            );
+        }
+      }
+
+      if (matchingSubject && matchingSubject.status === 'UNTAKEN') {
+        await prospectusSubjectModel.update({
+          where: { subject_id: matchingSubject.subject_id },
+          data: {
+            status: 'ENROLLED',
+            remarks: `Enrolled in ${academicYear} ${semester}`,
+          },
+        });
+        matchingSubject.status = 'ENROLLED';
+        updatedCount++;
+      }
+    }
+
+    if (updatedCount > 0 && this.cacheService) {
+      await this.cacheService.del(`baseline:scholar:${scholar.user_id}`);
+      await this.cacheService.del(`baseline:review:${scholar.profile_id}`);
+      await this.cacheService.del(`dashboard:scholar:${scholar.user_id}`);
+    }
+  }
 
   private async getScholarProfile(userId: number) {
     const scholar = await this.prisma.scholarProfile.findUnique({
@@ -113,14 +225,12 @@ export class ScholarEnrollmentService {
     });
 
     // If an existing enrollment was APPROVED or SUBMITTED, but the scholar has already confirmed or verified
-    // their CCG grades, that semester has ended. Transition it to COMPLETED so the new term enrollment can start.
+    // their CCG grades for that term, that semester has ended. Transition it to COMPLETED so the new term enrollment can start.
     if (
       enrollment &&
-      (enrollment.status === 'APPROVED' ||
-        enrollment.status === 'SUBMITTED' ||
-        enrollment.status === 'PENDING_REVIEW')
+      (enrollment.status === 'APPROVED' || enrollment.status === 'SUBMITTED')
     ) {
-      const hasConfirmedCcg = await this.prisma.scholarDocument.findFirst({
+      const confirmedCcg = await this.prisma.scholarDocument.findFirst({
         where: {
           scholar_profile_id: scholar.profile_id,
           document_type: 'CCG',
@@ -140,7 +250,37 @@ export class ScholarEnrollmentService {
         },
       });
 
-      if (hasConfirmedCcg || hasGradeReport) {
+      let hasMatchingCcg = false;
+      if (confirmedCcg) {
+        const ccgData =
+          ((confirmedCcg as any).confirmed_data as Record<string, any>) ||
+          ((confirmedCcg as any).extracted_data as Record<string, any>) ||
+          null;
+        if (ccgData && (ccgData.academic_year || ccgData.semester)) {
+          const ayMatches =
+            !ccgData.academic_year ||
+            !enrollment.academic_year ||
+            String(ccgData.academic_year).trim() ===
+              String(enrollment.academic_year).trim();
+          const semMatches =
+            !ccgData.semester ||
+            !enrollment.semester ||
+            String(ccgData.semester).trim().toLowerCase() ===
+              String(enrollment.semester).trim().toLowerCase();
+          hasMatchingCcg = ayMatches && semMatches;
+        } else if (
+          (confirmedCcg as any).uploaded_at &&
+          (enrollment as any).created_at
+        ) {
+          hasMatchingCcg =
+            new Date((confirmedCcg as any).uploaded_at).getTime() >=
+            new Date((enrollment as any).created_at).getTime();
+        } else {
+          hasMatchingCcg = true;
+        }
+      }
+
+      if (hasMatchingCcg || hasGradeReport) {
         await this.prisma.termEnrollment.update({
           where: { enrollment_id: enrollment.enrollment_id },
           data: {
@@ -154,7 +294,7 @@ export class ScholarEnrollmentService {
       }
     }
 
-    const completedEnrollment = await this.prisma.termEnrollment.findFirst({
+    let completedEnrollment = await this.prisma.termEnrollment.findFirst({
       where: {
         scholar_profile_id: scholar.profile_id,
         status: 'COMPLETED',
@@ -164,6 +304,68 @@ export class ScholarEnrollmentService {
         disbursement: true,
       },
     });
+
+    // Self-heal an enrollment that was prematurely auto-completed before Coordinator review
+    if (
+      !enrollment &&
+      completedEnrollment &&
+      (completedEnrollment as any).reviewed_by_employee_id === null &&
+      (completedEnrollment as any).disbursement_id === null &&
+      typeof (completedEnrollment as any).coordinator_notes === 'string' &&
+      (completedEnrollment as any).coordinator_notes.includes(
+        'Term concluded with CCG submission.',
+      )
+    ) {
+      const hasReportForCompleted = await this.prisma.gradeReport.findFirst({
+        where: {
+          scholar_profile_id: scholar.profile_id,
+          OR: [
+            { term_enrollment_id: completedEnrollment.enrollment_id },
+            {
+              academic_year: completedEnrollment.academic_year,
+              semester: completedEnrollment.semester,
+            },
+          ],
+        },
+      });
+      if (!hasReportForCompleted) {
+        enrollment = await this.prisma.termEnrollment.update({
+          where: { enrollment_id: completedEnrollment.enrollment_id },
+          data: {
+            status: 'PENDING_REVIEW',
+            coordinator_notes: null,
+          },
+          include: {
+            cor_document: true,
+            soa_document: true,
+            disbursement: true,
+          },
+        });
+        completedEnrollment = await this.prisma.termEnrollment.findFirst({
+          where: {
+            scholar_profile_id: scholar.profile_id,
+            status: 'COMPLETED',
+          },
+          orderBy: { updated_at: 'desc' },
+          include: {
+            disbursement: true,
+          },
+        });
+      }
+    }
+
+    if (
+      enrollment &&
+      (enrollment.status === 'PENDING_REVIEW' ||
+        enrollment.status === 'APPROVED')
+    ) {
+      await this.syncEnrolledSubjectsToProspectus(
+        scholar,
+        (enrollment.enrolled_subjects as any[]) || [],
+        enrollment.academic_year,
+        enrollment.semester,
+      );
+    }
 
     return {
       scholar,
@@ -852,6 +1054,14 @@ export class ScholarEnrollmentService {
       dto,
       'PENDING_REVIEW',
       auditResult,
+    );
+
+    await this.syncEnrolledSubjectsToProspectus(
+      scholar,
+      dto.enrolled_subjects || [],
+      dto.academic_year,
+      dto.semester,
+      auditResult.subjects_audit,
     );
 
     await this.auditService.log(
