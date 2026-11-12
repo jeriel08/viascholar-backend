@@ -633,6 +633,56 @@ describe('ScholarEnrollmentService', () => {
         }),
       );
     });
+
+    it('merges an existing SOA draft with a mismatched academic year when uploading COR', async () => {
+      ocr.parseCor.mockResolvedValue({
+        ...extractedCor,
+        academic_year: '2024',
+        semester: 'Summer',
+      });
+      prisma.termEnrollment.findFirst.mockResolvedValue(null);
+      prisma.termEnrollment.findMany.mockResolvedValue([
+        {
+          enrollment_id: 99,
+          scholar_profile_id: 10,
+          academic_year: '2026-2027',
+          semester: 'Summer',
+          status: 'DRAFT',
+          cor_document_id: null,
+          soa_document_id: 88,
+          total_assessment: 12698.5,
+          assessment_date: new Date('2024-06-05T00:00:00.000Z'),
+          billing_breakdown: { tuition_fee: 10000, net_balance_due: 12698.5 },
+        },
+      ]);
+
+      await service.uploadAndParseCor(3, makeFile());
+
+      expect(prisma.termEnrollment.delete).toHaveBeenCalledWith({
+        where: { enrollment_id: 99 },
+      });
+      expect(prisma.termEnrollment.upsert).toHaveBeenCalledWith(
+        objectMatching({
+          where: {
+            scholar_profile_id_academic_year_semester: {
+              scholar_profile_id: 10,
+              academic_year: '2024',
+              semester: 'Summer',
+            },
+          },
+          create: objectMatching({
+            cor_document_id: 77,
+            soa_document_id: 88,
+            total_assessment: 12698.5,
+          }),
+          update: objectMatching({
+            cor_document_id: 77,
+            soa_document_id: 88,
+            total_assessment: 12698.5,
+          }),
+        }),
+      );
+    });
   });
 
   describe('uploadAndParseSoa', () => {

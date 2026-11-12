@@ -44,7 +44,7 @@ export const ENROLLMENT_COR_DATA_SCHEMA = {
     academic_year: {
       type: 'string',
       description:
-        'School Year / Academic Year (e.g., "2026-2027"). Remove prefixes like "A.Y.", "SY".',
+        'School Year / Academic Year printed on the document. If a range is shown (e.g., "2023-2024", "2023-24", "2024-25"), expand to full 4-digit years (e.g., "2023-2024", "2024-2025"). CRITICAL FOR SUMMER / MIDYEAR: If a single year is printed with Summer/Midyear (e.g., "Summer 2024", "Summer 2026", "Midyear 2024"), extract the exact 4-digit year (e.g., "2024", "2026"). Remove prefixes like "A.Y.", "SY". NEVER invent a year not printed on the document.',
     },
     semester: {
       type: 'string',
@@ -69,15 +69,17 @@ export const ENROLLMENT_COR_DATA_SCHEMA = {
           subject_code: {
             type: 'string',
             description:
-              'Course/Subject Code (e.g. "IT 211", "CCE 102", "MATH 101").',
+              'Alphanumeric Course/Subject Code (e.g. "GE 5", "GE 11", "GE 20", "IT 211", "CCE 102", "UGE 1", "PAHF 2", "MATH 101"). CRITICAL: On university portal Class Schedules with columns [Code | Title | Description], the "Code" column is a 4-5 digit numeric class/section code (e.g. "11040", "11065", "6471") and the "Title" column is the actual Subject Code (e.g. "GE 5", "GE 11", "UGE 1"). Always extract the alphanumeric "Title" column as subject_code, and put the numeric "Code" column into section!',
           },
           descriptive_title: {
             type: 'string',
-            description: 'Descriptive title / Course name.',
+            description:
+              'Descriptive title / Course name (e.g. "SCIENCE, TECHNOLOGY AND SOCIETY", "THE ENTREPRENEURIAL MINDS", "READING VISUAL ARTS"). In tables with [Code | Title | Description], extract ONLY the "Description" column here — do NOT prepend the subject code from the "Title" column.',
           },
           section: {
             type: 'string',
-            description: 'Section identifier (e.g., "BSIT-2A", "A1", "F1").',
+            description:
+              'Section identifier or numeric class offering code (e.g., "11040", "11065", "6471", "BSIT-2A", "A1", "F1").',
           },
           schedule: {
             type: 'string',
@@ -139,7 +141,8 @@ export const ENROLLMENT_SOA_DATA_SCHEMA = {
     },
     academic_year: {
       type: 'string',
-      description: 'Academic Year (e.g., "2026-2027").',
+      description:
+        'School Year / Academic Year printed on the document. If a range is shown (e.g., "2023-2024", "2023-24", "2024-25"), expand to full 4-digit years (e.g., "2023-2024", "2024-2025"). CRITICAL FOR SUMMER / MIDYEAR: If a single year is printed with Summer/Midyear (e.g., "Summer 2024", "Summer 2026", "Midyear 2024"), extract the exact 4-digit year (e.g., "2024", "2026"). NEVER invent a year not printed on the document.',
     },
     semester: {
       type: 'string',
@@ -208,7 +211,11 @@ export const CONSOLIDATED_ENROLLMENT_DATA_SCHEMA = {
     student_number: { type: 'string' },
     school_name: { type: 'string' },
     course_name: { type: 'string' },
-    academic_year: { type: 'string' },
+    academic_year: {
+      type: 'string',
+      description:
+        'School Year / Academic Year printed on the document (e.g. "2023-2024", or single 4-digit year "2024" for "Summer 2024").',
+    },
     semester: { type: 'string' },
     year_level: { type: 'string' },
     total_units: { type: 'number' },
@@ -226,8 +233,16 @@ export const CONSOLIDATED_ENROLLMENT_DATA_SCHEMA = {
       items: {
         type: 'object',
         properties: {
-          subject_code: { type: 'string' },
-          descriptive_title: { type: 'string' },
+          subject_code: {
+            type: 'string',
+            description:
+              'Alphanumeric Course/Subject Code (e.g. "GE 5", "GE 11", "IT 101"). In [Code | Title | Description] tables, extract "Title" as subject_code and put the numeric "Code" in section.',
+          },
+          descriptive_title: {
+            type: 'string',
+            description:
+              'Descriptive title of the course without repeating the subject_code.',
+          },
           section: { type: 'string' },
           schedule: { type: 'string' },
           room: { type: 'string' },

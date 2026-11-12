@@ -49,7 +49,7 @@ export const OFFICIAL_RECEIPT_DATA_SCHEMA = {
     academic_year: {
       type: 'string',
       description:
-        "Academic Year or School Year printed on the receipt (e.g. '2026-2027', '2026-27', 'SY 2026-2027', 'A.Y. 2026-2027'). Strip prefixes like 'SY', 'A.Y.', 'School Year' if possible, or extract the school year interval (e.g. '2026-2027'). May appear near 'TERM', 'SEMESTER', or in payment description lines.",
+        "Academic Year or School Year printed on the receipt (e.g. '2023-2024', '2023-24', 'SY 2023-2024', or single 4-digit year '2024' when printed as 'Summer/2024' or 'Summer 2024'). Strip prefixes like 'SY', 'A.Y.', 'School Year' if possible. May appear near 'TERM', 'SEMESTER', or in payment description lines.",
     },
     semester: {
       type: 'string',

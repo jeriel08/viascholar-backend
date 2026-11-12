@@ -80,6 +80,86 @@ export class EnrollmentOcrService {
     return '1st Semester';
   }
 
+  normalizeAcademicYear(
+    rawAy?: string,
+    rawSemester?: string,
+  ): string | undefined {
+    const extractFromText = (text?: string): string | undefined => {
+      if (!text || typeof text !== 'string') return undefined;
+      const trimmed = text.trim();
+      if (!trimmed) return undefined;
+
+      const rangeMatch = trimmed.match(/\b(20\d{2})\s*[-/]\s*(\d{2,4})\b/);
+      if (rangeMatch) {
+        const y1 = rangeMatch[1];
+        const y2 =
+          rangeMatch[2].length === 2 ? `20${rangeMatch[2]}` : rangeMatch[2];
+        return `${y1}-${y2}`;
+      }
+
+      const singleYearMatch = trimmed.match(/\b(20\d{2})\b/);
+      if (singleYearMatch) {
+        return singleYearMatch[1];
+      }
+
+      return undefined;
+    };
+
+    const fromAy = extractFromText(rawAy);
+    if (fromAy) return fromAy;
+
+    const fromSem = extractFromText(rawSemester);
+    if (fromSem) return fromSem;
+
+    return typeof rawAy === 'string' && rawAy.trim() ? rawAy.trim() : rawAy;
+  }
+
+  sanitizeSubject(s: any): ExtractedCorSubject {
+    let rawCode = String(s.subject_code || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toUpperCase();
+    let rawTitle = String(s.descriptive_title || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    let rawSection = s.section ? String(s.section).trim() : undefined;
+
+    // Handle UM / portal tables where [Code | Title | Description] puts the 4-5 digit numeric class code
+    // in subject_code (e.g. "11040") and merges Title + Description into descriptive_title (e.g. "GE 5 SCIENCE, TECHNOLOGY AND SOCIETY")
+    if (/^\d{3,7}$/.test(rawCode) && rawTitle) {
+      const codePrefixMatch = rawTitle.match(
+        /^([A-Z]{2,6}\s*[-_]?\s*\d{1,4}[A-Z]{0,3}(?:\s*\/?\s*L(?:AB|EC)?)?)\s+(.+)$/i,
+      );
+      if (codePrefixMatch) {
+        if (!rawSection) {
+          rawSection = rawCode;
+        }
+        rawCode = codePrefixMatch[1].replace(/\s+/g, ' ').trim().toUpperCase();
+        rawTitle = codePrefixMatch[2].trim();
+      }
+    } else if (
+      rawCode &&
+      rawTitle &&
+      rawTitle.toUpperCase().startsWith(`${rawCode} `) &&
+      rawTitle.length > rawCode.length + 1
+    ) {
+      rawTitle = rawTitle.slice(rawCode.length).trim();
+    }
+
+    if (!rawTitle) {
+      rawTitle = rawCode;
+    }
+
+    return {
+      subject_code: rawCode,
+      descriptive_title: rawTitle,
+      section: rawSection,
+      schedule: s.schedule ? String(s.schedule).trim() : undefined,
+      room: s.room ? String(s.room).trim() : undefined,
+      units: Number(s.units) > 0 ? Number(s.units) : 3.0,
+    };
+  }
+
   normalizeYearLevel(year: any): number {
     if (typeof year === 'number' && year >= 1 && year <= 6)
       return Math.floor(year);
@@ -124,14 +204,7 @@ export class EnrollmentOcrService {
     }
 
     const subjects: ExtractedCorSubject[] = (raw.subjects || [])
-      .map((s: any) => ({
-        subject_code: (s.subject_code || '').trim().toUpperCase(),
-        descriptive_title: (s.descriptive_title || s.subject_code || '').trim(),
-        section: s.section ? String(s.section).trim() : undefined,
-        schedule: s.schedule ? String(s.schedule).trim() : undefined,
-        room: s.room ? String(s.room).trim() : undefined,
-        units: Number(s.units) > 0 ? Number(s.units) : 3.0,
-      }))
+      .map((s: any) => this.sanitizeSubject(s))
       .filter((s: ExtractedCorSubject) => Boolean(s.subject_code));
 
     if (subjects.length === 0) {
@@ -164,7 +237,10 @@ export class EnrollmentOcrService {
       student_number: raw.student_number,
       school_name: raw.school_name,
       course_name: raw.course_name,
-      academic_year: raw.academic_year,
+      academic_year: this.normalizeAcademicYear(
+        raw.academic_year,
+        raw.semester,
+      ),
       semester: this.normalizeSemester(raw.semester),
       year_level: this.normalizeYearLevel(raw.year_level),
       total_units: totalUnits,
@@ -212,7 +288,10 @@ export class EnrollmentOcrService {
       student_name: raw.student_name,
       student_number: raw.student_number,
       school_name: raw.school_name,
-      academic_year: raw.academic_year,
+      academic_year: this.normalizeAcademicYear(
+        raw.academic_year,
+        raw.semester,
+      ),
       semester: this.normalizeSemester(raw.semester),
       assessment_date: raw.assessment_date,
       total_assessment: totalAssessment,
@@ -241,14 +320,7 @@ export class EnrollmentOcrService {
       await this.llamaExtractService.extractConsolidatedEnrollmentData(input);
 
     const subjects: ExtractedCorSubject[] = (raw.subjects || [])
-      .map((s: any) => ({
-        subject_code: (s.subject_code || '').trim().toUpperCase(),
-        descriptive_title: (s.descriptive_title || s.subject_code || '').trim(),
-        section: s.section ? String(s.section).trim() : undefined,
-        schedule: s.schedule ? String(s.schedule).trim() : undefined,
-        room: s.room ? String(s.room).trim() : undefined,
-        units: Number(s.units) > 0 ? Number(s.units) : 3.0,
-      }))
+      .map((s: any) => this.sanitizeSubject(s))
       .filter((s: ExtractedCorSubject) => Boolean(s.subject_code));
 
     if (subjects.length === 0) {
@@ -281,7 +353,10 @@ export class EnrollmentOcrService {
       student_number: raw.student_number,
       school_name: raw.school_name,
       course_name: raw.course_name,
-      academic_year: raw.academic_year,
+      academic_year: this.normalizeAcademicYear(
+        raw.academic_year,
+        raw.semester,
+      ),
       semester: this.normalizeSemester(raw.semester),
       year_level: this.normalizeYearLevel(raw.year_level),
       total_units: totalUnits,

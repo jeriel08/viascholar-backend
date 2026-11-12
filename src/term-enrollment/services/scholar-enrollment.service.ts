@@ -224,6 +224,19 @@ export class ScholarEnrollmentService {
       },
     });
 
+    if (
+      enrollment &&
+      enrollment.status === 'DRAFT' &&
+      !(academicYear && semester)
+    ) {
+      const mergedDraft = await this.consolidateScholarDrafts(
+        scholar.profile_id,
+      );
+      if (mergedDraft) {
+        enrollment = mergedDraft as any;
+      }
+    }
+
     // If an existing enrollment was APPROVED or SUBMITTED, but the scholar has already confirmed or verified
     // their CCG grades for that term, that semester has ended. Transition it to COMPLETED so the new term enrollment can start.
     if (
@@ -376,6 +389,98 @@ export class ScholarEnrollmentService {
     };
   }
 
+  private async consolidateScholarDrafts(
+    scholarProfileId: number,
+    preferredAy?: string,
+    preferredSem?: string,
+  ) {
+    const drafts = await this.prisma.termEnrollment.findMany({
+      where: {
+        scholar_profile_id: scholarProfileId,
+        status: 'DRAFT',
+      },
+      orderBy: { updated_at: 'desc' },
+    });
+
+    if (!Array.isArray(drafts) || drafts.length <= 1) {
+      return null;
+    }
+
+    const targetDraft =
+      (preferredAy &&
+        preferredSem &&
+        drafts.find(
+          (d) =>
+            d.academic_year === preferredAy && d.semester === preferredSem,
+        )) ||
+      drafts.find(
+        (d) => d.academic_year && d.academic_year !== '2026-2027',
+      ) ||
+      drafts.find((d) => d.cor_document_id != null) ||
+      drafts[0];
+
+    const otherDrafts = drafts.filter(
+      (d) => d.enrollment_id !== targetDraft.enrollment_id,
+    );
+
+    const updateData: Record<string, any> = {};
+
+    if (!targetDraft.cor_document_id) {
+      const corDonor = otherDrafts.find((d) => d.cor_document_id != null);
+      if (corDonor) {
+        updateData.cor_document_id = corDonor.cor_document_id;
+        updateData.enrolled_subjects = corDonor.enrolled_subjects ?? [];
+        updateData.total_units = corDonor.total_units ?? 0;
+        if (corDonor.year_level) {
+          updateData.year_level = corDonor.year_level;
+        }
+        if (
+          (!Array.isArray(targetDraft.audit_flags) ||
+            (targetDraft.audit_flags as any[]).length === 0) &&
+          corDonor.audit_flags
+        ) {
+          updateData.audit_flags = corDonor.audit_flags;
+        }
+      }
+    }
+
+    if (!targetDraft.soa_document_id) {
+      const soaDonor = otherDrafts.find((d) => d.soa_document_id != null);
+      if (soaDonor) {
+        updateData.soa_document_id = soaDonor.soa_document_id;
+        updateData.total_assessment = soaDonor.total_assessment ?? 0;
+        updateData.assessment_date = soaDonor.assessment_date ?? null;
+        updateData.billing_breakdown = soaDonor.billing_breakdown ?? {};
+      }
+    }
+
+    if (targetDraft.academic_year === '2026-2027') {
+      const termDonor = otherDrafts.find(
+        (d) => d.academic_year && d.academic_year !== '2026-2027',
+      );
+      if (termDonor) {
+        updateData.academic_year = termDonor.academic_year;
+        updateData.semester = termDonor.semester;
+      }
+    }
+
+    for (const od of otherDrafts) {
+      await this.prisma.termEnrollment.delete({
+        where: { enrollment_id: od.enrollment_id },
+      });
+    }
+
+    return this.prisma.termEnrollment.update({
+      where: { enrollment_id: targetDraft.enrollment_id },
+      data: updateData,
+      include: {
+        cor_document: true,
+        soa_document: true,
+        disbursement: true,
+      },
+    });
+  }
+
   // 2. Upload and parse COR document
   async uploadAndParseCor(userId: number, file: Express.Multer.File) {
     const scholar = await this.getScholarProfile(userId);
@@ -426,6 +531,44 @@ export class ScholarEnrollmentService {
       }
     }
 
+    // Check for any other active DRAFT rows with a different academic_year/semester
+    // (e.g. an Assessment/SOA uploaded first that defaulted to a different term)
+    const allDrafts = await this.prisma.termEnrollment.findMany({
+      where: {
+        scholar_profile_id: scholar.profile_id,
+        status: 'DRAFT',
+      },
+      orderBy: { updated_at: 'desc' },
+    });
+    const mismatchedDrafts = (Array.isArray(allDrafts) ? allDrafts : []).filter(
+      (d) => d.academic_year !== ay || d.semester !== sem,
+    );
+    const carriedSoaDraft = !existingDraft?.soa_document_id
+      ? mismatchedDrafts.find((d) => d.soa_document_id != null)
+      : undefined;
+
+    for (const md of mismatchedDrafts) {
+      if (
+        md.cor_document_id &&
+        md.cor_document_id !== existingDraft?.cor_document_id &&
+        md.cor_document_id !== carriedSoaDraft?.soa_document_id
+      ) {
+        const oldDoc = await this.prisma.scholarDocument.findUnique({
+          where: { document_id: md.cor_document_id },
+        });
+        if (oldDoc && oldDoc.status !== 'VERIFIED') {
+          await this.prisma.scholarDocument
+            .delete({
+              where: { document_id: md.cor_document_id },
+            })
+            .catch(() => {});
+        }
+      }
+      await this.prisma.termEnrollment.delete({
+        where: { enrollment_id: md.enrollment_id },
+      });
+    }
+
     // Save ScholarDocument
     const doc = await this.prisma.scholarDocument.create({
       data: {
@@ -452,6 +595,15 @@ export class ScholarEnrollmentService {
       },
     );
 
+    const carriedSoaFields = carriedSoaDraft
+      ? {
+          soa_document_id: carriedSoaDraft.soa_document_id,
+          total_assessment: carriedSoaDraft.total_assessment || 0,
+          assessment_date: carriedSoaDraft.assessment_date || null,
+          billing_breakdown: carriedSoaDraft.billing_breakdown as any,
+        }
+      : {};
+
     const draft = await this.prisma.termEnrollment.upsert({
       where: {
         scholar_profile_id_academic_year_semester: {
@@ -473,6 +625,7 @@ export class ScholarEnrollmentService {
         audit_flags: auditResult.flags as any,
         enrolled_subjects: extractedData.subjects as any,
         cross_doc_reconciliation: auditResult.cross_doc_reconciliation as any,
+        ...carriedSoaFields,
       },
       update: {
         cor_document_id: doc.document_id,
@@ -481,6 +634,7 @@ export class ScholarEnrollmentService {
         year_level: yr,
         audit_flags: auditResult.flags as any,
         cross_doc_reconciliation: auditResult.cross_doc_reconciliation as any,
+        ...carriedSoaFields,
       },
       include: {
         cor_document: true,
@@ -521,9 +675,29 @@ export class ScholarEnrollmentService {
       }),
     ]);
 
-    const ay = extractedData.academic_year || '2026-2027';
-    const sem = extractedData.semester || '1st Semester';
-    const yr = scholar.current_year_level || 1;
+    let ay = extractedData.academic_year || '2026-2027';
+    let sem = extractedData.semester || '1st Semester';
+    let yr = scholar.current_year_level || 1;
+
+    const allDrafts = await this.prisma.termEnrollment.findMany({
+      where: {
+        scholar_profile_id: scholar.profile_id,
+        status: 'DRAFT',
+      },
+      orderBy: { updated_at: 'desc' },
+    });
+    const activeDrafts = Array.isArray(allDrafts) ? allDrafts : [];
+    const corDonorDraft = activeDrafts.find((d) => d.cor_document_id != null);
+
+    if (
+      corDonorDraft &&
+      (!extractedData.academic_year ||
+        (ay === '2026-2027' && corDonorDraft.academic_year !== '2026-2027'))
+    ) {
+      ay = corDonorDraft.academic_year;
+      sem = corDonorDraft.semester;
+      yr = corDonorDraft.year_level || yr;
+    }
 
     // Clean up old draft SOA document if re-uploading
     const existingDraft = await this.prisma.termEnrollment.findFirst({
@@ -548,6 +722,36 @@ export class ScholarEnrollmentService {
           })
           .catch(() => {});
       }
+    }
+
+    const mismatchedDrafts = activeDrafts.filter(
+      (d) => d.academic_year !== ay || d.semester !== sem,
+    );
+    const carriedCorDraft = !existingDraft?.cor_document_id
+      ? mismatchedDrafts.find((d) => d.cor_document_id != null)
+      : undefined;
+
+    for (const md of mismatchedDrafts) {
+      if (
+        md.soa_document_id &&
+        md.soa_document_id !== md.cor_document_id &&
+        md.soa_document_id !== existingDraft?.soa_document_id &&
+        md.soa_document_id !== carriedCorDraft?.cor_document_id
+      ) {
+        const oldDoc = await this.prisma.scholarDocument.findUnique({
+          where: { document_id: md.soa_document_id },
+        });
+        if (oldDoc && oldDoc.status !== 'VERIFIED') {
+          await this.prisma.scholarDocument
+            .delete({
+              where: { document_id: md.soa_document_id },
+            })
+            .catch(() => {});
+        }
+      }
+      await this.prisma.termEnrollment.delete({
+        where: { enrollment_id: md.enrollment_id },
+      });
     }
 
     const doc = await this.prisma.scholarDocument.create({
@@ -583,7 +787,9 @@ export class ScholarEnrollmentService {
       },
     });
     const subjectsToAudit =
-      (existingEnrollment?.enrolled_subjects as any) || [];
+      (existingEnrollment?.enrolled_subjects as any) ||
+      (carriedCorDraft?.enrolled_subjects as any) ||
+      [];
 
     const auditResult = await this.auditEngineService.runAudit(
       scholar.profile_id,
@@ -595,6 +801,15 @@ export class ScholarEnrollmentService {
         semester: sem,
       },
     );
+
+    const carriedCorFields = carriedCorDraft
+      ? {
+          cor_document_id: carriedCorDraft.cor_document_id,
+          enrolled_subjects: (carriedCorDraft.enrolled_subjects ?? []) as any,
+          total_units: carriedCorDraft.total_units || 0,
+          year_level: carriedCorDraft.year_level || yr,
+        }
+      : {};
 
     const draft = await this.prisma.termEnrollment.upsert({
       where: {
@@ -620,6 +835,7 @@ export class ScholarEnrollmentService {
         audit_flags: auditResult.flags as any,
         billing_breakdown: billingBreakdown as any,
         cross_doc_reconciliation: auditResult.cross_doc_reconciliation as any,
+        ...carriedCorFields,
       },
       update: {
         soa_document_id: doc.document_id,
@@ -630,6 +846,7 @@ export class ScholarEnrollmentService {
         audit_flags: auditResult.flags as any,
         billing_breakdown: billingBreakdown as any,
         cross_doc_reconciliation: auditResult.cross_doc_reconciliation as any,
+        ...carriedCorFields,
       },
       include: {
         cor_document: true,
@@ -796,7 +1013,7 @@ export class ScholarEnrollmentService {
     status: 'DRAFT' | 'PENDING_REVIEW',
     auditResult: any,
   ) {
-    return this.prisma.termEnrollment.upsert({
+    const upserted = await this.prisma.termEnrollment.upsert({
       where: {
         scholar_profile_id_academic_year_semester: {
           scholar_profile_id: scholarProfileId,
@@ -844,6 +1061,27 @@ export class ScholarEnrollmentService {
         soa_document: true,
       },
     });
+
+    const otherDrafts = await this.prisma.termEnrollment.findMany({
+      where: {
+        scholar_profile_id: scholarProfileId,
+        status: 'DRAFT',
+      },
+    });
+    if (Array.isArray(otherDrafts)) {
+      for (const od of otherDrafts) {
+        if (
+          od.academic_year !== dto.academic_year ||
+          od.semester !== dto.semester
+        ) {
+          await this.prisma.termEnrollment.delete({
+            where: { enrollment_id: od.enrollment_id },
+          });
+        }
+      }
+    }
+
+    return upserted;
   }
 
   // 5. Save or update draft enrollment without submitting
@@ -923,13 +1161,18 @@ export class ScholarEnrollmentService {
     docType: 'cor' | 'soa' | 'consolidated',
   ) {
     const scholar = await this.getScholarProfile(userId);
-    const draft = await this.prisma.termEnrollment.findFirst({
-      where: {
-        scholar_profile_id: scholar.profile_id,
-        status: 'DRAFT',
-      },
-      orderBy: { created_at: 'desc' },
-    });
+    const consolidatedDraft = await this.consolidateScholarDrafts(
+      scholar.profile_id,
+    );
+    const draft =
+      consolidatedDraft ||
+      (await this.prisma.termEnrollment.findFirst({
+        where: {
+          scholar_profile_id: scholar.profile_id,
+          status: 'DRAFT',
+        },
+        orderBy: { created_at: 'desc' },
+      }));
 
     if (!draft) {
       return { success: true, message: 'No active draft found to clear.' };

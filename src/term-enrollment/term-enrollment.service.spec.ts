@@ -289,6 +289,68 @@ describe('TermEnrollment Services', () => {
         }),
       );
     });
+
+    it('extracts Summer single-year academic_year and separates UM numeric class codes from subject codes', async () => {
+      mockLlamaExtract.extractEnrollmentCorData.mockResolvedValue({
+        detected_document_type: 'CERTIFICATE_OF_REGISTRATION',
+        student_name: 'Sanao, Jeriel Lian',
+        student_number: '543797',
+        academic_year: undefined,
+        semester: 'Summer 2024',
+        year_level: '4th Year',
+        total_units: 9.0,
+        subjects: [
+          {
+            subject_code: '11040',
+            descriptive_title: 'GE 5 SCIENCE, TECHNOLOGY AND SOCIETY',
+            units: 3.0,
+          },
+          {
+            subject_code: '11065',
+            descriptive_title: 'GE\n11 THE ENTREPRENEURIAL MINDS',
+            units: 3.0,
+          },
+          {
+            subject_code: 'GE 20',
+            descriptive_title: 'GE 20 READING VISUAL ARTS',
+            section: '11066',
+            units: 3.0,
+          },
+        ],
+      });
+
+      const result = await ocrService.parseCor(ocrInput);
+
+      expect(result.academic_year).toBe('2024');
+      expect(result.semester).toBe('Summer');
+      expect(result.year_level).toBe(4);
+      expect(result.subjects).toEqual([
+        {
+          subject_code: 'GE 5',
+          descriptive_title: 'SCIENCE, TECHNOLOGY AND SOCIETY',
+          section: '11040',
+          schedule: undefined,
+          room: undefined,
+          units: 3,
+        },
+        {
+          subject_code: 'GE 11',
+          descriptive_title: 'THE ENTREPRENEURIAL MINDS',
+          section: '11065',
+          schedule: undefined,
+          room: undefined,
+          units: 3,
+        },
+        {
+          subject_code: 'GE 20',
+          descriptive_title: 'READING VISUAL ARTS',
+          section: '11066',
+          schedule: undefined,
+          room: undefined,
+          units: 3,
+        },
+      ]);
+    });
   });
 
   describe('EnrollmentOcrService.parseSoa', () => {

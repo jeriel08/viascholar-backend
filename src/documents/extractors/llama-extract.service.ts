@@ -82,7 +82,7 @@ const DOCUMENT_DATA_SCHEMA = {
     academic_year: {
       type: 'string',
       description:
-        'School year / Academic year (e.g., "2024-2025"). Remove prefixes like "A.Y.", "AY", "S.Y.", "SY".',
+        'School year / Academic year (e.g., "2023-2024", "2024-2025", or single 4-digit year "2024" for "Summer 2024"). Remove prefixes like "A.Y.", "AY", "S.Y.", "SY".',
     },
     semester: {
       type: 'string',
@@ -659,6 +659,46 @@ STRICT EXTRACTION INSTRUCTIONS:
       systemPrompt,
     );
 
+    let normalizedAy = rawData.academic_year;
+    let normalizedSem = rawData.semester;
+    if (!normalizedAy && typeof normalizedSem === 'string') {
+      const rangeMatch = normalizedSem.match(
+        /\b(20\d{2})\s*[-/]\s*(\d{2,4})\b/,
+      );
+      if (rangeMatch) {
+        const y1 = rangeMatch[1];
+        const y2 =
+          rangeMatch[2].length === 2 ? `20${rangeMatch[2]}` : rangeMatch[2];
+        normalizedAy = `${y1}-${y2}`;
+      } else {
+        const singleMatch = normalizedSem.match(/\b(20\d{2})\b/);
+        if (singleMatch) {
+          normalizedAy = singleMatch[1];
+        }
+      }
+    } else if (typeof normalizedAy === 'string') {
+      const rangeMatch = normalizedAy.match(
+        /\b(20\d{2})\s*[-/]\s*(\d{2,4})\b/,
+      );
+      if (rangeMatch) {
+        const y1 = rangeMatch[1];
+        const y2 =
+          rangeMatch[2].length === 2 ? `20${rangeMatch[2]}` : rangeMatch[2];
+        normalizedAy = `${y1}-${y2}`;
+      } else {
+        const singleMatch = normalizedAy.match(/\b(20\d{2})\b/);
+        if (singleMatch && /summer|midyear/i.test(normalizedAy)) {
+          normalizedAy = singleMatch[1];
+        }
+      }
+    }
+    if (
+      typeof normalizedSem === 'string' &&
+      /^(summer|midyear)\s+20\d{2}$/i.test(normalizedSem.trim())
+    ) {
+      normalizedSem = 'Summer';
+    }
+
     return {
       detected_document_type: rawData.detected_document_type,
       student_name: rawData.student_name,
@@ -670,8 +710,8 @@ STRICT EXTRACTION INSTRUCTIONS:
       section: rawData.section,
       has_signature: rawData.has_signature,
       general_average: rawData.general_average,
-      academic_year: rawData.academic_year,
-      semester: rawData.semester,
+      academic_year: normalizedAy,
+      semester: normalizedSem,
       term: rawData.term,
       first_sem_average: rawData.first_sem_average,
       second_sem_average: rawData.second_sem_average,
@@ -793,7 +833,17 @@ CRITICAL DOCUMENT TYPE CLASSIFICATION:
 2. Set is_class_schedule to true ONLY if the document explicitly contains registered/enrolled subjects or course schedule table.
 3. Set is_assessment_form to true if the document is primarily an assessment of fees or statement of account.
 4. DO NOT treat tuition fee lines, miscellaneous fees, or payment breakdowns as academic subjects! Only parse actual course offerings/subjects (e.g. Computer Programming, Data Structures, English, Calculus).
-5. FAST WRONG DOCUMENT CLASSIFICATION: If the document is NOT a Certificate of Registration or Class Schedule (e.g. it is an ID card, receipt, grade report, or other unrelated document), immediately classify detected_document_type as 'OTHER' or 'STATEMENT_OF_ACCOUNT' and return subjects as an empty array ([]). Do NOT spend extra time searching or hallucinating subjects if none are present.`;
+5. FAST WRONG DOCUMENT CLASSIFICATION: If the document is NOT a Certificate of Registration or Class Schedule (e.g. it is an ID card, receipt, grade report, or other unrelated document), immediately classify detected_document_type as 'OTHER' or 'STATEMENT_OF_ACCOUNT' and return subjects as an empty array ([]). Do NOT spend extra time searching or hallucinating subjects if none are present.
+6. UNIVERSITY PORTAL CLASS SCHEDULE COLUMNS ([Code | Title | Description]):
+   - On University of Mindanao (UM) and similar student portal "Official Class Schedule" printouts, the table columns are: [Code | Title | Description | Units | Day | Term | Time | Room | Program | Status].
+   - The 'Code' column contains a 4- to 5-digit numeric class/offering code (e.g., '11040', '11065', '11066', '6471', '3248'). Extract this numeric code into 'section', NEVER into 'subject_code'.
+   - The 'Title' column contains the actual alphanumeric Course/Subject Code (e.g., 'GE 5', 'GE 11', 'GE 20', 'UGE 1', 'PAHF 2', 'CCE 103', 'IT 1a', 'IT 21'). Note that in narrow columns, the letters and numbers may wrap across two lines (e.g., 'GE' on line 1 and '5' on line 2 -> 'GE 5'). Extract this as 'subject_code'.
+   - The 'Description' column contains the Descriptive Title (e.g., 'SCIENCE, TECHNOLOGY AND SOCIETY', 'THE ENTREPRENEURIAL MINDS', 'READING VISUAL ARTS'). Extract ONLY this into 'descriptive_title' without repeating the subject code.
+7. ACADEMIC YEAR & SUMMER TERM EXTRACTION:
+   - Check the term header (e.g., 'Summer 2024', 'Second Semester 2023-24', 'First Semester 2024-25', 'Summer 2026').
+   - When the term is 'Summer 2024' (or any single-year Summer/Midyear term), extract academic_year as '2024' and semester as 'Summer'.
+   - When the term has a 2-digit ending year (e.g. '2023-24' or '2024-25'), expand academic_year to '2023-2024' or '2024-2025'.
+   - NEVER invent '2026-2027' when another year is printed on the document.`;
 
     const rawData = await this.executeExtraction<any>(
       input,
@@ -817,7 +867,12 @@ CRITICAL DOCUMENT TYPE CLASSIFICATION:
 2. Set is_assessment_form to true ONLY if the document explicitly contains tuition fees, assessment breakdown, or balance due.
 3. Set is_class_schedule to true if the document is primarily a class schedule.
 4. If the document is purely a class schedule with no tuition fees or balance due, classify it as 'CERTIFICATE_OF_REGISTRATION' and set is_assessment_form to false.
-5. FAST WRONG DOCUMENT CLASSIFICATION: If the document is NOT a Statement of Account, Tuition Fee Assessment, or Student Ledger (e.g. it is an ID card, grade report, receipt, or unrelated document), immediately classify detected_document_type as 'OTHER' or 'CERTIFICATE_OF_REGISTRATION' and return total_assessment as 0. Do NOT spend extra time searching or hallucinating fees if none are present.`;
+5. FAST WRONG DOCUMENT CLASSIFICATION: If the document is NOT a Statement of Account, Tuition Fee Assessment, or Student Ledger (e.g. it is an ID card, grade report, receipt, or unrelated document), immediately classify detected_document_type as 'OTHER' or 'CERTIFICATE_OF_REGISTRATION' and return total_assessment as 0. Do NOT spend extra time searching or hallucinating fees if none are present.
+6. ACADEMIC YEAR & SUMMER TERM EXTRACTION:
+   - Check the term header (e.g., 'Summer 2024', 'Second Semester 2023-24', 'First Semester 2024-25', 'Summer 2026').
+   - When the term is 'Summer 2024' (or any single-year Summer/Midyear term), extract academic_year as '2024' and semester as 'Summer'.
+   - When the term has a 2-digit ending year (e.g. '2023-24' or '2024-25'), expand academic_year to '2023-2024' or '2024-2025'.
+   - NEVER invent '2026-2027' when another year is printed on the document.`;
 
     const rawData = await this.executeExtraction<any>(
       input,
@@ -831,7 +886,9 @@ CRITICAL DOCUMENT TYPE CLASSIFICATION:
     input: InputDocumentFile | InputDocumentFile[],
   ): Promise<any> {
     const systemPrompt = `You are an expert academic and financial document OCR AI specializing in consolidated Philippine university enrollment & assessment forms (e.g. UM Certificate of Matriculation, HCDC Registration/Assessment Form).
-Extract the student identification, semester, enrolled subjects table, and financial tuition assessment breakdown. Set detected_document_type to 'CONSOLIDATED_ENROLLMENT'.`;
+Extract the student identification, semester, enrolled subjects table, and financial tuition assessment breakdown. Set detected_document_type to 'CONSOLIDATED_ENROLLMENT'.
+In tables with [Code | Title | Description], 'Code' is the 4-5 digit numeric section/offering code (put in 'section'), 'Title' is the alphanumeric Course/Subject Code (put in 'subject_code', e.g., 'GE 5'), and 'Description' is the descriptive title (put in 'descriptive_title').
+For 'Summer 2024' (or single-year Summer terms), extract academic_year as '2024' and semester as 'Summer'. For '2023-24', expand academic_year to '2023-2024'.`;
 
     const rawData = await this.executeExtraction<any>(
       input,
@@ -849,7 +906,7 @@ IMPORTANT EXTRACTION GUIDELINES:
 1. Philippine university receipts (e.g. from University of Mindanao / UM, Ateneo, UIC, USEP, HCDC) are frequently printed on continuous pre-printed dot-matrix forms or thermal paper slips.
 2. Text and numbers may be printed out of place, misaligned with pre-printed form boxes, or overlapping cashier stamps ("PAID", date stamps, cashier signature).
 3. The Official Receipt Number (OR #) is frequently composite, hyphenated, or alphanumeric with trailing letters (e.g. '46127-004084B', '109284-B', '0048192'). Extract the complete, exact alphanumeric string. CRITICAL: Do NOT confuse the pre-printed booklet/serial number (e.g. '3236889' printed in red at the top right) with the university cashier's electronic OR number (e.g. '46127-004084B'). Always prioritize the cashier-printed or portal-recorded alphanumeric transaction code (often formatted as StudentID-SequenceSeries like '46127-004084B' or 'OR-102948') over any pre-printed booklet sequence number.
-4. Extract the Student ID Number (e.g. '46127' or '2021-00123'), full Student/Payor Name, total numeric Amount Paid (PHP), cashier transaction date (YYYY-MM-DD), issuing University Name, Payment Mode (e.g., 'CHECK', 'CASH'), Academic Year / School Year (e.g. '2026-2027'), and Term / Semester (e.g. '1st Semester', '2nd Semester', 'Summer').`;
+4. Extract the Student ID Number (e.g. '46127' or '2021-00123'), full Student/Payor Name, total numeric Amount Paid (PHP), cashier transaction date (YYYY-MM-DD), issuing University Name, Payment Mode (e.g., 'CHECK', 'CASH'), Academic Year / School Year (e.g. '2023-2024', or single 4-digit year '2024' when printed as 'Summer/2024' or 'Summer 2024'), and Term / Semester (e.g. '1st Semester', '2nd Semester', 'Summer').`;
 
     const rawData = await this.executeExtraction<ExtractedReceiptData>(
       input,
@@ -879,6 +936,11 @@ IMPORTANT EXTRACTION GUIDELINES:
           if (y1.length === 2) y1 = `20${y1}`;
           if (y2.length === 2) y2 = `20${y2}`;
           rawData.academic_year = `${y1}-${y2}`;
+        } else {
+          const singleYearMatch = rawData.remarks.match(/(?:summer|midyear)\s*[/\-\s]*\s*(20\d{2})/i);
+          if (singleYearMatch) {
+            rawData.academic_year = singleYearMatch[1];
+          }
         }
       }
     }
