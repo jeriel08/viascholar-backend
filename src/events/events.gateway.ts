@@ -32,6 +32,8 @@ interface SocketHandshakeAuth {
 
 @Injectable()
 @WebSocketGateway({
+  pingInterval: 30000,
+  pingTimeout: 120000,
   cors: {
     origin: (
       origin: string | undefined,
