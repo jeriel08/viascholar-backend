@@ -458,7 +458,7 @@ describe('AcademicAppealService', () => {
       });
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { user_id: 7 },
-        data: { is_active: false },
+        data: { is_active: true },
       });
       expect(audit.log).toHaveBeenCalledWith(
         42,

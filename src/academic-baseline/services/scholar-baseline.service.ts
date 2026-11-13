@@ -641,10 +641,92 @@ export class ScholarBaselineService {
       currentGwa = threshold;
     }
 
-    // 3. Academic Standing Alert & Flag
+    // 3. Academic Standing Alert & Flag (with self-heal for exhausted 2nd-chance probation)
+    const priorResolvedAppeal = latestGradeReport
+      ? scholar.grade_reports.some(
+          (gr) =>
+            gr.report_id !== latestGradeReport.report_id &&
+            (gr.appeal_status === 'APPROVED' || gr.appeal_status === 'DENIED'),
+        )
+      : scholar.grade_reports.some(
+          (gr) => gr.appeal_status === 'APPROVED' || gr.appeal_status === 'DENIED',
+        );
+
+    if (
+      latestGradeReport &&
+      latestGradeReport.status === 'FLAGGED' &&
+      (latestGradeReport.appeal_status === 'NONE' ||
+        !latestGradeReport.appeal_status) &&
+      priorResolvedAppeal
+    ) {
+      const archivedAt = (scholar as any).archived_at ?? new Date();
+      const archiveReason =
+        (scholar as any).archive_reason ?? 'FAILED_SECOND_CHANCE';
+      const archiveNotes =
+        (scholar as any).archive_notes ??
+        `Failed 2nd-chance probation during ${latestGradeReport.academic_year} (${latestGradeReport.semester}) with GWA ${Number(latestGradeReport.gpa).toFixed(2)}.`;
+      const decisionNotes =
+        'Second Chance probation exhausted. Automatic archival triggered due to subsequent academic retention deficiency.';
+
+      if (typeof (this.prisma as any).gradeReport?.update === 'function') {
+        await (this.prisma as any).gradeReport.update({
+          where: { report_id: latestGradeReport.report_id },
+          data: {
+            appeal_status: 'DENIED',
+            appeal_reviewed_at: archivedAt,
+            appeal_decision_notes: decisionNotes,
+          },
+        });
+      }
+      if (typeof (this.prisma as any).scholarProfile?.update === 'function') {
+        await (this.prisma as any).scholarProfile.update({
+          where: { profile_id: scholar.profile_id },
+          data: {
+            academic_baseline_status: 'DISCONTINUED',
+            archived_at: archivedAt,
+            archive_reason: archiveReason,
+            archive_notes: archiveNotes,
+          },
+        });
+      }
+      if (typeof (this.prisma as any).contract?.updateMany === 'function') {
+        await (this.prisma as any).contract.updateMany({
+          where: {
+            scholar_profile_id: scholar.profile_id,
+            status: { in: ['SIGNED', 'PENDING'] },
+          },
+          data: { status: 'TERMINATED' },
+        });
+      }
+      if (typeof (this.prisma as any).disbursement?.updateMany === 'function') {
+        await (this.prisma as any).disbursement.updateMany({
+          where: {
+            scholar_profile_id: scholar.profile_id,
+            status: { in: ['PENDING', 'AUTHORIZED'] },
+          },
+          data: {
+            status: 'CANCELLED',
+            remarks: `Scholarship archived: Failed 2nd-chance probation for ${latestGradeReport.academic_year} ${latestGradeReport.semester}.`,
+          },
+        });
+      }
+
+      latestGradeReport.appeal_status = 'DENIED';
+      latestGradeReport.appeal_decision_notes = decisionNotes;
+      (scholar as any).academic_baseline_status = 'DISCONTINUED';
+      (scholar as any).archived_at = archivedAt;
+      (scholar as any).archive_reason = archiveReason;
+      (scholar as any).archive_notes = archiveNotes;
+    }
+
+    const isDiscontinued =
+      scholar.academic_baseline_status === 'DISCONTINUED' ||
+      Boolean((scholar as any).archived_at) ||
+      latestGradeReport?.appeal_status === 'DENIED';
     const isOnProbation =
-      scholar.academic_baseline_status === 'ON_PROBATION' ||
-      scholar.grade_reports.some((gr) => gr.appeal_status === 'APPROVED');
+      !isDiscontinued &&
+      (scholar.academic_baseline_status === 'ON_PROBATION' ||
+        scholar.grade_reports.some((gr) => gr.appeal_status === 'APPROVED'));
     const hasPendingAppeal =
       latestGradeReport?.appeal_status === 'PENDING_GRANTOR';
     const isAppealDenied = latestGradeReport?.appeal_status === 'DENIED';
@@ -654,15 +736,36 @@ export class ScholarBaselineService {
         latestGradeReport.status === 'FLAGGED');
 
     let standingType:
-      'GOOD_STANDING' | 'PROBATION' | 'ACTION_REQUIRED' | 'PENDING_REVIEW' =
-      'GOOD_STANDING';
-    if (isOnProbation) {
+      | 'GOOD_STANDING'
+      | 'PROBATION'
+      | 'ACTION_REQUIRED'
+      | 'PENDING_REVIEW'
+      | 'DISCONTINUED' = 'GOOD_STANDING';
+    if (isDiscontinued) {
+      standingType = 'DISCONTINUED';
+    } else if (isOnProbation) {
       standingType = 'PROBATION';
     } else if (hasPendingAppeal) {
       standingType = 'PENDING_REVIEW';
     } else if (isFlagged || isAppealDenied) {
       standingType = 'ACTION_REQUIRED';
     }
+
+    const [grantorUser, coordinatorUser] =
+      typeof (this.prisma as any).user?.findFirst === 'function'
+        ? await Promise.all([
+            (this.prisma as any).user.findFirst({
+              where: { role: 'GRANTOR', is_active: true },
+              orderBy: { user_id: 'asc' },
+              select: { email: true },
+            }),
+            (this.prisma as any).user.findFirst({
+              where: { role: 'COORDINATOR', is_active: true },
+              orderBy: { user_id: 'asc' },
+              select: { email: true },
+            }),
+          ])
+        : [null, null];
 
     // 4. Term Enrollment
     const latestEnrollment = scholar.enrollments[0] || null;
@@ -752,6 +855,9 @@ export class ScholarBaselineService {
         course_of_study: scholar.course_of_study,
         current_year_level: scholar.current_year_level || 1,
         academic_baseline_status: scholar.academic_baseline_status,
+        archived_at: (scholar as any).archived_at ?? null,
+        archive_reason: (scholar as any).archive_reason ?? null,
+        archive_notes: (scholar as any).archive_notes ?? null,
         avatar_url: scholar.avatar_url,
         banner_url: scholar.banner_url,
       },
@@ -761,8 +867,14 @@ export class ScholarBaselineService {
         gwa: Number(currentGwa.toFixed(2)),
         threshold: Number(threshold.toFixed(2)),
         is_on_probation: isOnProbation,
+        is_discontinued: isDiscontinued,
+        second_chance_exhausted:
+          Boolean(priorResolvedAppeal) ||
+          (scholar as any).archive_reason === 'FAILED_SECOND_CHANCE',
         is_flagged: Boolean(isFlagged),
         has_pending_appeal: Boolean(hasPendingAppeal),
+        grantor_email: grantorUser?.email || 'grantor@viascholar.com',
+        coordinator_email: coordinatorUser?.email || 'coordinator@viascholar.com',
         latest_report: latestGradeReport
           ? {
               report_id: latestGradeReport.report_id,

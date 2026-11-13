@@ -24,7 +24,7 @@ export class GradeReportsService {
       throw new NotFoundException('Scholar profile not found.');
     }
 
-    return this.prisma.gradeReport.findMany({
+    const reports = await this.prisma.gradeReport.findMany({
       where: { scholar_profile_id: scholar.profile_id },
       orderBy: { submitted_at: 'desc' },
       include: {
@@ -53,6 +53,111 @@ export class GradeReportsService {
         },
       },
     });
+
+    if (reports.length > 0) {
+      const latestReport = reports[0];
+      const priorResolvedAppeal = reports.some(
+        (gr) =>
+          gr.report_id !== latestReport.report_id &&
+          (gr.appeal_status === 'APPROVED' || gr.appeal_status === 'DENIED'),
+      );
+
+      if (
+        latestReport.status === 'FLAGGED' &&
+        (latestReport.appeal_status === 'NONE' || !latestReport.appeal_status) &&
+        priorResolvedAppeal
+      ) {
+        const archivedAt = (scholar as any).archived_at ?? new Date();
+        const archiveReason =
+          (scholar as any).archive_reason ?? 'FAILED_SECOND_CHANCE';
+        const archiveNotes =
+          (scholar as any).archive_notes ??
+          `Failed 2nd-chance probation during ${latestReport.academic_year} (${latestReport.semester}) with GWA ${Number(latestReport.gpa).toFixed(2)}.`;
+        const decisionNotes =
+          'Second Chance probation exhausted. Automatic archival triggered due to subsequent academic retention deficiency.';
+
+        if (typeof (this.prisma as any).gradeReport?.update === 'function') {
+          await (this.prisma as any).gradeReport.update({
+            where: { report_id: latestReport.report_id },
+            data: {
+              appeal_status: 'DENIED',
+              appeal_reviewed_at: archivedAt,
+              appeal_decision_notes: decisionNotes,
+            },
+          });
+        }
+        if (typeof (this.prisma as any).scholarProfile?.update === 'function') {
+          await (this.prisma as any).scholarProfile.update({
+            where: { profile_id: scholar.profile_id },
+            data: {
+              academic_baseline_status: 'DISCONTINUED',
+              archived_at: archivedAt,
+              archive_reason: archiveReason,
+              archive_notes: archiveNotes,
+            },
+          });
+        }
+        if (typeof (this.prisma as any).contract?.updateMany === 'function') {
+          await (this.prisma as any).contract.updateMany({
+            where: {
+              scholar_profile_id: scholar.profile_id,
+              status: { in: ['SIGNED', 'PENDING'] },
+            },
+            data: { status: 'TERMINATED' },
+          });
+        }
+        if (
+          typeof (this.prisma as any).disbursement?.updateMany === 'function'
+        ) {
+          await (this.prisma as any).disbursement.updateMany({
+            where: {
+              scholar_profile_id: scholar.profile_id,
+              status: { in: ['PENDING', 'AUTHORIZED'] },
+            },
+            data: {
+              status: 'CANCELLED',
+              remarks: `Scholarship archived: Failed 2nd-chance probation for ${latestReport.academic_year} ${latestReport.semester}.`,
+            },
+          });
+        }
+
+        latestReport.appeal_status = 'DENIED';
+        latestReport.appeal_decision_notes = decisionNotes;
+        if (latestReport.scholar_profile) {
+          (latestReport.scholar_profile as any).academic_baseline_status =
+            'DISCONTINUED';
+          (latestReport.scholar_profile as any).archived_at = archivedAt;
+          (latestReport.scholar_profile as any).archive_reason = archiveReason;
+          (latestReport.scholar_profile as any).archive_notes = archiveNotes;
+        }
+      }
+    }
+
+    const [grantorUser, coordinatorUser] =
+      typeof (this.prisma as any).user?.findFirst === 'function'
+        ? await Promise.all([
+            (this.prisma as any).user.findFirst({
+              where: { role: 'GRANTOR', is_active: true },
+              orderBy: { user_id: 'asc' },
+              select: { email: true },
+            }),
+            (this.prisma as any).user.findFirst({
+              where: { role: 'COORDINATOR', is_active: true },
+              orderBy: { user_id: 'asc' },
+              select: { email: true },
+            }),
+          ])
+        : [null, null];
+
+    const grantorEmail = grantorUser?.email || 'grantor@viascholar.com';
+    const coordinatorEmail =
+      coordinatorUser?.email || 'coordinator@viascholar.com';
+
+    return reports.map((r) => ({
+      ...r,
+      grantor_email: grantorEmail,
+      coordinator_email: coordinatorEmail,
+    }));
   }
 
   // Staff views all semestral grade reports across scholars

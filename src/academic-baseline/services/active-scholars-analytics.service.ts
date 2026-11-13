@@ -11,6 +11,7 @@ export class ActiveScholarsAnalyticsService {
   async getCoordinatorActiveScholars() {
     const scholars = await this.prisma.scholarProfile.findMany({
       where: {
+        archived_at: null,
         OR: [
           { user: { role: 'SCHOLAR' } },
           { applications: { some: { status: 'APPROVED' } } },

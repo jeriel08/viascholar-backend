@@ -877,6 +877,9 @@ describe('ScholarBaselineService', () => {
         course_of_study: 'BSIT',
         current_year_level: 3,
         academic_baseline_status: 'PENDING_COORDINATOR_REVIEW',
+        archived_at: null,
+        archive_reason: null,
+        archive_notes: null,
         avatar_url: 'https://cdn.test/avatar.png',
         banner_url: null,
       });
@@ -1077,9 +1080,11 @@ describe('ScholarBaselineService', () => {
       expect(result.academic_standing.has_pending_appeal).toBe(true);
     });
 
-    it('marks a denied appeal as action required', async () => {
+    it('marks a denied appeal as discontinued and includes grantor/coordinator contact info', async () => {
       const result = await loadDashboard({
-        academic_baseline_status: 'PENDING_COORDINATOR_REVIEW',
+        academic_baseline_status: 'DISCONTINUED',
+        archived_at: new Date('2026-06-01T00:00:00.000Z'),
+        archive_reason: 'FAILED_SECOND_CHANCE',
         grade_reports: [
           makeGradeReport({
             appeal_status: 'DENIED',
@@ -1088,10 +1093,48 @@ describe('ScholarBaselineService', () => {
         ],
       });
 
-      expect(result.academic_standing.standing_type).toBe('ACTION_REQUIRED');
+      expect(result.academic_standing.standing_type).toBe('DISCONTINUED');
+      expect(result.academic_standing.is_discontinued).toBe(true);
       expect(result.academic_standing.latest_report).toMatchObject({
         appeal_status: 'DENIED',
         appeal_decision_notes: 'Insufficient evidence',
+      });
+    });
+
+    it('self-heals an unarchived 2nd-probation failure into DISCONTINUED standing', async () => {
+      const result = await loadDashboard({
+        academic_baseline_status: 'ON_PROBATION',
+        grade_reports: [
+          makeGradeReport({
+            report_id: 2,
+            academic_year: '2024',
+            semester: 'Summer',
+            gpa: '3.00',
+            status: 'FLAGGED',
+            is_eligible: false,
+            appeal_status: 'NONE',
+          }),
+          makeGradeReport({
+            report_id: 1,
+            academic_year: '2023-2024',
+            semester: '1st Semester',
+            gpa: '2.95',
+            status: 'FLAGGED',
+            is_eligible: false,
+            appeal_status: 'APPROVED',
+          }),
+        ],
+      });
+
+      expect(result.academic_standing.standing_type).toBe('DISCONTINUED');
+      expect(result.academic_standing.second_chance_exhausted).toBe(true);
+      expect(result.profile.archive_reason).toBe('FAILED_SECOND_CHANCE');
+      expect(prisma.scholarProfile.update).toHaveBeenCalledWith({
+        where: { profile_id: 11 },
+        data: objectMatching({
+          academic_baseline_status: 'DISCONTINUED',
+          archive_reason: 'FAILED_SECOND_CHANCE',
+        }),
       });
     });
 

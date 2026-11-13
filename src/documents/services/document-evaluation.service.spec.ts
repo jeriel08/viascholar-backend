@@ -34,6 +34,16 @@ const createPrismaMock = () => ({
   },
   gradeReport: {
     create: vi.fn(),
+    findFirst: vi.fn(),
+  },
+  scholarProfile: {
+    update: vi.fn(),
+  },
+  contract: {
+    updateMany: vi.fn(),
+  },
+  disbursement: {
+    updateMany: vi.fn(),
   },
 });
 
@@ -68,6 +78,7 @@ const createEventsMock = () => ({
 const createNotificationsMock = () => ({
   notifyUser: vi.fn(),
   notifyStaff: vi.fn(),
+  createForRoles: vi.fn(),
 });
 
 const makeDoc = (overrides: Record<string, unknown> = {}) => ({
@@ -148,6 +159,10 @@ describe('DocumentEvaluationService', () => {
       },
     ]);
     prisma.termEnrollment.update.mockResolvedValue({});
+    prisma.gradeReport.findFirst.mockResolvedValue(null);
+    prisma.scholarProfile.update.mockResolvedValue({});
+    prisma.contract.updateMany.mockResolvedValue({ count: 0 });
+    prisma.disbursement.updateMany.mockResolvedValue({ count: 0 });
     prisma.gradeReport.create.mockImplementation(
       ({
         data,
@@ -474,6 +489,75 @@ describe('DocumentEvaluationService', () => {
         '2026-2027',
         '1st Semester',
         null,
+      );
+    });
+
+    it('auto-archives and notifies Grantor and Coordinator when an ON_PROBATION scholar fails again', async () => {
+      prisma.scholarDocument.findUnique.mockResolvedValue(
+        makeDoc({
+          scholar_profile: {
+            profile_id: 11,
+            user_id: 7,
+            first_name: 'Juan',
+            last_name: 'Dela Cruz',
+            school_id: 3,
+            school_name: 'University of Mindanao',
+            academic_baseline_status: 'ON_PROBATION',
+            user: { user_id: 7, role: 'SCHOLAR' },
+          },
+        }),
+      );
+      gradeCalc.computeGwa.mockReturnValue({
+        computedGwa: 3.25,
+        hasFailedGrade: true,
+        totalUnits: 6,
+      });
+      settings.evaluateGwaThreshold.mockReturnValue(false);
+
+      const result = await service.verifyAndEvaluate(7, 55, makeDto());
+
+      expect(result.second_chance_exhausted).toBe(true);
+      expect(prisma.gradeReport.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: objectMatching({
+            status: 'FLAGGED',
+            appeal_status: 'DENIED',
+          }),
+        }),
+      );
+      expect(prisma.scholarProfile.update).toHaveBeenCalledWith({
+        where: { profile_id: 11 },
+        data: objectMatching({
+          academic_baseline_status: 'DISCONTINUED',
+          archive_reason: 'FAILED_SECOND_CHANCE',
+        }),
+      });
+      expect(prisma.contract.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { scholar_profile_id: 11, status: { in: ['SIGNED', 'PENDING'] } },
+          data: { status: 'TERMINATED' },
+        }),
+      );
+      expect(prisma.disbursement.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { scholar_profile_id: 11, status: { in: ['PENDING', 'AUTHORIZED'] } },
+          data: objectMatching({ status: 'CANCELLED' }),
+        }),
+      );
+      expect(events.emitToStaff).toHaveBeenCalledWith(
+        'scholar:archived',
+        objectMatching({
+          profile_id: 11,
+          archive_reason: 'FAILED_SECOND_CHANCE',
+        }),
+      );
+      expect(notifications.createForRoles).toHaveBeenCalledWith(
+        ['GRANTOR', 'COORDINATOR'],
+        objectMatching({ title: 'Scholar Archived: 2nd Chance Failed' }),
+      );
+      expect(notifications.notifyUser).toHaveBeenCalledWith(
+        7,
+        objectMatching({ title: 'Scholarship Archived: 2nd Chance Exhausted' }),
       );
     });
   });

@@ -37,7 +37,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
 
     if (!user.is_active) {
-      if (user.role === 'APPLICANT' && user.scholar_profile?.archived_at) {
+      if (
+        (user.role === 'APPLICANT' || user.role === 'SCHOLAR') &&
+        user.scholar_profile?.archived_at
+      ) {
         await this.prisma.user.update({
           where: { user_id: user.user_id },
           data: { is_active: true },

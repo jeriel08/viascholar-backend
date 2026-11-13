@@ -165,8 +165,11 @@ export class AuthService {
     }
 
     if (!user.is_active) {
-      // Allow archived/rejected applicants to log in so they can view the company verdict on Stage 3
-      if (user.role === Role.APPLICANT && user.scholar_profile?.archived_at) {
+      // Allow archived applicants & scholars to log in for read-only status/records view
+      if (
+        (user.role === Role.APPLICANT || user.role === Role.SCHOLAR) &&
+        user.scholar_profile?.archived_at
+      ) {
         await this.prisma.user.update({
           where: { user_id: user.user_id },
           data: { is_active: true },
@@ -222,8 +225,11 @@ export class AuthService {
     }
 
     if (!user.is_active) {
-      // Allow archived/rejected applicants to log in so they can view the company verdict on Stage 3
-      if (user.role === Role.APPLICANT && user.scholar_profile?.archived_at) {
+      // Allow archived applicants & scholars to log in for read-only status/records view
+      if (
+        (user.role === Role.APPLICANT || user.role === Role.SCHOLAR) &&
+        user.scholar_profile?.archived_at
+      ) {
         await this.prisma.user.update({
           where: { user_id: user.user_id },
           data: { is_active: true },

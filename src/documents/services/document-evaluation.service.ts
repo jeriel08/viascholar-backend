@@ -2,11 +2,13 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { SettingsService } from '../../settings/settings.service.js';
 import { AuditService } from '../../audit/audit.service.js';
 import { EventsGateway } from '../../events/events.gateway.js';
+import { AppCacheService } from '../../common/cache/app-cache.service.js';
 import { GradeCalculatorService } from './grade-calculator.service.js';
 import { ProspectusTransitionService } from './prospectus-transition.service.js';
 import { DocumentConfirmationService } from './document-confirmation.service.js';
@@ -57,6 +59,7 @@ export class DocumentEvaluationService {
     private readonly confirmationService: DocumentConfirmationService,
     private readonly eventsGateway: EventsGateway,
     private readonly notificationsService: NotificationsService,
+    @Optional() private readonly cacheService?: AppCacheService,
   ) {}
 
   // Scholar confirms/corrects OCR-extracted fields
@@ -218,6 +221,21 @@ export class DocumentEvaluationService {
       }
     }
 
+    // Check if the scholar has already used their 1-time Second Chance Appeal
+    const priorResolvedAppeal =
+      !isEligible && typeof this.prisma.gradeReport?.findFirst === 'function'
+        ? await this.prisma.gradeReport.findFirst({
+            where: {
+              scholar_profile_id: doc.scholar_profile_id,
+              appeal_status: { in: ['APPROVED', 'DENIED'] },
+            },
+          })
+        : null;
+    const isSecondChanceExhausted =
+      !isEligible &&
+      (doc.scholar_profile?.academic_baseline_status === 'ON_PROBATION' ||
+        Boolean(priorResolvedAppeal));
+
     // Create GradeReport record
     const report = await this.prisma.gradeReport.create({
       data: {
@@ -231,6 +249,15 @@ export class DocumentEvaluationService {
         evaluation_flag: evalFlag,
         reviewed_by_employee_id: employee.employee_id,
         term_enrollment_id: termEnrollment?.enrollment_id,
+        ...(isSecondChanceExhausted
+          ? {
+              appeal_status: 'DENIED',
+              appeal_reviewed_at: new Date(),
+              appeal_reviewed_by_employee_id: employee.employee_id,
+              appeal_decision_notes:
+                'Second Chance probation exhausted. Automatic archival triggered due to subsequent academic retention deficiency.',
+            }
+          : {}),
         grade_items: {
           create: gradeItems.map((i) => ({
             subject_code: String(i.subject_code || i.subject_name || 'N/A'),
@@ -242,6 +269,49 @@ export class DocumentEvaluationService {
       },
       include: { grade_items: true },
     });
+
+    // If scholar already used their 1-time Second Chance and failed again,
+    // automatically archive them (keeping user.is_active = true for read-only portal access)
+    // and terminate active contracts / cancel pending disbursements.
+    if (isSecondChanceExhausted) {
+      const archiveNotes = `Failed 2nd-chance probation during ${normalizedAY} (${normalizedSem}) with GWA ${computedGwa.toFixed(2)}. ${dto.notes || ''}`.trim();
+
+      if (typeof this.prisma.scholarProfile?.update === 'function') {
+        await this.prisma.scholarProfile.update({
+          where: { profile_id: doc.scholar_profile_id },
+          data: {
+            academic_baseline_status: 'DISCONTINUED',
+            archived_at: new Date(),
+            archived_by_user_id: coordinatorUserId,
+            archive_reason: 'FAILED_SECOND_CHANCE',
+            archive_notes: archiveNotes,
+          },
+        });
+      }
+
+      if (typeof this.prisma.contract?.updateMany === 'function') {
+        await this.prisma.contract.updateMany({
+          where: {
+            scholar_profile_id: doc.scholar_profile_id,
+            status: { in: ['SIGNED', 'PENDING'] },
+          },
+          data: { status: 'TERMINATED' },
+        });
+      }
+
+      if (typeof this.prisma.disbursement?.updateMany === 'function') {
+        await this.prisma.disbursement.updateMany({
+          where: {
+            scholar_profile_id: doc.scholar_profile_id,
+            status: { in: ['PENDING', 'AUTHORIZED'] },
+          },
+          data: {
+            status: 'CANCELLED',
+            remarks: `Scholarship archived: Failed 2nd-chance probation for ${normalizedAY} ${normalizedSem}.`,
+          },
+        });
+      }
+    }
 
     // Mark document as VERIFIED
     await this.prisma.scholarDocument.update({
@@ -297,59 +367,118 @@ export class DocumentEvaluationService {
       gwa: computedGwa,
       isEligible,
       evaluationFlag: evalFlag,
+      secondChanceExhausted: isSecondChanceExhausted,
       verifiedAt: new Date().toISOString(),
     };
     this.eventsGateway.emitToStaff('document:verified', verifyPayload);
     this.eventsGateway.emitToStaff('grade_report:verified', verifyPayload);
-    if (doc.scholar_profile?.user_id) {
-      this.eventsGateway.emitToUser(
-        doc.scholar_profile.user_id,
-        'document:verified',
-        verifyPayload,
-      );
-      this.eventsGateway.emitToUser(
-        doc.scholar_profile.user_id,
-        'grade_report:verified',
-        verifyPayload,
-      );
-      this.eventsGateway.emitToUser(
-        doc.scholar_profile.user_id,
-        'baseline:prospectus_processed',
-        verifyPayload,
+    if (isSecondChanceExhausted) {
+      const studentName =
+        `${doc.scholar_profile?.first_name || ''} ${doc.scholar_profile?.last_name || ''}`.trim() ||
+        'Scholar';
+
+      await this.auditService.log(
+        coordinatorUserId,
+        'SCHOLAR_ARCHIVED_SECOND_CHANCE_FAILED',
+        `Automatically archived scholar '${studentName}' (Profile #${doc.scholar_profile_id}) after failing 2nd-chance probation (${normalizedAY} ${normalizedSem}, GWA: ${computedGwa.toFixed(2)}).`,
       );
 
-      const isScholar = doc.scholar_profile?.user?.role === Role.SCHOLAR;
-      const isGradeAudit =
-        isScholar &&
-        [
-          'CCG',
-          'GRADE_REPORT',
-          'GRADE_SLIP',
-          'CERTIFIED_COPY_OF_GRADES',
-          'Certificate of Grades',
-        ].includes(doc.document_type);
+      this.eventsGateway.emitToStaff('scholar:archived', {
+        profile_id: doc.scholar_profile_id,
+        report_id: report.report_id,
+        archive_reason: 'FAILED_SECOND_CHANCE',
+      });
+      if (doc.scholar_profile?.user_id) {
+        this.eventsGateway.emitToUser(
+          doc.scholar_profile.user_id,
+          'scholar:archived',
+          {
+            profile_id: doc.scholar_profile_id,
+            report_id: report.report_id,
+            archive_reason: 'FAILED_SECOND_CHANCE',
+          },
+        );
+      }
 
-      void this.notificationsService.notifyUser(doc.scholar_profile.user_id, {
+      const staffNotif = {
+        title: 'Scholar Archived: 2nd Chance Failed',
+        message: `${studentName} failed retention requirements while on 2nd-chance probation (${normalizedAY} ${normalizedSem}, GWA: ${computedGwa.toFixed(2)}) and has been moved to the Archive.`,
+        category: 'academic',
+        link: '/grantArchive',
+      };
+      if (typeof this.notificationsService?.createForRoles === 'function') {
+        void this.notificationsService.createForRoles(
+          [Role.GRANTOR, Role.COORDINATOR],
+          staffNotif,
+        );
+      } else {
+        void this.notificationsService.notifyStaff(staffNotif);
+      }
+
+      if (doc.scholar_profile?.user_id) {
+        void this.notificationsService.notifyUser(doc.scholar_profile.user_id, {
+          title: 'Scholarship Archived: 2nd Chance Exhausted',
+          message: `Your grade report for ${normalizedAY} (${normalizedSem}) fell below the retention threshold after using your Second Chance Appeal. Your scholarship has been archived. You can still view your records and email the Grantor directly from your dashboard.`,
+          category: 'academic',
+          link: '/scholardashboard',
+        });
+      }
+    } else {
+      if (doc.scholar_profile?.user_id) {
+        this.eventsGateway.emitToUser(
+          doc.scholar_profile.user_id,
+          'document:verified',
+          verifyPayload,
+        );
+        this.eventsGateway.emitToUser(
+          doc.scholar_profile.user_id,
+          'grade_report:verified',
+          verifyPayload,
+        );
+        this.eventsGateway.emitToUser(
+          doc.scholar_profile.user_id,
+          'baseline:prospectus_processed',
+          verifyPayload,
+        );
+
+        const isScholar = doc.scholar_profile?.user?.role === Role.SCHOLAR;
+        const isGradeAudit =
+          isScholar &&
+          [
+            'CCG',
+            'GRADE_REPORT',
+            'GRADE_SLIP',
+            'CERTIFIED_COPY_OF_GRADES',
+            'Certificate of Grades',
+          ].includes(doc.document_type);
+
+        void this.notificationsService.notifyUser(doc.scholar_profile.user_id, {
+          title: 'Documents Verified',
+          message: isGradeAudit
+            ? 'Your grade report has been verified by the coordinator.'
+            : 'Your documents have been verified! Your application is now Under Review.',
+          category: 'document',
+          link: isGradeAudit ? '/ScholarGrade' : '/ApplicantsApplication',
+        });
+      }
+
+      void this.notificationsService.notifyStaff({
         title: 'Documents Verified',
-        message: isGradeAudit
-          ? 'Your grade report has been verified by the coordinator.'
-          : 'Your documents have been verified! Your application is now Under Review.',
+        message: `Applicant documents verified for ${doc.scholar_profile?.first_name || 'applicant'}.`,
         category: 'document',
-        link: isGradeAudit ? '/ScholarGrade' : '/ApplicantsApplication',
+        link: '/CoordinatorApplicants',
       });
     }
 
-    void this.notificationsService.notifyStaff({
-      title: 'Documents Verified',
-      message: `Applicant documents verified for ${doc.scholar_profile?.first_name || 'applicant'}.`,
-      category: 'document',
-      link: '/CoordinatorApplicants',
-    });
+    if (this.cacheService) {
+      await this.cacheService.delPattern('dashboard:');
+    }
 
     return {
       report,
       isEligible,
       evaluationFlag: evalFlag,
+      second_chance_exhausted: isSecondChanceExhausted,
       application: updatedApplication,
     };
   }

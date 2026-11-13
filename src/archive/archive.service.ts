@@ -2,12 +2,15 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client.js';
+import { Role } from '../generated/prisma/enums.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { EventsGateway } from '../events/events.gateway.js';
 import { AppCacheService } from '../common/cache/app-cache.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { ArchiveRecordDto, ArchiveReason } from './dto/archive-record.dto.js';
 import {
   ArchiveEntity,
@@ -47,6 +50,7 @@ export class ArchiveService {
     private readonly auditService: AuditService,
     private readonly eventsGateway: EventsGateway,
     private readonly cacheService: AppCacheService,
+    @Optional() private readonly notificationsService?: NotificationsService,
   ) {}
 
   // ==========================================
@@ -593,7 +597,7 @@ export class ArchiveService {
       }),
       this.prisma.user.update({
         where: { user_id: scholar.user_id },
-        data: { is_active: false },
+        data: { is_active: true },
       }),
       ...(shouldTerminate
         ? [
@@ -666,8 +670,8 @@ export class ArchiveService {
       );
     }
 
-    await this.prisma.$transaction([
-      this.prisma.scholarProfile.update({
+    await this.prisma.$transaction(async (tx) => {
+      await tx.scholarProfile.update({
         where: { profile_id: profileId },
         data: {
           archived_at: null,
@@ -678,12 +682,44 @@ export class ArchiveService {
             ? { academic_baseline_status: 'ON_PROBATION' }
             : {}),
         },
-      }),
-      this.prisma.user.update({
+      });
+
+      await tx.user.update({
         where: { user_id: scholar.user_id },
         data: { is_active: true },
-      }),
-    ]);
+      });
+
+      // Unlock any FLAGGED grade reports whose appeal was not yet approved (e.g. DENIED on 2nd chance exhaustion)
+      await tx.gradeReport.updateMany({
+        where: {
+          scholar_profile_id: profileId,
+          status: 'FLAGGED',
+          appeal_status: { not: 'APPROVED' },
+        },
+        data: {
+          appeal_status: 'APPROVED',
+          appeal_reviewed_at: new Date(),
+          appeal_decision_notes:
+            'Restored from Archive by Grantor (Extended Probation granted).',
+        },
+      });
+
+      // Restore latest terminated contract so restored scholar returns to active contractual status
+      const latestTerminatedContract = await tx.contract.findFirst({
+        where: {
+          scholar_profile_id: profileId,
+          status: 'TERMINATED',
+        },
+        orderBy: { contract_id: 'desc' },
+      });
+
+      if (latestTerminatedContract) {
+        await tx.contract.update({
+          where: { contract_id: latestTerminatedContract.contract_id },
+          data: { status: 'SIGNED' },
+        });
+      }
+    });
 
     const restored = await this.prisma.scholarProfile.findUnique({
       where: { profile_id: profileId },
@@ -708,6 +744,26 @@ export class ArchiveService {
 
     await this.cacheService.delPattern('dashboard:');
     this.eventsGateway.emitToStaff('scholar:restored', restored);
+    this.eventsGateway.emitToUser(scholar.user_id, 'scholar:restored', {
+      profile_id: profileId,
+    });
+
+    if (this.notificationsService) {
+      const fullName = this.scholarName(scholar);
+      void this.notificationsService.createForRoles([Role.COORDINATOR], {
+        title: 'Archived Scholar Restored',
+        message: `${fullName} has been restored from the archive by the Grantor and placed on probationary standing.`,
+        category: 'academic',
+        link: '/CoordinatorActiveScholars',
+      });
+      void this.notificationsService.notifyUser(scholar.user_id, {
+        title: 'Scholarship Restored by Grantor',
+        message:
+          'The Grantor has reviewed your case and restored your scholarship under probationary standing. Your portal and next-term enrollment are now unlocked.',
+        category: 'academic',
+        link: '/scholardashboard',
+      });
+    }
 
     return {
       message: `Scholar '${this.scholarName(scholar)}' restored successfully.`,

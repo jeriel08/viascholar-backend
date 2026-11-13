@@ -154,7 +154,10 @@ export class ScholarEnrollmentService {
     return scholar;
   }
 
-  private async getAcademicStandingLock(scholarProfileId: number) {
+  private async getAcademicStandingLock(
+    scholarProfileId: number,
+    scholar?: any,
+  ) {
     const latestFlaggedReport = await this.prisma.gradeReport.findFirst({
       where: {
         scholar_profile_id: scholarProfileId,
@@ -164,11 +167,70 @@ export class ScholarEnrollmentService {
       orderBy: { submitted_at: 'desc' },
     });
 
-    if (!latestFlaggedReport) {
-      return { is_locked: false };
+    // Self-heal legacy 2nd-probation failures that haven't been archived yet
+    if (
+      latestFlaggedReport &&
+      (latestFlaggedReport.appeal_status === 'NONE' ||
+        !latestFlaggedReport.appeal_status) &&
+      typeof this.prisma.gradeReport?.findFirst === 'function'
+    ) {
+      const priorResolved = await this.prisma.gradeReport.findFirst({
+        where: {
+          scholar_profile_id: scholarProfileId,
+          report_id: { not: latestFlaggedReport.report_id },
+          appeal_status: { in: ['APPROVED', 'DENIED'] },
+        },
+      });
+      if (priorResolved) {
+        const archivedAt = scholar?.archived_at ?? new Date();
+        const archiveReason = scholar?.archive_reason ?? 'FAILED_SECOND_CHANCE';
+        const archiveNotes =
+          scholar?.archive_notes ??
+          `Failed 2nd-chance probation during ${latestFlaggedReport.academic_year} (${latestFlaggedReport.semester}) with GWA ${Number(latestFlaggedReport.gpa).toFixed(2)}.`;
+        const decisionNotes =
+          'Second Chance probation exhausted. Automatic archival triggered due to subsequent academic retention deficiency.';
+
+        if (typeof (this.prisma as any).gradeReport?.update === 'function') {
+          await (this.prisma as any).gradeReport.update({
+            where: { report_id: latestFlaggedReport.report_id },
+            data: {
+              appeal_status: 'DENIED',
+              appeal_reviewed_at: archivedAt,
+              appeal_decision_notes: decisionNotes,
+            },
+          });
+        }
+        if (typeof (this.prisma as any).scholarProfile?.update === 'function') {
+          await (this.prisma as any).scholarProfile.update({
+            where: { profile_id: scholarProfileId },
+            data: {
+              academic_baseline_status: 'DISCONTINUED',
+              archived_at: archivedAt,
+              archive_reason: archiveReason,
+              archive_notes: archiveNotes,
+            },
+          });
+        }
+        latestFlaggedReport.appeal_status = 'DENIED';
+        if (scholar) {
+          scholar.academic_baseline_status = 'DISCONTINUED';
+          scholar.archived_at = archivedAt;
+          scholar.archive_reason = archiveReason;
+          scholar.archive_notes = archiveNotes;
+        }
+      }
     }
 
-    const appealStatus = latestFlaggedReport.appeal_status;
+    const isProfileDiscontinued =
+      scholar?.academic_baseline_status === 'DISCONTINUED' ||
+      Boolean(scholar?.archived_at);
+
+    if (!latestFlaggedReport && !isProfileDiscontinued) {
+      return { is_locked: false as const };
+    }
+
+    const appealStatus =
+      latestFlaggedReport?.appeal_status || (isProfileDiscontinued ? 'DENIED' : 'NONE');
     let reason = 'APPEAL_REQUIRED';
     let message =
       'Your academic standing is under review due to a flagged grade report. Please submit a Second Chance Appeal before enrolling for the next term.';
@@ -177,22 +239,54 @@ export class ScholarEnrollmentService {
       reason = 'APPEAL_PENDING';
       message =
         "Your academic appeal has been submitted and is awaiting the Grantor's verdict. Start-of-term enrollment is locked until your appeal verdict is decided.";
-    } else if (appealStatus === 'DENIED') {
+    } else if (appealStatus === 'DENIED' || isProfileDiscontinued) {
       reason = 'DISCONTINUED';
       message =
-        'Your scholarship agreement has been discontinued following an appeal denial.';
+        scholar?.archive_reason === 'FAILED_SECOND_CHANCE'
+          ? 'Your scholarship was archived after exhausting your Second Chance Appeal. You may email the Grantor directly (CC Coordinator) if you wish to request special restoration.'
+          : 'Your scholarship agreement has been discontinued following an appeal denial.';
     }
 
+    const [grantorUser, coordinatorUser] =
+      reason === 'DISCONTINUED' &&
+      typeof (this.prisma as any).user?.findFirst === 'function'
+        ? await Promise.all([
+            (this.prisma as any).user.findFirst({
+              where: { role: 'GRANTOR', is_active: true },
+              orderBy: { user_id: 'asc' },
+              select: { email: true },
+            }),
+            (this.prisma as any).user.findFirst({
+              where: { role: 'COORDINATOR', is_active: true },
+              orderBy: { user_id: 'asc' },
+              select: { email: true },
+            }),
+          ])
+        : [null, null];
+
     return {
-      is_locked: true,
+      is_locked: true as const,
       reason,
       appeal_status: appealStatus,
-      report_id: latestFlaggedReport.report_id,
-      academic_year: latestFlaggedReport.academic_year,
-      semester: latestFlaggedReport.semester,
-      gpa: Number(latestFlaggedReport.gpa),
-      evaluation_flag: latestFlaggedReport.evaluation_flag,
+      report_id: latestFlaggedReport?.report_id,
+      academic_year: latestFlaggedReport?.academic_year,
+      semester: latestFlaggedReport?.semester,
+      gpa: latestFlaggedReport ? Number(latestFlaggedReport.gpa) : undefined,
+      evaluation_flag: latestFlaggedReport?.evaluation_flag,
       message,
+      ...(reason === 'DISCONTINUED'
+        ? {
+            archive_reason: scholar?.archive_reason ?? null,
+            scholar_name: scholar
+              ? `${scholar.first_name || ''} ${scholar.last_name || ''}`.trim()
+              : undefined,
+            student_number: scholar?.student_number ?? undefined,
+            course_of_study: scholar?.course_of_study ?? undefined,
+            grantor_email: grantorUser?.email || 'grantor@viascholar.com',
+            coordinator_email:
+              coordinatorUser?.email || 'coordinator@viascholar.com',
+          }
+        : {}),
     };
   }
 
@@ -204,7 +298,10 @@ export class ScholarEnrollmentService {
   ) {
     const scholar = await this.getScholarProfile(userId);
 
-    const academicLock = await this.getAcademicStandingLock(scholar.profile_id);
+    const academicLock = await this.getAcademicStandingLock(
+      scholar.profile_id,
+      scholar,
+    );
 
     const whereClause: any = { scholar_profile_id: scholar.profile_id };
     if (academicYear && semester) {

@@ -247,6 +247,7 @@ export class AnalyticsService {
           this.prisma.systemSetting.findFirst(),
           this.prisma.scholarProfile.findMany({
             where: {
+              archived_at: null,
               user: { role: Role.SCHOLAR, is_active: true },
               ...(query.schoolId ? { school_id: query.schoolId } : {}),
               ...(query.track ? { scholarship_track: query.track } : {}),

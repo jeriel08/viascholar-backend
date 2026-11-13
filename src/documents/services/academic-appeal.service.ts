@@ -317,7 +317,7 @@ export class AcademicAppealService {
 
       await this.prisma.user.update({
         where: { user_id: report.scholar_profile.user_id },
-        data: { is_active: false },
+        data: { is_active: true },
       });
 
       const deniedScholarName = `${report.scholar_profile.first_name} ${report.scholar_profile.last_name}`.trim();
