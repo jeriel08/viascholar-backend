@@ -1,4 +1,4 @@
-﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -888,6 +888,128 @@ describe('AnalyticsService', () => {
 
     expect(result.descriptiveNarratives.financialSummary).toContain(
       '1st Semester, SY 2025-2026',
+    );
+  });
+
+  it('includes archived scholars in historical analytics metrics and roster metadata', async () => {
+    prisma.scholarProfile.findMany.mockResolvedValue([
+      makeScholar({
+        profile_id: 99,
+        archived_at: new Date('2026-03-01T00:00:00.000Z'),
+        archive_reason: 'FAILED_SECOND_CHANCE',
+      }),
+    ]);
+
+    const result = await loadAnalytics();
+
+    expect(prisma.scholarProfile.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.not.objectContaining({ archived_at: null }),
+      }),
+    );
+    expect(result.financialAspect.totalScholarsCount).toBe(1);
+    expect(result.academicAspect.totalScholarsCount).toBe(1);
+    expect(result.scholars).toHaveLength(1);
+    expect(result.scholars[0]).toMatchObject({
+      id: 99,
+      isArchived: true,
+      archiveReason: 'FAILED_SECOND_CHANCE',
+    });
+  });
+
+  it('classifies a 2nd-chance disqualified scholar with a passing numeric grade as AT_RISK', async () => {
+    prisma.termEnrollment.findMany.mockResolvedValue([
+      {
+        academic_year: '2024',
+        semester: 'Summer',
+        total_assessment: '12699',
+        status: 'COMPLETED',
+      },
+    ]);
+    prisma.disbursement.findMany.mockResolvedValue([
+      {
+        academic_year: '2024',
+        semester: 'Summer',
+        amount: '12699',
+        status: 'SETTLED',
+      },
+    ]);
+    prisma.scholarProfile.findMany.mockResolvedValue([
+      makeScholar({
+        profile_id: 101,
+        academic_baseline_status: 'DISCONTINUED',
+        archived_at: new Date('2026-03-01T00:00:00.000Z'),
+        archive_reason: 'FAILED_SECOND_CHANCE',
+        enrollments: [
+          makeEnrollment({
+            academic_year: '2023-2024',
+            semester: 'Summer',
+            total_assessment: '12699',
+            status: 'COMPLETED',
+          }),
+        ],
+        disbursements: [
+          makeDisbursement({
+            academic_year: '2023-2024',
+            semester: 'Summer',
+            amount: '12699',
+            status: 'SETTLED',
+          }),
+        ],
+        grade_reports: [
+          makeGradeReport({
+            gpa: '3.0',
+            academic_year: '2024',
+            semester: 'Summer',
+            status: 'FLAGGED',
+            evaluation_flag: 'BELOW_PASSING_MARK',
+            is_eligible: false,
+            appeal_status: 'DENIED',
+          }),
+        ],
+      }),
+    ]);
+
+    const result = await loadAnalytics({
+      academicYear: '2024',
+      semester: 'Summer',
+    });
+
+    expect(result.scholars[0].standing).toBe('AT_RISK');
+    expect(result.academicAspect.standingBreakdown).toMatchObject({
+      goodStandingCount: 0,
+      probationCount: 0,
+      flaggedCount: 1,
+    });
+  });
+
+  it('produces dynamic narratives without 0% (0 scholars) or 1 scholars when 100% complete', async () => {
+    prisma.scholarProfile.findMany.mockResolvedValue([
+      makeScholar({
+        profile_id: 102,
+        current_year_level: 2,
+        enrollments: [makeEnrollment({ total_assessment: '12699' })],
+        disbursements: [makeDisbursement({ amount: '12699', status: 'SETTLED' })],
+        grade_reports: [
+          makeGradeReport({
+            gpa: '3.8',
+            status: 'APPROVED',
+            is_eligible: true,
+          }),
+        ],
+      }),
+    ]);
+
+    const result = await loadAnalytics();
+
+    expect(result.descriptiveNarratives.financialSummary).not.toMatch(/\b0%/);
+    expect(result.descriptiveNarratives.financialSummary).not.toContain('0 scholars');
+    expect(result.descriptiveNarratives.financialSummary).not.toContain('1 scholars');
+    expect(result.descriptiveNarratives.financialSummary).toContain('1 scholar');
+    expect(result.descriptiveNarratives.academicSummary).not.toMatch(/\b0%/);
+    expect(result.descriptiveNarratives.academicSummary).not.toContain('1 scholars');
+    expect(result.descriptiveNarratives.academicSummary).toContain(
+      '1 in good standing',
     );
   });
 

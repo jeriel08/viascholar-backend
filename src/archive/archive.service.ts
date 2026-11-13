@@ -644,6 +644,7 @@ export class ArchiveService {
     );
 
     await this.cacheService.delPattern('dashboard:');
+    await this.cacheService.delPattern('analytics:');
     this.eventsGateway.emitToStaff('scholar:archived', updated);
 
     return {
@@ -743,6 +744,7 @@ export class ArchiveService {
     );
 
     await this.cacheService.delPattern('dashboard:');
+    await this.cacheService.delPattern('analytics:');
     this.eventsGateway.emitToStaff('scholar:restored', restored);
     this.eventsGateway.emitToUser(scholar.user_id, 'scholar:restored', {
       profile_id: profileId,
