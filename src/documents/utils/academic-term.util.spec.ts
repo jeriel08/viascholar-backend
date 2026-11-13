@@ -13,6 +13,8 @@ describe('academic-term.util', () => {
       expect(normalizeAcademicYear('SY 2023-24')).toBe('2023-2024');
       expect(normalizeAcademicYear('A.Y. 2023 - 2024')).toBe('2023-2024');
       expect(normalizeAcademicYear('1st Semester 2023-2024')).toBe('2023-2024');
+      expect(normalizeAcademicYear('2024')).toBe('2024');
+      expect(normalizeAcademicYear('Summer 2024')).toBe('2024');
     });
 
     it('returns an empty string when no academic year is present', () => {
@@ -46,6 +48,11 @@ describe('academic-term.util', () => {
         academic_year: '2024-2025',
         semester: '1st Semester',
       },
+      {
+        enrollment_id: 3,
+        academic_year: '2024',
+        semester: 'Summer',
+      },
     ];
 
     it('matches formatted variants of the same term', () => {
@@ -56,6 +63,17 @@ describe('academic-term.util', () => {
           'Second Semester',
         )?.enrollment_id,
       ).toBe(1);
+    });
+
+    it('matches single-year Summer enrollments', () => {
+      expect(
+        findMatchingTermEnrollment(enrollments, '2024', 'Summer')
+          ?.enrollment_id,
+      ).toBe(3);
+      expect(
+        findMatchingTermEnrollment(enrollments, '2023-2024', 'Summer')
+          ?.enrollment_id,
+      ).toBe(3);
     });
 
     it('does not match a different school year or semester', () => {

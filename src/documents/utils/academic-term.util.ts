@@ -11,22 +11,51 @@
 export function normalizeAcademicYear(raw?: string | null): string {
   if (!raw) return '';
 
-  const match = String(raw)
-    .trim()
-    .match(/(\d{4})\s*[-–—/]\s*(\d{2,4})/);
+  const text = String(raw).trim();
+  const match = text.match(/(\d{4})\s*[-–—/]\s*(\d{2,4})/);
 
-  if (!match) return '';
+  if (match) {
+    const start = Number(match[1]);
+    const endPart = match[2];
+    const end =
+      endPart.length === 2
+        ? Math.floor(start / 100) * 100 + Number(endPart)
+        : Number(endPart);
 
-  const start = Number(match[1]);
-  const endPart = match[2];
-  const end =
-    endPart.length === 2
-      ? Math.floor(start / 100) * 100 + Number(endPart)
-      : Number(endPart);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return '';
+    if (start === end) return `${start}`;
 
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return '';
+    return `${start}-${end}`;
+  }
 
-  return `${start}-${end}`;
+  const singleYearMatch = text.match(/\b(19\d{2}|20\d{2})\b/);
+  if (singleYearMatch) {
+    return singleYearMatch[1];
+  }
+
+  return '';
+}
+
+export function academicYearsMatchForTerm(
+  ayA?: string | null,
+  ayB?: string | null,
+  semester?: string | null,
+): boolean {
+  const normA = normalizeAcademicYear(ayA);
+  const normB = normalizeAcademicYear(ayB);
+
+  if (!normA || !normB) return false;
+  if (normA === normB) return true;
+
+  const normSem = normalizeSemester(semester);
+  if (normSem === 'Summer') {
+    const yearsA = normA.split('-');
+    const yearsB = normB.split('-');
+    if (yearsA.length === 1 && yearsB.includes(yearsA[0])) return true;
+    if (yearsB.length === 1 && yearsA.includes(yearsB[0])) return true;
+  }
+
+  return false;
 }
 
 export function normalizeSemester(raw?: string | null): string {
@@ -56,9 +85,16 @@ export function findMatchingTermEnrollment<
 
   if (!targetAy || !targetSem) return undefined;
 
-  return enrollments.find(
+  const exactMatch = enrollments.find(
     (enrollment) =>
       normalizeAcademicYear(enrollment.academic_year) === targetAy &&
       normalizeSemester(enrollment.semester) === targetSem,
+  );
+  if (exactMatch) return exactMatch;
+
+  return enrollments.find(
+    (enrollment) =>
+      normalizeSemester(enrollment.semester) === targetSem &&
+      academicYearsMatchForTerm(enrollment.academic_year, targetAy, targetSem),
   );
 }

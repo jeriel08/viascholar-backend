@@ -12,6 +12,7 @@ import { Prisma } from '../../generated/prisma/client.js';
 import { Role } from '../../generated/prisma/enums.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
 import {
+  academicYearsMatchForTerm,
   normalizeAcademicYear,
   normalizeSemester,
 } from '../utils/academic-term.util.js';
@@ -180,7 +181,15 @@ export class DocumentConfirmationService {
       if (enrollmentAcademicYear) {
         const mismatchedYear = submittedAcademicYears
           .map(normalizeAcademicYear)
-          .find((year) => year && year !== enrollmentAcademicYear);
+          .find(
+            (year) =>
+              year &&
+              !academicYearsMatchForTerm(
+                year,
+                enrollmentAcademicYear,
+                enrollmentSemester || confirmedSemester,
+              ),
+          );
 
         if (mismatchedYear) {
           throw new BadRequestException(
@@ -385,6 +394,29 @@ export class DocumentConfirmationService {
         verified_at: null,
       },
     });
+
+    if (doc.document_type === 'CCG' && doc.scholar_profile_id) {
+      const confirmed = (doc.confirmed_data ?? {}) as ConfirmedGradeData;
+      const extracted = (doc.extracted_data ?? {}) as ExtractedDocData;
+      const docAy = confirmed.academic_year || extracted.academic_year;
+      const docSem = confirmed.semester || extracted.semester;
+      const completedEnrollment = await this.prisma.termEnrollment.findFirst({
+        where: {
+          scholar_profile_id: doc.scholar_profile_id,
+          status: 'COMPLETED',
+          ...(docAy && docSem
+            ? { academic_year: docAy, semester: docSem }
+            : {}),
+        },
+        orderBy: { updated_at: 'desc' },
+      });
+      if (completedEnrollment) {
+        await this.prisma.termEnrollment.update({
+          where: { enrollment_id: completedEnrollment.enrollment_id },
+          data: { status: 'APPROVED' },
+        });
+      }
+    }
 
     await this.auditService.log(
       employeeUserId,
