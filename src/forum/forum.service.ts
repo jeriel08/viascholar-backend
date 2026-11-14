@@ -6,7 +6,9 @@ import {
 import { PrismaService } from '../prisma/prisma.service.js';
 import { EventsGateway } from '../events/events.gateway.js';
 import { CreatePostDto } from './dto/create-post.dto.js';
+import { UpdatePostDto } from './dto/update-post.dto.js';
 import { CreateCommentDto } from './dto/create-comment.dto.js';
+import { UpdateCommentDto } from './dto/update-comment.dto.js';
 import { QueryPostsDto } from './dto/query-posts.dto.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
@@ -42,6 +44,7 @@ export class ForumService {
 
     const postPayload = {
       post_id: post.post_id,
+      author_user_id: post.author_user_id,
       title: post.title,
       content: post.content,
       category: post.category,
@@ -58,6 +61,7 @@ export class ForumService {
       },
       comments_count: 0,
       created_at: post.created_at,
+      updated_at: post.updated_at,
     };
 
     // Real-time broadcast to all online scholars and staff
@@ -111,6 +115,7 @@ export class ForumService {
 
       return {
         post_id: p.post_id,
+        author_user_id: p.author_user_id,
         title: p.title,
         content: p.content,
         category: p.category,
@@ -183,8 +188,11 @@ export class ForumService {
 
       return {
         comment_id: c.comment_id,
+        post_id: c.post_id ?? post.post_id,
+        author_user_id: c.author_user_id ?? c.author.user_id,
         content: c.content,
         created_at: c.created_at,
+        updated_at: c.updated_at,
         author: {
           user_id: c.author.user_id,
           name: cAuthorName,
@@ -199,6 +207,7 @@ export class ForumService {
 
     return {
       post_id: post.post_id,
+      author_user_id: post.author_user_id,
       title: post.title,
       content: post.content,
       category: post.category,
@@ -254,8 +263,10 @@ export class ForumService {
     const commentPayload = {
       comment_id: comment.comment_id,
       post_id: postId,
+      author_user_id: comment.author_user_id,
       content: comment.content,
       created_at: comment.created_at,
+      updated_at: comment.updated_at,
       author: {
         user_id: comment.author.user_id,
         name: cAuthorName,
@@ -297,8 +308,8 @@ export class ForumService {
     return commentPayload;
   }
 
-  // 5. Delete a post (Author or Staff only)
-  async deletePost(userId: number, postId: number, userRole: string) {
+  // 5. Edit a post (Post author only)
+  async updatePost(userId: number, postId: number, dto: UpdatePostDto) {
     const post = await this.prisma.forumPost.findUnique({
       where: { post_id: postId },
     });
@@ -307,15 +318,88 @@ export class ForumService {
       throw new NotFoundException(`Forum post ID ${postId} not found.`);
     }
 
-    const staffRoles = ['ADMIN', 'COORDINATOR', 'GRANTOR'];
-    const isStaff = staffRoles.includes(userRole);
-    const isAuthor = post.author_user_id === userId;
+    if (post.author_user_id !== userId) {
+      throw new ForbiddenException(
+        'You do not have permission to edit this post.',
+      );
+    }
 
-    if (!isAuthor && !isStaff) {
+    const data: Prisma.ForumPostUpdateInput = {};
+    if (dto.title !== undefined) {
+      data.title = dto.title.trim();
+    }
+    if (dto.content !== undefined) {
+      data.content = dto.content.trim();
+    }
+    if (dto.category !== undefined) {
+      data.category = dto.category.trim().toUpperCase();
+    }
+
+    const updated = await this.prisma.forumPost.update({
+      where: { post_id: postId },
+      data,
+      include: {
+        author: {
+          include: { scholar_profile: true, employee: true },
+        },
+        _count: {
+          select: { comments: true },
+        },
+      },
+    });
+
+    const authorProfile =
+      updated.author.scholar_profile || updated.author.employee;
+    const authorName =
+      `${authorProfile?.first_name || ''} ${authorProfile?.last_name || ''}`.trim() ||
+      'User';
+
+    const postPayload = {
+      post_id: updated.post_id,
+      author_user_id: updated.author_user_id,
+      title: updated.title,
+      content: updated.content,
+      category: updated.category,
+      is_pinned: updated.is_pinned,
+      views_count: updated.views_count,
+      comments_count: updated._count.comments,
+      author: {
+        user_id: updated.author.user_id,
+        name: authorName,
+        first_name: authorProfile?.first_name || '',
+        last_name: authorProfile?.last_name || '',
+        email: updated.author.email,
+        role: updated.author.role,
+        avatar_url: authorProfile?.avatar_url || null,
+      },
+      created_at: updated.created_at,
+      updated_at: updated.updated_at,
+    };
+
+    this.eventsGateway.emitToAll('forum:post_updated', postPayload);
+
+    return postPayload;
+  }
+
+  // 6. Delete a post and all of its comments (Post author only)
+  async deletePost(userId: number, postId: number) {
+    const post = await this.prisma.forumPost.findUnique({
+      where: { post_id: postId },
+    });
+
+    if (!post) {
+      throw new NotFoundException(`Forum post ID ${postId} not found.`);
+    }
+
+    if (post.author_user_id !== userId) {
       throw new ForbiddenException(
         'You do not have permission to delete this post.',
       );
     }
+
+    await this.prisma.forumComment.deleteMany({
+      where: { post_id: postId },
+    });
 
     await this.prisma.forumPost.delete({
       where: { post_id: postId },
@@ -326,8 +410,12 @@ export class ForumService {
     return { message: 'Forum post deleted successfully.', post_id: postId };
   }
 
-  // 6. Delete a comment (Author or Staff only)
-  async deleteComment(userId: number, commentId: number, userRole: string) {
+  // 7. Edit a comment (Comment author only)
+  async updateComment(
+    userId: number,
+    commentId: number,
+    dto: UpdateCommentDto,
+  ) {
     const comment = await this.prisma.forumComment.findUnique({
       where: { comment_id: commentId },
     });
@@ -336,11 +424,65 @@ export class ForumService {
       throw new NotFoundException(`Comment ID ${commentId} not found.`);
     }
 
-    const staffRoles = ['ADMIN', 'COORDINATOR', 'GRANTOR'];
-    const isStaff = staffRoles.includes(userRole);
-    const isAuthor = comment.author_user_id === userId;
+    if (comment.author_user_id !== userId) {
+      throw new ForbiddenException(
+        'You do not have permission to edit this comment.',
+      );
+    }
 
-    if (!isAuthor && !isStaff) {
+    const updated = await this.prisma.forumComment.update({
+      where: { comment_id: commentId },
+      data: { content: dto.content.trim() },
+      include: {
+        author: {
+          include: { scholar_profile: true, employee: true },
+        },
+      },
+    });
+
+    const cProfile = updated.author.scholar_profile || updated.author.employee;
+    const cAuthorName =
+      `${cProfile?.first_name || ''} ${cProfile?.last_name || ''}`.trim() ||
+      'User';
+
+    const commentPayload = {
+      comment_id: updated.comment_id,
+      post_id: updated.post_id,
+      author_user_id: updated.author_user_id,
+      content: updated.content,
+      created_at: updated.created_at,
+      updated_at: updated.updated_at,
+      author: {
+        user_id: updated.author.user_id,
+        name: cAuthorName,
+        first_name: cProfile?.first_name || '',
+        last_name: cProfile?.last_name || '',
+        email: updated.author.email,
+        role: updated.author.role,
+        avatar_url: cProfile?.avatar_url || null,
+      },
+    };
+
+    this.eventsGateway.emitToRoom(
+      `forum_post_${updated.post_id}`,
+      'forum:comment_updated',
+      commentPayload,
+    );
+
+    return commentPayload;
+  }
+
+  // 8. Delete a comment (Comment author only)
+  async deleteComment(userId: number, commentId: number) {
+    const comment = await this.prisma.forumComment.findUnique({
+      where: { comment_id: commentId },
+    });
+
+    if (!comment) {
+      throw new NotFoundException(`Comment ID ${commentId} not found.`);
+    }
+
+    if (comment.author_user_id !== userId) {
       throw new ForbiddenException(
         'You do not have permission to delete this comment.',
       );

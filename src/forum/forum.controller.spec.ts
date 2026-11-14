@@ -6,6 +6,7 @@ import { ForumService } from './forum.service.js';
 import { ROLES_KEY } from '../auth/decorators/roles.decorator.js';
 import { Role } from '../generated/prisma/client.js';
 import type { CreatePostDto } from './dto/create-post.dto.js';
+import type { UpdatePostDto } from './dto/update-post.dto.js';
 import type { QueryPostsDto } from './dto/query-posts.dto.js';
 
 const makeRequest = (userId = 7, role = 'SCHOLAR') => ({
@@ -22,7 +23,9 @@ describe('ForumController', () => {
       getPosts: vi.fn(),
       getPostById: vi.fn(),
       addComment: vi.fn(),
+      updatePost: vi.fn(),
       deletePost: vi.fn(),
+      updateComment: vi.fn(),
       deleteComment: vi.fn(),
       togglePin: vi.fn(),
     };
@@ -78,24 +81,41 @@ describe('ForumController', () => {
     expect(serviceMock.addComment).toHaveBeenCalledWith(7, 55, dto);
   });
 
-  it('delegates deletePost with user, id, and role', () => {
+  it('delegates updatePost with user, id, and dto', () => {
+    const request = makeRequest();
+    const dto = {
+      title: 'Updated Title',
+      content: 'Updated Content',
+    } as UpdatePostDto;
+
+    void controller.updatePost(request, 55, dto);
+
+    expect(serviceMock.updatePost).toHaveBeenCalledWith(7, 55, dto);
+  });
+
+  it('delegates deletePost with user and id', () => {
     const request = makeRequest(42, 'COORDINATOR');
 
     void controller.deletePost(request, 55);
 
-    expect(serviceMock.deletePost).toHaveBeenCalledWith(42, 55, 'COORDINATOR');
+    expect(serviceMock.deletePost).toHaveBeenCalledWith(42, 55);
   });
 
-  it('delegates deleteComment with user, id, and role', () => {
+  it('delegates updateComment with user, id, and dto', () => {
+    const request = makeRequest(8, 'COORDINATOR');
+    const dto = { content: 'Updated comment text' };
+
+    void controller.updateComment(request, 99, dto);
+
+    expect(serviceMock.updateComment).toHaveBeenCalledWith(8, 99, dto);
+  });
+
+  it('delegates deleteComment with user and id', () => {
     const request = makeRequest(42, 'COORDINATOR');
 
     void controller.deleteComment(request, 99);
 
-    expect(serviceMock.deleteComment).toHaveBeenCalledWith(
-      42,
-      99,
-      'COORDINATOR',
-    );
+    expect(serviceMock.deleteComment).toHaveBeenCalledWith(42, 99);
   });
 
   it('delegates togglePin with the parsed id', () => {
@@ -129,7 +149,9 @@ describe('ForumController', () => {
         'getPosts',
         'getPostById',
         'addComment',
+        'updatePost',
         'deletePost',
+        'updateComment',
         'deleteComment',
       ]) {
         expect(rolesFor(handlerFor(name))).toBeUndefined();

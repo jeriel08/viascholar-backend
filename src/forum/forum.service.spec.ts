@@ -27,7 +27,9 @@ const createPrismaMock = () => ({
   forumComment: {
     create: vi.fn(),
     findUnique: vi.fn(),
+    update: vi.fn(),
     delete: vi.fn(),
+    deleteMany: vi.fn(),
   },
 });
 
@@ -121,7 +123,12 @@ describe('ForumService', () => {
     prisma.forumPost.delete.mockResolvedValue(makePost());
     prisma.forumComment.create.mockResolvedValue(makeComment());
     prisma.forumComment.findUnique.mockResolvedValue(makeComment());
+    prisma.forumComment.update.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve(makeComment({ ...data })),
+    );
     prisma.forumComment.delete.mockResolvedValue(makeComment());
+    prisma.forumComment.deleteMany.mockResolvedValue({ count: 1 });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -379,26 +386,99 @@ describe('ForumService', () => {
     });
   });
 
+  describe('updatePost', () => {
+    it('throws NotFoundException when the post does not exist', async () => {
+      prisma.forumPost.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updatePost(7, 999, { title: 'Updated Title' }),
+      ).rejects.toThrow(new NotFoundException('Forum post ID 999 not found.'));
+    });
+
+    it('throws ForbiddenException when caller is not the post owner (including staff)', async () => {
+      await expect(
+        service.updatePost(99, 55, { title: 'Updated Title' }),
+      ).rejects.toThrow(
+        new ForbiddenException('You do not have permission to edit this post.'),
+      );
+      expect(prisma.forumPost.update).not.toHaveBeenCalled();
+    });
+
+    it('updates post fields and broadcasts forum:post_updated for the post owner', async () => {
+      const result = await service.updatePost(7, 55, {
+        title: '  Updated Title  ',
+        content: '  Updated content body here  ',
+        category: 'stipends',
+      });
+
+      expect(prisma.forumPost.update).toHaveBeenCalledWith({
+        where: { post_id: 55 },
+        data: {
+          title: 'Updated Title',
+          content: 'Updated content body here',
+          category: 'STIPENDS',
+        },
+        include: anyArg(Object),
+      });
+      expect(events.emitToAll).toHaveBeenCalledWith(
+        'forum:post_updated',
+        objectMatching({
+          post_id: 55,
+          author_user_id: 7,
+          title: 'Updated Title',
+          content: 'Updated content body here',
+          category: 'STIPENDS',
+        }),
+      );
+      expect(result).toEqual(
+        objectMatching({
+          post_id: 55,
+          title: 'Updated Title',
+          category: 'STIPENDS',
+        }),
+      );
+    });
+  });
+
   describe('deletePost', () => {
     it('throws NotFoundException when the post does not exist', async () => {
       prisma.forumPost.findUnique.mockResolvedValue(null);
 
-      await expect(service.deletePost(7, 999, 'SCHOLAR')).rejects.toThrow(
+      await expect(service.deletePost(7, 999)).rejects.toThrow(
         new NotFoundException('Forum post ID 999 not found.'),
       );
     });
 
-    it('throws ForbiddenException when the commenter is neither author nor staff', async () => {
-      await expect(service.deletePost(99, 55, 'SCHOLAR')).rejects.toThrow(
+    it('throws ForbiddenException when the caller is not the post owner', async () => {
+      await expect(service.deletePost(99, 55)).rejects.toThrow(
         new ForbiddenException(
           'You do not have permission to delete this post.',
         ),
       );
+      expect(prisma.forumComment.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.forumPost.delete).not.toHaveBeenCalled();
     });
 
-    it('allows the author to delete their own post', async () => {
-      const result = await service.deletePost(7, 55, 'SCHOLAR');
+    it('throws ForbiddenException when staff attempts to delete another user post', async () => {
+      prisma.forumPost.findUnique.mockResolvedValue(
+        makePost({ author_user_id: 7 }),
+      );
 
+      await expect(service.deletePost(2, 55)).rejects.toThrow(
+        new ForbiddenException(
+          'You do not have permission to delete this post.',
+        ),
+      );
+      expect(prisma.forumComment.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.forumPost.delete).not.toHaveBeenCalled();
+    });
+
+    it('allows the post owner to delete all comments and the post', async () => {
+      const result = await service.deletePost(7, 55);
+
+      expect(prisma.forumComment.deleteMany).toHaveBeenCalledWith({
+        where: { post_id: 55 },
+      });
       expect(prisma.forumPost.delete).toHaveBeenCalledWith({
         where: { post_id: 55 },
       });
@@ -410,17 +490,66 @@ describe('ForumService', () => {
         post_id: 55,
       });
     });
+  });
 
-    it("allows staff to delete another user's post", async () => {
-      prisma.forumPost.findUnique.mockResolvedValue(
-        makePost({ author_user_id: 7 }),
+  describe('updateComment', () => {
+    it('throws NotFoundException when the comment does not exist', async () => {
+      prisma.forumComment.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updateComment(8, 999, { content: 'Updated reply' }),
+      ).rejects.toThrow(new NotFoundException('Comment ID 999 not found.'));
+    });
+
+    it('throws ForbiddenException when the post owner tries to edit another user comment', async () => {
+      await expect(
+        service.updateComment(7, 99, { content: 'Post owner edit attempt' }),
+      ).rejects.toThrow(
+        new ForbiddenException(
+          'You do not have permission to edit this comment.',
+        ),
       );
+      expect(prisma.forumComment.update).not.toHaveBeenCalled();
+    });
 
-      await service.deletePost(2, 55, 'COORDINATOR');
+    it('throws ForbiddenException when another user or staff tries to edit the comment', async () => {
+      await expect(
+        service.updateComment(2, 99, { content: 'Staff edit attempt' }),
+      ).rejects.toThrow(
+        new ForbiddenException(
+          'You do not have permission to edit this comment.',
+        ),
+      );
+      expect(prisma.forumComment.update).not.toHaveBeenCalled();
+    });
 
-      expect(prisma.forumPost.delete).toHaveBeenCalledWith({
-        where: { post_id: 55 },
+    it('updates the comment and broadcasts to the thread room for the comment owner', async () => {
+      const result = await service.updateComment(8, 99, {
+        content: '  Updated helpful advice  ',
       });
+
+      expect(prisma.forumComment.update).toHaveBeenCalledWith({
+        where: { comment_id: 99 },
+        data: { content: 'Updated helpful advice' },
+        include: anyArg(Object),
+      });
+      expect(events.emitToRoom).toHaveBeenCalledWith(
+        'forum_post_55',
+        'forum:comment_updated',
+        objectMatching({
+          comment_id: 99,
+          post_id: 55,
+          author_user_id: 8,
+          content: 'Updated helpful advice',
+        }),
+      );
+      expect(result).toEqual(
+        objectMatching({
+          comment_id: 99,
+          author_user_id: 8,
+          content: 'Updated helpful advice',
+        }),
+      );
     });
   });
 
@@ -428,21 +557,27 @@ describe('ForumService', () => {
     it('throws NotFoundException when the comment does not exist', async () => {
       prisma.forumComment.findUnique.mockResolvedValue(null);
 
-      await expect(
-        service.deleteComment(8, 999, 'COORDINATOR'),
-      ).rejects.toThrow(new NotFoundException('Comment ID 999 not found.'));
+      await expect(service.deleteComment(8, 999)).rejects.toThrow(
+        new NotFoundException('Comment ID 999 not found.'),
+      );
     });
 
-    it('throws ForbiddenException for non-author non-staff callers', async () => {
-      await expect(service.deleteComment(99, 99, 'SCHOLAR')).rejects.toThrow(
+    it('throws ForbiddenException when post owner or another user tries to delete a comment they do not own', async () => {
+      await expect(service.deleteComment(7, 99)).rejects.toThrow(
         new ForbiddenException(
           'You do not have permission to delete this comment.',
         ),
       );
+      await expect(service.deleteComment(2, 99)).rejects.toThrow(
+        new ForbiddenException(
+          'You do not have permission to delete this comment.',
+        ),
+      );
+      expect(prisma.forumComment.delete).not.toHaveBeenCalled();
     });
 
     it('allows the comment author to delete it and notifies room', async () => {
-      const result = await service.deleteComment(8, 99, 'SCHOLAR');
+      const result = await service.deleteComment(8, 99);
 
       expect(prisma.forumComment.delete).toHaveBeenCalledWith({
         where: { comment_id: 99 },
@@ -455,14 +590,6 @@ describe('ForumService', () => {
       expect(result).toEqual({
         message: 'Comment deleted successfully.',
         comment_id: 99,
-      });
-    });
-
-    it('allows staff to delete a comment and notifies the room', async () => {
-      await service.deleteComment(2, 99, 'GRANTOR');
-
-      expect(prisma.forumComment.delete).toHaveBeenCalledWith({
-        where: { comment_id: 99 },
       });
     });
   });

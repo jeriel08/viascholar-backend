@@ -15,7 +15,9 @@ import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ForumService } from './forum.service.js';
 import { CreatePostDto } from './dto/create-post.dto.js';
+import { UpdatePostDto } from './dto/update-post.dto.js';
 import { CreateCommentDto } from './dto/create-comment.dto.js';
+import { UpdateCommentDto } from './dto/update-comment.dto.js';
 import { QueryPostsDto } from './dto/query-posts.dto.js';
 import { RolesGuard } from '../auth/decorators/roles.guard.js';
 import { Roles } from '../auth/decorators/roles.decorator.js';
@@ -73,26 +75,50 @@ export class ForumController {
     return this.forumService.addComment(req.user.user_id, id, dto);
   }
 
+  @Patch('posts/:id')
+  @ApiOperation({
+    summary: 'Edit a forum post (post author only)',
+  })
+  updatePost(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePostDto,
+  ) {
+    return this.forumService.updatePost(req.user.user_id, id, dto);
+  }
+
   @Delete('posts/:id')
   @ApiOperation({
-    summary: 'Delete a forum post (post author or staff members only)',
+    summary: 'Delete a forum post (post author only)',
   })
   deletePost(
     @Request() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
   ) {
-    return this.forumService.deletePost(req.user.user_id, id, req.user.role);
+    return this.forumService.deletePost(req.user.user_id, id);
+  }
+
+  @Patch('comments/:id')
+  @ApiOperation({
+    summary: 'Edit a forum comment (comment author only)',
+  })
+  updateComment(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateCommentDto,
+  ) {
+    return this.forumService.updateComment(req.user.user_id, id, dto);
   }
 
   @Delete('comments/:id')
   @ApiOperation({
-    summary: 'Delete a forum comment (comment author or staff members only)',
+    summary: 'Delete a forum comment (comment author only)',
   })
   deleteComment(
     @Request() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
   ) {
-    return this.forumService.deleteComment(req.user.user_id, id, req.user.role);
+    return this.forumService.deleteComment(req.user.user_id, id);
   }
 
   @Patch('posts/:id/pin')
