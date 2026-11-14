@@ -29,6 +29,10 @@ import { RegisterScholarDto } from './dto/register-scholar.dto.js';
 import { ForgotPasswordDto } from './dto/forgot-password.dto.js';
 import { ResetPasswordDto } from './dto/reset-password.dto.js';
 import { GoogleLoginDto } from './dto/google-login.dto.js';
+import {
+  SendMfaChallengeDto,
+  VerifyMfaChallengeDto,
+} from './dto/mfa-challenge.dto.js';
 import { Role } from '../generated/prisma/enums.js';
 import { Roles } from './decorators/roles.decorator.js';
 import { RolesGuard } from './decorators/roles.guard.js';
@@ -36,7 +40,12 @@ import { CreateStaffDto } from './dto/create-staff.dto.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
 import { UpdateUserSettingsDto } from './dto/update-user-settings.dto.js';
 import { SetupTwoFactorDto, VerifyTwoFactorDto } from './dto/two-factor.dto.js';
+import {
+  SendContactVerificationDto,
+  VerifyContactVerificationDto,
+} from './dto/contact-verification.dto.js';
 import { ChangePasswordDto } from './dto/change-password.dto.js';
+import { DeactivateAccountDto } from './dto/deactivate-account.dto.js';
 import { FileInterceptor } from '@nestjs/platform-express';
 
 interface AuthenticatedRequest {
@@ -131,6 +140,27 @@ export class AuthController {
   })
   googleLogin(@Body() dto: GoogleLoginDto) {
     return this.authService.googleLogin(dto);
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Post('mfa/send')
+  @ApiOperation({ summary: 'Send or resend an MFA verification code' })
+  @ApiResponse({ status: 200, description: 'MFA verification code sent.' })
+  sendMfaChallenge(@Body() dto: SendMfaChallengeDto) {
+    return this.authService.sendMfaChallenge(dto);
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Post('mfa/verify')
+  @ApiOperation({
+    summary: 'Verify an MFA verification code and issue session token',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'MFA verification successful.',
+  })
+  verifyMfaChallenge(@Body() dto: VerifyMfaChallengeDto) {
+    return this.authService.verifyMfaChallenge(dto);
   }
 
   @Post('create-staff')
@@ -264,6 +294,37 @@ export class AuthController {
   }
 
   @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Post('me/contact-verification/send')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'))
+  @ApiOperation({
+    summary: 'Send a 6-digit verification code to account email or phone',
+  })
+  sendContactVerification(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: SendContactVerificationDto,
+  ) {
+    return this.profileService.initiateContactVerification(
+      req.user.user_id,
+      dto,
+    );
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Post('me/contact-verification/verify')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'))
+  @ApiOperation({
+    summary: 'Verify account email or phone number with a 6-digit code',
+  })
+  verifyContactVerification(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: VerifyContactVerificationDto,
+  ) {
+    return this.profileService.verifyContactVerification(req.user.user_id, dto);
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('me/change-password')
   @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'))
@@ -275,6 +336,21 @@ export class AuthController {
     @Body() dto: ChangePasswordDto,
   ) {
     return this.profileService.changePassword(req.user.user_id, dto);
+  }
+
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @Post('me/deactivate')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'))
+  @ApiOperation({
+    summary:
+      'Deactivate the authenticated user account without archiving records',
+  })
+  deactivateAccount(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: DeactivateAccountDto,
+  ) {
+    return this.profileService.deactivateAccount(req.user.user_id, dto);
   }
 
   @Throttle({ default: { limit: 10, ttl: 60000 } })

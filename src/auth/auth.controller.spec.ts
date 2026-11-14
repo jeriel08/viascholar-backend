@@ -21,6 +21,8 @@ const createAuthServiceMock = () => ({
   forgotPassword: vi.fn(),
   resetPassword: vi.fn(),
   googleLogin: vi.fn(),
+  sendMfaChallenge: vi.fn(),
+  verifyMfaChallenge: vi.fn(),
 });
 
 const createProfileServiceMock = () => ({
@@ -31,7 +33,10 @@ const createProfileServiceMock = () => ({
   updateUserSettings: vi.fn(),
   initiateTwoFactorSetup: vi.fn(),
   verifyTwoFactorSetup: vi.fn(),
+  initiateContactVerification: vi.fn(),
+  verifyContactVerification: vi.fn(),
   changePassword: vi.fn(),
+  deactivateAccount: vi.fn(),
 });
 
 describe('AuthController', () => {
@@ -120,6 +125,42 @@ describe('AuthController', () => {
 
     expect(authService.googleLogin).toHaveBeenCalledWith(dto);
     expect(result).toEqual({ access_token: 'token' });
+  });
+
+  it('delegates MFA challenge sending to AuthService', async () => {
+    const dto = { mfa_token: 'mfa-tok', method: 'SMS_OTP' as const };
+    authService.sendMfaChallenge.mockResolvedValue({
+      mfa_method: 'SMS_OTP',
+      mfa_destination: '0917***4567',
+    });
+
+    const result = await controller.sendMfaChallenge(dto);
+
+    expect(authService.sendMfaChallenge).toHaveBeenCalledWith(dto);
+    expect(result).toEqual({
+      mfa_method: 'SMS_OTP',
+      mfa_destination: '0917***4567',
+    });
+  });
+
+  it('delegates MFA challenge verification to AuthService', async () => {
+    const dto = {
+      mfa_token: 'mfa-tok',
+      code: '123456',
+      remember_device: true,
+    };
+    authService.verifyMfaChallenge.mockResolvedValue({
+      access_token: 'jwt-token',
+      trusted_device_token: 'trusted-tok',
+    });
+
+    const result = await controller.verifyMfaChallenge(dto);
+
+    expect(authService.verifyMfaChallenge).toHaveBeenCalledWith(dto);
+    expect(result).toEqual({
+      access_token: 'jwt-token',
+      trusted_device_token: 'trusted-tok',
+    });
   });
 
   it('delegates staff creation to AuthService', async () => {
@@ -248,7 +289,6 @@ describe('AuthController', () => {
       destination: 'scholar@example.com',
       expiresInMinutes: 10,
       simulated: true,
-      simulationCode: '123456',
     };
     profileService.initiateTwoFactorSetup.mockResolvedValue(setupRes);
 
@@ -293,6 +333,63 @@ describe('AuthController', () => {
     const result = await controller.changePassword(req, dto);
 
     expect(profileService.changePassword).toHaveBeenCalledWith(42, dto);
+    expect(result).toEqual(response);
+  });
+
+  it('delegates sending contact verification codes to ProfileService', async () => {
+    const req = { user: { user_id: 42 } };
+    const dto = { channel: 'EMAIL' as const };
+    const response = {
+      channel: 'EMAIL',
+      destination: 'scholar@example.com',
+      expiresInMinutes: 10,
+      simulated: true,
+    };
+    profileService.initiateContactVerification.mockResolvedValue(response);
+
+    const result = await controller.sendContactVerification(req, dto);
+
+    expect(profileService.initiateContactVerification).toHaveBeenCalledWith(
+      42,
+      dto,
+    );
+    expect(result).toEqual(response);
+  });
+
+  it('delegates verifying contact codes to ProfileService', async () => {
+    const req = { user: { user_id: 42 } };
+    const dto = { channel: 'PHONE' as const, code: '654321' };
+    const response = {
+      emailNotifs: true,
+      smsNotifs: false,
+      forumDigest: true,
+      twoFactor: true,
+      twoFactorMethod: 'EMAIL_OTP',
+      emailVerified: false,
+      phoneVerified: true,
+      publicProfile: true,
+      passwordChangedAt: null,
+    };
+    profileService.verifyContactVerification.mockResolvedValue(response);
+
+    const result = await controller.verifyContactVerification(req, dto);
+
+    expect(profileService.verifyContactVerification).toHaveBeenCalledWith(
+      42,
+      dto,
+    );
+    expect(result).toEqual(response);
+  });
+
+  it('delegates account deactivation to ProfileService', async () => {
+    const req = { user: { user_id: 42 } };
+    const dto = { reason: 'Graduated' };
+    const response = { message: 'Your account has been deactivated.' };
+    profileService.deactivateAccount.mockResolvedValue(response);
+
+    const result = await controller.deactivateAccount(req, dto);
+
+    expect(profileService.deactivateAccount).toHaveBeenCalledWith(42, dto);
     expect(result).toEqual(response);
   });
 });

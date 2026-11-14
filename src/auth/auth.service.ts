@@ -22,6 +22,45 @@ import { AuditService } from '../audit/audit.service.js';
 import { EventsGateway } from '../events/events.gateway.js';
 import { MailService } from '../mail/mail.service.js';
 
+import { Optional } from '@nestjs/common';
+import { randomInt } from 'node:crypto';
+import { SmsService } from '../sms/sms.service.js';
+import {
+  USER_SETTINGS_AUDIT_ACTION,
+  parseStoredUserSettings,
+  type StoredUserSettingsRecord,
+  type TwoFactorMethod,
+} from './user-settings.util.js';
+import {
+  signMfaChallengeToken,
+  signTrustedDeviceToken,
+  verifyMfaChallengeToken,
+  verifyTotpCode,
+  verifyTrustedDeviceToken,
+} from './mfa-token.util.js';
+import type {
+  SendMfaChallengeDto,
+  VerifyMfaChallengeDto,
+} from './dto/mfa-challenge.dto.js';
+
+function maskPhoneNumber(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length <= 4) return phone;
+  return `${phone.slice(0, Math.min(4, phone.length - 4))}***${digits.slice(-4)}`;
+}
+
+interface MfaUserSummary {
+  user_id: number;
+  email: string;
+  scholar_profile?: {
+    first_name?: string | null;
+    phone_number?: string | null;
+  } | null;
+  employee?: {
+    first_name?: string | null;
+  } | null;
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -33,7 +72,328 @@ export class AuthService {
     private eventsGateway: EventsGateway,
     private mailService: MailService,
     private configService: ConfigService,
+    @Optional() private smsService?: SmsService,
   ) {}
+
+  private async getStoredUserSettings(userId: number): Promise<{
+    logId?: number;
+    settings: StoredUserSettingsRecord;
+  }> {
+    const existing = await this.prisma.auditLog?.findFirst?.({
+      where: {
+        user_id: userId,
+        action: USER_SETTINGS_AUDIT_ACTION,
+      },
+      orderBy: { created_at: 'desc' },
+    });
+
+    return {
+      logId: existing?.log_id,
+      settings: parseStoredUserSettings(existing?.details),
+    };
+  }
+
+  private async persistStoredUserSettings(
+    userId: number,
+    next: StoredUserSettingsRecord,
+    logId?: number,
+  ): Promise<void> {
+    if (!this.prisma.auditLog) return;
+
+    const serialized = JSON.stringify(next);
+    if (logId && this.prisma.auditLog.update) {
+      await this.prisma.auditLog.update({
+        where: { log_id: logId },
+        data: { details: serialized },
+      });
+      return;
+    }
+
+    if (this.prisma.auditLog.create) {
+      await this.prisma.auditLog.create({
+        data: {
+          user_id: userId,
+          action: USER_SETTINGS_AUDIT_ACTION,
+          details: serialized,
+        },
+      });
+    }
+  }
+
+  private async dispatchMfaOtp(params: {
+    user: MfaUserSummary;
+    method: 'EMAIL_OTP' | 'SMS_OTP';
+    settings: StoredUserSettingsRecord;
+    logId?: number;
+  }): Promise<{ destination: string }> {
+    const { user, method, settings, logId } = params;
+    const phone = user.scholar_profile?.phone_number?.trim() || '';
+    if (method === 'SMS_OTP' && !phone) {
+      throw new BadRequestException(
+        'No mobile phone number is registered on this account.',
+      );
+    }
+
+    const code = String(randomInt(100000, 1000000));
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+    await this.persistStoredUserSettings(
+      user.user_id,
+      {
+        ...settings,
+        pendingTwoFactor: {
+          method,
+          code,
+          expiresAt,
+        },
+      },
+      logId,
+    );
+
+    const firstName =
+      user.scholar_profile?.first_name ||
+      user.employee?.first_name ||
+      'Scholar';
+
+    if (method === 'SMS_OTP') {
+      await this.smsService?.sendOtpSms(phone, {
+        subscriberId: `user_${user.user_id}`,
+        firstName,
+        code,
+        expiresInMinutes: 10,
+        purpose: 'AUTH_MFA',
+      });
+
+      return {
+        destination: maskPhoneNumber(phone),
+      };
+    }
+
+    await this.mailService.sendTwoFactorOtpEmail?.(user.email, {
+      userName: firstName,
+      code,
+      expiresInMinutes: 10,
+    });
+
+    return {
+      destination: user.email,
+    };
+  }
+
+  private resolveLoginMfaMethod(
+    settings: StoredUserSettingsRecord,
+    phone: string | null,
+  ): TwoFactorMethod {
+    const preferred: TwoFactorMethod = settings.twoFactorMethod ?? 'EMAIL_OTP';
+    if (preferred === 'SMS_OTP' && !phone) {
+      return 'EMAIL_OTP';
+    }
+    if (preferred === 'AUTHENTICATOR_APP' && !settings.twoFactorSecret) {
+      return 'EMAIL_OTP';
+    }
+    return preferred;
+  }
+
+  private async createMfaChallengeForUser(params: {
+    user: MfaUserSummary;
+    purpose: 'REGISTER' | 'LOGIN';
+    rememberSession?: boolean;
+    settings: StoredUserSettingsRecord;
+    logId?: number;
+  }) {
+    const { user, purpose, rememberSession, settings, logId } = params;
+    const phone = user.scholar_profile?.phone_number?.trim() || null;
+
+    const activeMethod: TwoFactorMethod =
+      purpose === 'REGISTER'
+        ? 'EMAIL_OTP'
+        : this.resolveLoginMfaMethod(settings, phone);
+
+    const availableMethods: TwoFactorMethod[] =
+      purpose === 'REGISTER'
+        ? phone
+          ? ['EMAIL_OTP', 'SMS_OTP']
+          : ['EMAIL_OTP']
+        : [activeMethod];
+
+    const jwtSecret = this.configService.get<string>('JWT_SECRET');
+    const mfaToken = signMfaChallengeToken(
+      {
+        userId: user.user_id,
+        email: user.email,
+        purpose,
+        rememberSession: Boolean(rememberSession),
+      },
+      jwtSecret,
+    );
+
+    if (activeMethod === 'AUTHENTICATOR_APP') {
+      return {
+        mfa_required: true,
+        mfa_token: mfaToken,
+        mfa_method: activeMethod,
+        mfa_destination: user.email,
+        email_destination: user.email,
+        phone_destination: phone ? maskPhoneNumber(phone) : null,
+        available_methods: availableMethods,
+      };
+    }
+
+    const dispatched = await this.dispatchMfaOtp({
+      user,
+      method: activeMethod,
+      settings,
+      logId,
+    });
+
+    return {
+      mfa_required: true,
+      mfa_token: mfaToken,
+      mfa_method: activeMethod,
+      mfa_destination: dispatched.destination,
+      email_destination: user.email,
+      phone_destination: phone ? maskPhoneNumber(phone) : null,
+      available_methods: availableMethods,
+    };
+  }
+
+  async sendMfaChallenge(dto: SendMfaChallengeDto) {
+    const jwtSecret = this.configService.get<string>('JWT_SECRET');
+    const payload = verifyMfaChallengeToken(dto.mfa_token, jwtSecret);
+    if (!payload) {
+      throw new UnauthorizedException(
+        'Your verification session has expired. Please try again.',
+      );
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { user_id: payload.userId },
+      include: { scholar_profile: true, employee: true },
+    });
+    if (!user || !user.is_active) {
+      throw new UnauthorizedException('User account is unavailable.');
+    }
+
+    const { logId, settings } = await this.getStoredUserSettings(user.user_id);
+    if (payload.purpose === 'LOGIN') {
+      const phone = user.scholar_profile?.phone_number?.trim() || null;
+      const configuredMethod = this.resolveLoginMfaMethod(settings, phone);
+      if (dto.method !== configuredMethod) {
+        throw new BadRequestException(
+          'Channel switching is only available during registration.',
+        );
+      }
+    }
+
+    const dispatched = await this.dispatchMfaOtp({
+      user,
+      method: dto.method,
+      settings,
+      logId,
+    });
+
+    return {
+      mfa_method: dto.method,
+      mfa_destination: dispatched.destination,
+    };
+  }
+
+  async verifyMfaChallenge(dto: VerifyMfaChallengeDto) {
+    const jwtSecret = this.configService.get<string>('JWT_SECRET');
+    const payload = verifyMfaChallengeToken(dto.mfa_token, jwtSecret);
+    if (!payload) {
+      throw new UnauthorizedException(
+        'Your verification session has expired. Please sign in again.',
+      );
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { user_id: payload.userId },
+      include: { scholar_profile: true, employee: true },
+    });
+    if (!user || !user.is_active) {
+      throw new UnauthorizedException('User account is unavailable.');
+    }
+
+    const { logId, settings } = await this.getStoredUserSettings(user.user_id);
+    const method: TwoFactorMethod =
+      dto.method ??
+      (settings.twoFactorMethod === 'AUTHENTICATOR_APP' &&
+      !settings.pendingTwoFactor
+        ? 'AUTHENTICATOR_APP'
+        : (settings.pendingTwoFactor?.method ??
+          settings.twoFactorMethod ??
+          'EMAIL_OTP'));
+
+    if (method === 'AUTHENTICATOR_APP') {
+      if (
+        !settings.twoFactorSecret ||
+        !verifyTotpCode(settings.twoFactorSecret, dto.code)
+      ) {
+        throw new BadRequestException('Invalid verification code.');
+      }
+    } else {
+      const pending = settings.pendingTwoFactor;
+      if (!pending || pending.method !== method) {
+        throw new BadRequestException(
+          'No active verification code found. Please request a new code.',
+        );
+      }
+      if (new Date(pending.expiresAt).getTime() <= Date.now()) {
+        throw new BadRequestException(
+          'Verification code has expired. Please request a new code.',
+        );
+      }
+      if (pending.code !== dto.code.trim()) {
+        throw new BadRequestException('Invalid verification code.');
+      }
+    }
+
+    await this.persistStoredUserSettings(
+      user.user_id,
+      {
+        ...settings,
+        emailVerified: method === 'EMAIL_OTP' ? true : settings.emailVerified,
+        phoneVerified: method === 'SMS_OTP' ? true : settings.phoneVerified,
+        pendingTwoFactor: null,
+      },
+      logId,
+    );
+
+    if (payload.purpose === 'REGISTER') {
+      await this.auditService.log(
+        user.user_id,
+        'SCHOLAR_MFA_VERIFIED',
+        `Scholar verified registration MFA (${method}) (User ID: ${user.user_id}, Email: ${user.email})`,
+      );
+    } else {
+      await this.auditService.log(
+        user.user_id,
+        'USER_LOGIN',
+        `User logged in via MFA (${method}) (ID: ${user.user_id}, Email: ${user.email}, Role: ${user.role})`,
+      );
+    }
+
+    const tokenPayload = await this.generateToken(
+      user.user_id,
+      user.email,
+      user.role,
+      user.scholar_profile,
+      user.employee,
+      user.created_at,
+    );
+
+    const trustedDeviceToken = dto.remember_device
+      ? signTrustedDeviceToken(user.user_id, jwtSecret)
+      : undefined;
+
+    return {
+      ...tokenPayload,
+      ...(trustedDeviceToken
+        ? { trusted_device_token: trustedDeviceToken }
+        : {}),
+    };
+  }
 
   // 1. Public Scholar Signup
   async registerScholar(dto: RegisterScholarDto) {
@@ -83,7 +443,8 @@ export class AuthService {
       `Scholar registered (User ID: ${user.user_id}, Email: ${user.email})`,
     );
 
-    return this.generateToken(
+    const { logId, settings } = await this.getStoredUserSettings(user.user_id);
+    const tokenPayload = await this.generateToken(
       user.user_id,
       user.email,
       user.role,
@@ -91,6 +452,18 @@ export class AuthService {
       undefined,
       user.created_at,
     );
+    const mfaChallenge = await this.createMfaChallengeForUser({
+      user,
+      purpose: 'REGISTER',
+      rememberSession: false,
+      settings,
+      logId,
+    });
+
+    return {
+      ...tokenPayload,
+      ...mfaChallenge,
+    };
   }
 
   // 2. Admin/Grantor creates Staff Accounts
@@ -197,13 +570,15 @@ export class AuthService {
       data: { last_login_at: new Date() },
     });
 
-    await this.auditService.log(
+    const { logId, settings } = await this.getStoredUserSettings(user.user_id);
+    const jwtSecret = this.configService.get<string>('JWT_SECRET');
+    const isTrustedDevice = verifyTrustedDeviceToken(
+      dto.trusted_device_token,
       user.user_id,
-      'USER_LOGIN',
-      `User logged in (ID: ${user.user_id}, Email: ${user.email}, Role: ${user.role})`,
+      jwtSecret,
     );
 
-    return this.generateToken(
+    const tokenPayload = await this.generateToken(
       user.user_id,
       user.email,
       user.role,
@@ -211,6 +586,35 @@ export class AuthService {
       user.employee,
       user.created_at,
     );
+
+    if (settings.twoFactor && !isTrustedDevice) {
+      await this.auditService.log(
+        user.user_id,
+        'USER_LOGIN_MFA_REQUIRED',
+        `MFA verification required for login (ID: ${user.user_id}, Email: ${user.email}, Role: ${user.role})`,
+      );
+
+      const mfaChallenge = await this.createMfaChallengeForUser({
+        user,
+        purpose: 'LOGIN',
+        rememberSession: false,
+        settings,
+        logId,
+      });
+
+      return {
+        ...tokenPayload,
+        ...mfaChallenge,
+      };
+    }
+
+    await this.auditService.log(
+      user.user_id,
+      'USER_LOGIN',
+      `User logged in (ID: ${user.user_id}, Email: ${user.email}, Role: ${user.role})`,
+    );
+
+    return tokenPayload;
   }
 
   // 4. Refresh / Re-issue token with fresh role and profile
@@ -497,7 +901,28 @@ export class AuthService {
       });
     }
 
-    return this.generateToken(
+    const { logId, settings: loadedSettings } =
+      await this.getStoredUserSettings(authenticatedUser.user_id);
+    let settings = loadedSettings;
+    if (!settings.emailVerified) {
+      settings = {
+        ...settings,
+        emailVerified: true,
+      };
+      await this.persistStoredUserSettings(
+        authenticatedUser.user_id,
+        settings,
+        logId,
+      );
+    }
+    const jwtSecret = this.configService.get<string>('JWT_SECRET');
+    const isTrustedDevice = verifyTrustedDeviceToken(
+      dto.trusted_device_token,
+      authenticatedUser.user_id,
+      jwtSecret,
+    );
+
+    const tokenPayload = await this.generateToken(
       authenticatedUser.user_id,
       authenticatedUser.email,
       authenticatedUser.role,
@@ -505,6 +930,29 @@ export class AuthService {
       authenticatedUser.employee,
       authenticatedUser.created_at,
     );
+
+    const requiresAdditionalMfa =
+      settings.twoFactor &&
+      (settings.twoFactorMethod === 'SMS_OTP' ||
+        settings.twoFactorMethod === 'AUTHENTICATOR_APP') &&
+      !isTrustedDevice;
+
+    if (requiresAdditionalMfa) {
+      const mfaChallenge = await this.createMfaChallengeForUser({
+        user: authenticatedUser,
+        purpose: 'LOGIN',
+        rememberSession: false,
+        settings,
+        logId,
+      });
+
+      return {
+        ...tokenPayload,
+        ...mfaChallenge,
+      };
+    }
+
+    return tokenPayload;
   }
 
   private async generateToken(

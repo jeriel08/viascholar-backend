@@ -12,6 +12,10 @@ import { UpdateCommentDto } from './dto/update-comment.dto.js';
 import { QueryPostsDto } from './dto/query-posts.dto.js';
 import { Prisma, Role } from '../generated/prisma/client.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import {
+  USER_SETTINGS_AUDIT_ACTION,
+  parseUserSettings,
+} from '../auth/user-settings.util.js';
 
 export interface ForumTaggedUser {
   user_id: number;
@@ -165,6 +169,91 @@ export class ForumService {
     }
   }
 
+  private async getPublicProfileMap(
+    userIds: number[],
+  ): Promise<Map<number, boolean>> {
+    const uniqueIds = Array.from(new Set(userIds));
+    const map = new Map<number, boolean>();
+    if (
+      uniqueIds.length === 0 ||
+      typeof this.prisma.auditLog?.findMany !== 'function'
+    ) {
+      return map;
+    }
+
+    const logs = await this.prisma.auditLog.findMany({
+      where: {
+        user_id: { in: uniqueIds },
+        action: USER_SETTINGS_AUDIT_ACTION,
+      },
+      orderBy: { created_at: 'desc' },
+      select: {
+        user_id: true,
+        details: true,
+      },
+    });
+
+    for (const log of logs) {
+      if (log.user_id !== null && !map.has(log.user_id)) {
+        map.set(log.user_id, parseUserSettings(log.details).publicProfile);
+      }
+    }
+
+    return map;
+  }
+
+  private formatAuthor(
+    user: {
+      user_id: number;
+      email: string;
+      role: Role;
+      scholar_profile?: {
+        first_name: string;
+        last_name: string;
+        avatar_url?: string | null;
+        bio?: string | null;
+      } | null;
+      employee?: {
+        first_name: string;
+        last_name: string;
+        avatar_url?: string | null;
+        bio?: string | null;
+      } | null;
+    },
+    isPublicProfile: boolean,
+    activityCounts?: {
+      postsCount: number;
+      commentsCount: number;
+    },
+  ) {
+    const authorProfile = user.scholar_profile || user.employee;
+    const authorName =
+      `${authorProfile?.first_name || ''} ${authorProfile?.last_name || ''}`.trim() ||
+      'User';
+
+    return {
+      user_id: user.user_id,
+      name: authorName,
+      first_name: authorProfile?.first_name || '',
+      last_name: authorProfile?.last_name || '',
+      email: isPublicProfile ? user.email : null,
+      role: user.role,
+      avatar_url: authorProfile?.avatar_url || null,
+      bio: isPublicProfile ? authorProfile?.bio || null : null,
+      public_profile: isPublicProfile,
+      ...(activityCounts
+        ? {
+            forum_posts_count: isPublicProfile
+              ? activityCounts.postsCount
+              : null,
+            forum_comments_count: isPublicProfile
+              ? activityCounts.commentsCount
+              : null,
+          }
+        : {}),
+    };
+  }
+
   // 1. Create a new forum discussion or question
   async createPost(authorUserId: number, dto: CreatePostDto) {
     const staffList = await this.getTaggableStaff(authorUserId);
@@ -195,10 +284,12 @@ export class ForumService {
       },
     });
 
-    const authorProfile = post.author.scholar_profile || post.author.employee;
-    const authorName =
-      `${authorProfile?.first_name || ''} ${authorProfile?.last_name || ''}`.trim() ||
-      'User';
+    const publicProfileMap = await this.getPublicProfileMap([
+      post.author.user_id,
+    ]);
+    const isPublicProfile = publicProfileMap.get(post.author.user_id) ?? true;
+    const formattedAuthor = this.formatAuthor(post.author, isPublicProfile);
+    const authorName = formattedAuthor.name;
 
     const { cleanContent } = this.parseContentAndTagIds(post.content);
 
@@ -212,15 +303,7 @@ export class ForumService {
       views_count: post.views_count,
       tagged_user_ids: taggedUserIds,
       tagged_users: resolvedStaff,
-      author: {
-        user_id: post.author.user_id,
-        name: authorName,
-        first_name: authorProfile?.first_name || '',
-        last_name: authorProfile?.last_name || '',
-        email: post.author.email,
-        role: post.author.role,
-        avatar_url: authorProfile?.avatar_url || null,
-      },
+      author: formattedAuthor,
       comments_count: 0,
       created_at: post.created_at,
       updated_at: post.updated_at,
@@ -278,11 +361,11 @@ export class ForumService {
       this.getTaggableStaff(),
     ]);
 
+    const publicProfileMap = await this.getPublicProfileMap(
+      posts.map((p) => p.author.user_id),
+    );
     const formattedPosts = posts.map((p) => {
-      const authorProfile = p.author.scholar_profile || p.author.employee;
-      const authorName =
-        `${authorProfile?.first_name || ''} ${authorProfile?.last_name || ''}`.trim() ||
-        'User';
+      const isPublicProfile = publicProfileMap.get(p.author.user_id) ?? true;
       const parsed = this.parseContentAndTagIds(p.content);
       const taggedUsers = this.resolveTaggedUsers(
         parsed.cleanContent,
@@ -302,15 +385,7 @@ export class ForumService {
         comments_count: p._count.comments,
         tagged_user_ids: taggedUsers.map((s) => s.user_id),
         tagged_users: taggedUsers,
-        author: {
-          user_id: p.author.user_id,
-          name: authorName,
-          first_name: authorProfile?.first_name || '',
-          last_name: authorProfile?.last_name || '',
-          email: p.author.email,
-          role: p.author.role,
-          avatar_url: authorProfile?.avatar_url || null,
-        },
+        author: this.formatAuthor(p.author, isPublicProfile),
         created_at: p.created_at,
         updated_at: p.updated_at,
       };
@@ -358,10 +433,33 @@ export class ForumService {
       this.getTaggableStaff(),
     ]);
 
-    const authorProfile = post.author.scholar_profile || post.author.employee;
-    const authorName =
-      `${authorProfile?.first_name || ''} ${authorProfile?.last_name || ''}`.trim() ||
-      'User';
+    const publicProfileMap = await this.getPublicProfileMap([
+      post.author.user_id,
+    ]);
+    const isPublicProfile = publicProfileMap.get(post.author.user_id) ?? true;
+
+    let activityCounts = { postsCount: 0, commentsCount: 0 };
+    if (
+      isPublicProfile &&
+      typeof this.prisma.forumPost?.count === 'function' &&
+      typeof this.prisma.forumComment?.count === 'function'
+    ) {
+      const [postsCount, commentsCount] = await Promise.all([
+        this.prisma.forumPost.count({
+          where: { author_user_id: post.author.user_id },
+        }),
+        this.prisma.forumComment.count({
+          where: { author_user_id: post.author.user_id },
+        }),
+      ]);
+      activityCounts = { postsCount, commentsCount };
+    }
+
+    const formattedAuthor = this.formatAuthor(
+      post.author,
+      isPublicProfile,
+      activityCounts,
+    );
 
     const parsed = this.parseContentAndTagIds(post.content);
     const taggedUsers = this.resolveTaggedUsers(
@@ -406,15 +504,7 @@ export class ForumService {
       views_count: updatedPost.views_count,
       tagged_user_ids: taggedUsers.map((s) => s.user_id),
       tagged_users: taggedUsers,
-      author: {
-        user_id: post.author.user_id,
-        name: authorName,
-        first_name: authorProfile?.first_name || '',
-        last_name: authorProfile?.last_name || '',
-        email: post.author.email,
-        role: post.author.role,
-        avatar_url: authorProfile?.avatar_url || null,
-      },
+      author: formattedAuthor,
       created_at: post.created_at,
       updated_at: post.updated_at,
       comments: formattedComments,

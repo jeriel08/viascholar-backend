@@ -12,6 +12,8 @@ export interface UserSettings {
   forumDigest: boolean;
   twoFactor: boolean;
   twoFactorMethod: TwoFactorMethod | null;
+  emailVerified: boolean;
+  phoneVerified: boolean;
   publicProfile: boolean;
   passwordChangedAt: string | null;
 }
@@ -23,9 +25,16 @@ export interface PendingTwoFactorSetup {
   expiresAt: string;
 }
 
+export interface PendingContactVerification {
+  channel: 'EMAIL' | 'PHONE';
+  code: string;
+  expiresAt: string;
+}
+
 export interface StoredUserSettingsRecord extends UserSettings {
   twoFactorSecret?: string | null;
   pendingTwoFactor?: PendingTwoFactorSetup | null;
+  pendingContactVerification?: PendingContactVerification | null;
 }
 
 export const USER_SETTINGS_AUDIT_ACTION = 'USER_SETTINGS_PREFERENCES';
@@ -34,8 +43,10 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   emailNotifs: true,
   smsNotifs: false,
   forumDigest: true,
-  twoFactor: false,
-  twoFactorMethod: null,
+  twoFactor: true,
+  twoFactorMethod: 'EMAIL_OTP',
+  emailVerified: false,
+  phoneVerified: false,
   publicProfile: true,
   passwordChangedAt: null,
 };
@@ -77,6 +88,29 @@ export function parseStoredUserSettings(
           }
         : null;
 
+    const twoFactor =
+      typeof parsed.twoFactor === 'boolean'
+        ? parsed.twoFactor
+        : DEFAULT_USER_SETTINGS.twoFactor;
+    const twoFactorMethod = twoFactor
+      ? isTwoFactorMethod(parsed.twoFactorMethod)
+        ? parsed.twoFactorMethod
+        : DEFAULT_USER_SETTINGS.twoFactorMethod
+      : null;
+
+    const pendingContactVerification =
+      parsed.pendingContactVerification &&
+      (parsed.pendingContactVerification.channel === 'EMAIL' ||
+        parsed.pendingContactVerification.channel === 'PHONE') &&
+      typeof parsed.pendingContactVerification.code === 'string' &&
+      typeof parsed.pendingContactVerification.expiresAt === 'string'
+        ? {
+            channel: parsed.pendingContactVerification.channel,
+            code: parsed.pendingContactVerification.code,
+            expiresAt: parsed.pendingContactVerification.expiresAt,
+          }
+        : null;
+
     return {
       emailNotifs:
         typeof parsed.emailNotifs === 'boolean'
@@ -90,13 +124,16 @@ export function parseStoredUserSettings(
         typeof parsed.forumDigest === 'boolean'
           ? parsed.forumDigest
           : DEFAULT_USER_SETTINGS.forumDigest,
-      twoFactor:
-        typeof parsed.twoFactor === 'boolean'
-          ? parsed.twoFactor
-          : DEFAULT_USER_SETTINGS.twoFactor,
-      twoFactorMethod: isTwoFactorMethod(parsed.twoFactorMethod)
-        ? parsed.twoFactorMethod
-        : DEFAULT_USER_SETTINGS.twoFactorMethod,
+      twoFactor,
+      twoFactorMethod,
+      emailVerified:
+        typeof parsed.emailVerified === 'boolean'
+          ? parsed.emailVerified
+          : DEFAULT_USER_SETTINGS.emailVerified,
+      phoneVerified:
+        typeof parsed.phoneVerified === 'boolean'
+          ? parsed.phoneVerified
+          : DEFAULT_USER_SETTINGS.phoneVerified,
       publicProfile:
         typeof parsed.publicProfile === 'boolean'
           ? parsed.publicProfile
@@ -110,6 +147,7 @@ export function parseStoredUserSettings(
           ? parsed.twoFactorSecret
           : null,
       pendingTwoFactor: pending,
+      pendingContactVerification,
     };
   } catch {
     return { ...DEFAULT_USER_SETTINGS };
@@ -128,6 +166,8 @@ export function parseUserSettings(rawDetails?: string | null): UserSettings {
     forumDigest: stored.forumDigest,
     twoFactor: stored.twoFactor,
     twoFactorMethod: stored.twoFactorMethod,
+    emailVerified: stored.emailVerified,
+    phoneVerified: stored.phoneVerified,
     publicProfile: stored.publicProfile,
     passwordChangedAt: stored.passwordChangedAt,
   };

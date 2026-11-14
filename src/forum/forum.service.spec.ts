@@ -390,6 +390,130 @@ describe('ForumService', () => {
     });
   });
 
+  describe('publicProfile privacy', () => {
+    const basePost = {
+      post_id: 77,
+      author_user_id: 7,
+      title: 'Privacy Test Post',
+      content: 'Testing publicProfile visibility in forum',
+      category: 'GENERAL',
+      is_pinned: false,
+      views_count: 3,
+      created_at: new Date('2026-11-14T10:00:00Z'),
+      updated_at: new Date('2026-11-14T10:00:00Z'),
+      author: {
+        user_id: 7,
+        email: 'juan@viascholar.ph',
+        role: 'SCHOLAR',
+        scholar_profile: {
+          first_name: 'Juan',
+          last_name: 'Dela Cruz',
+          avatar_url: 'https://cdn.example/avatar.png',
+          bio: 'CS scholar interested in AI',
+        },
+        employee: null,
+      },
+    };
+
+    it('masks email, bio, and activity counts in getPosts and getPostById when publicProfile is false', async () => {
+      const findManyAudit = vi.fn().mockResolvedValue([
+        {
+          user_id: 7,
+          details: JSON.stringify({ publicProfile: false }),
+        },
+      ]);
+      const commentCount = vi.fn().mockResolvedValue(9);
+      const prismaAny = prisma as unknown as Record<string, unknown>;
+      prismaAny.auditLog = { findMany: findManyAudit };
+      (prisma.forumComment as unknown as Record<string, unknown>).count =
+        commentCount;
+
+      prisma.forumPost.count.mockResolvedValueOnce(1);
+      prisma.forumPost.findMany.mockResolvedValueOnce([
+        { ...basePost, _count: { comments: 2 } },
+      ]);
+      const listResult = await service.getPosts({ page: 1, limit: 20 });
+
+      expect(listResult.posts[0].author).toEqual(
+        objectMatching({
+          user_id: 7,
+          name: 'Juan Dela Cruz',
+          email: null,
+          bio: null,
+          public_profile: false,
+        }),
+      );
+
+      prisma.forumPost.findUnique.mockResolvedValueOnce({
+        ...basePost,
+        comments: [],
+      });
+      prisma.forumPost.update.mockResolvedValueOnce({ views_count: 4 });
+      const detailResult = await service.getPostById(77);
+
+      expect(detailResult.author).toEqual(
+        objectMatching({
+          user_id: 7,
+          name: 'Juan Dela Cruz',
+          email: null,
+          bio: null,
+          public_profile: false,
+          forum_posts_count: null,
+          forum_comments_count: null,
+        }),
+      );
+      expect(prisma.forumPost.count).toHaveBeenCalledTimes(1);
+      expect(commentCount).not.toHaveBeenCalled();
+
+      delete prismaAny.auditLog;
+      delete (prisma.forumComment as unknown as Record<string, unknown>).count;
+    });
+
+    it('exposes email, bio, and forum activity counts when publicProfile is true', async () => {
+      const findManyAudit = vi.fn().mockResolvedValue([
+        {
+          user_id: 7,
+          details: JSON.stringify({ publicProfile: true }),
+        },
+      ]);
+      const commentCount = vi.fn().mockResolvedValue(12);
+      const prismaAny = prisma as unknown as Record<string, unknown>;
+      prismaAny.auditLog = { findMany: findManyAudit };
+      (prisma.forumComment as unknown as Record<string, unknown>).count =
+        commentCount;
+
+      prisma.forumPost.count.mockResolvedValueOnce(5);
+      prisma.forumPost.findUnique.mockResolvedValueOnce({
+        ...basePost,
+        comments: [],
+      });
+      prisma.forumPost.update.mockResolvedValueOnce({ views_count: 4 });
+
+      const detailResult = await service.getPostById(77);
+
+      expect(detailResult.author).toEqual(
+        objectMatching({
+          user_id: 7,
+          name: 'Juan Dela Cruz',
+          email: 'juan@viascholar.ph',
+          bio: 'CS scholar interested in AI',
+          public_profile: true,
+          forum_posts_count: 5,
+          forum_comments_count: 12,
+        }),
+      );
+      expect(prisma.forumPost.count).toHaveBeenCalledWith({
+        where: { author_user_id: 7 },
+      });
+      expect(commentCount).toHaveBeenCalledWith({
+        where: { author_user_id: 7 },
+      });
+
+      delete prismaAny.auditLog;
+      delete (prisma.forumComment as unknown as Record<string, unknown>).count;
+    });
+  });
+
   describe('updatePost', () => {
     it('throws NotFoundException when the post does not exist', async () => {
       prisma.forumPost.findUnique.mockResolvedValue(null);

@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsString } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsEmail, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class LoginDto {
   @ApiProperty({ description: 'The email address of the user' })
@@ -11,4 +11,12 @@ export class LoginDto {
   @IsString()
   @IsNotEmpty()
   password: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional trusted device token to skip MFA on remembered devices',
+  })
+  @IsString()
+  @IsOptional()
+  trusted_device_token?: string;
 }

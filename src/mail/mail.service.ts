@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { SmsService } from '../sms/sms.service.js';
 import {
   buildApplicationSubmittedStaffHtml,
   buildApplicationSubmittedStudentHtml,
@@ -42,6 +43,7 @@ export class MailService {
   constructor(
     private configService: ConfigService,
     private prisma: PrismaService,
+    @Optional() private smsService?: SmsService,
   ) {
     const apiKey = this.configService.get<string>('RESEND_API_KEY');
     this.fromEmail =
@@ -176,6 +178,42 @@ export class MailService {
     }
   }
 
+  private async sendStudentSmsByEmail(
+    studentEmail: string,
+    message: string,
+  ): Promise<void> {
+    if (
+      !this.smsService ||
+      !studentEmail ||
+      typeof this.prisma.user?.findUnique !== 'function'
+    ) {
+      return;
+    }
+
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { email: studentEmail },
+        select: {
+          user_id: true,
+          scholar_profile: {
+            select: { phone_number: true },
+          },
+        },
+      });
+      const phone = user?.scholar_profile?.phone_number?.trim();
+      if (!user || !phone) {
+        return;
+      }
+
+      await this.smsService.sendNotificationSms(user.user_id, phone, message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `Failed to send SMS notification to ${studentEmail}: ${msg}`,
+      );
+    }
+  }
+
   // 1. New application submitted (Staff notification)
   async sendApplicationSubmittedStaff(
     staffEmails: string[],
@@ -206,6 +244,10 @@ export class MailService {
       'Application Received - ViaScholar',
       html,
     );
+    await this.sendStudentSmsByEmail(
+      studentEmail,
+      `[ViaScholar] Hi ${data.studentName}, your scholarship application (#${data.applicationId}) has been received and is under review.`,
+    );
   }
 
   // 3. Interview Scheduled (Student)
@@ -223,6 +265,10 @@ export class MailService {
       studentEmail,
       'Interview Scheduled: ViaScholar Scholarship Program',
       html,
+    );
+    await this.sendStudentSmsByEmail(
+      studentEmail,
+      `[ViaScholar] Hi ${data.studentName}, your scholarship interview is scheduled for ${data.interviewAt.toISOString()}. Check your portal for details.`,
     );
   }
 
@@ -262,6 +308,10 @@ export class MailService {
       'Interview Rescheduled: ViaScholar Scholarship Program',
       html,
     );
+    await this.sendStudentSmsByEmail(
+      studentEmail,
+      `[ViaScholar] Hi ${data.studentName}, your scholarship interview was rescheduled to ${data.newInterviewAt.toISOString()}. Check your portal for details.`,
+    );
   }
 
   // 5b. Interview Cancelled (Student)
@@ -278,6 +328,10 @@ export class MailService {
       studentEmail,
       'Interview Cancelled: ViaScholar Scholarship Program',
       html,
+    );
+    await this.sendStudentSmsByEmail(
+      studentEmail,
+      `[ViaScholar] Hi ${data.studentName}, your scheduled scholarship interview has been cancelled.${data.reason ? ` Reason: ${data.reason}` : ''}`,
     );
   }
 
@@ -297,6 +351,10 @@ export class MailService {
       `Application Update: ${data.stage}`,
       html,
     );
+    await this.sendStudentSmsByEmail(
+      studentEmail,
+      `[ViaScholar] Hi ${data.studentName}, your application stage "${data.stage}" was updated to ${data.status}.`,
+    );
   }
 
   // 7. Application Approved (Student)
@@ -309,6 +367,10 @@ export class MailService {
       studentEmail,
       '🎉 Congratulations! Your ViaScholar Application is Approved',
       html,
+    );
+    await this.sendStudentSmsByEmail(
+      studentEmail,
+      `[ViaScholar] Congratulations ${data.studentName}! Your scholarship application${data.track ? ` (${data.track})` : ''} has been approved.`,
     );
   }
 
@@ -323,6 +385,10 @@ export class MailService {
       'ViaScholar Application Status Update',
       html,
     );
+    await this.sendStudentSmsByEmail(
+      studentEmail,
+      `[ViaScholar] Hi ${data.studentName}, there is a status update on your scholarship application. Please check your portal for details.`,
+    );
   }
 
   // 9. Contract Issued & Ready to Sign (Student)
@@ -336,6 +402,10 @@ export class MailService {
       'Action Required: Sign Your ViaScholar Scholarship Agreement',
       html,
     );
+    await this.sendStudentSmsByEmail(
+      studentEmail,
+      `[ViaScholar] Hi ${data.studentName}, your scholarship agreement (#${data.contractNumber}) is ready to sign in your portal.`,
+    );
   }
 
   // 10. Contract Signed - Student Welcome
@@ -348,6 +418,10 @@ export class MailService {
       studentEmail,
       'Welcome to ViaScholar - Contract Executed',
       html,
+    );
+    await this.sendStudentSmsByEmail(
+      studentEmail,
+      `[ViaScholar] Welcome to ViaScholar, ${data.studentName}! Your scholarship agreement (#${data.contractNumber}) has been executed.`,
     );
   }
 
@@ -397,6 +471,10 @@ export class MailService {
       `[Action Required] Re-upload Document: ${data.documentType}`,
       html,
     );
+    await this.sendStudentSmsByEmail(
+      studentEmail,
+      `[ViaScholar] Action required: Please re-upload your ${data.documentType} document in the ViaScholar portal.${data.reason ? ` Reason: ${data.reason}` : ''}`,
+    );
   }
 
   // 13. Grade Report Status Evaluated (Scholar)
@@ -415,6 +493,10 @@ export class MailService {
       studentEmail,
       `Grade Report Update: ${data.status} (A.Y. ${data.academicYear} ${data.semester})`,
       html,
+    );
+    await this.sendStudentSmsByEmail(
+      studentEmail,
+      `[ViaScholar] Hi ${data.studentName}, your grade report for A.Y. ${data.academicYear} ${data.semester} was updated to ${data.status}.`,
     );
   }
 

@@ -3,8 +3,9 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
-import { createHmac, randomBytes, randomInt } from 'node:crypto';
+import { randomInt } from 'node:crypto';
 import * as bcrypt from 'bcrypt';
 import * as QRCode from 'qrcode';
 import { Role } from '../generated/prisma/client.js';
@@ -12,11 +13,19 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { CloudinaryService } from '../cloudinary/cloudinary.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { MailService } from '../mail/mail.service.js';
+import { SmsService } from '../sms/sms.service.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
 import { UpdateUserSettingsDto } from './dto/update-user-settings.dto.js';
 import { SetupTwoFactorDto, VerifyTwoFactorDto } from './dto/two-factor.dto.js';
-import { ChangePasswordDto } from './dto/change-password.dto.js';
 import {
+  SendContactVerificationDto,
+  VerifyContactVerificationDto,
+} from './dto/contact-verification.dto.js';
+import { ChangePasswordDto } from './dto/change-password.dto.js';
+import { DeactivateAccountDto } from './dto/deactivate-account.dto.js';
+import { generateBase32Secret, verifyTotpCode } from './mfa-token.util.js';
+import {
+  type PendingContactVerification,
   type PendingTwoFactorSetup,
   type StoredUserSettingsRecord,
   type TwoFactorMethod,
@@ -26,79 +35,6 @@ import {
   parseUserSettings,
 } from './user-settings.util.js';
 
-const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-
-function generateBase32Secret(byteLength = 20): string {
-  const bytes = randomBytes(byteLength);
-  let bits = 0;
-  let value = 0;
-  let output = '';
-
-  for (const byte of bytes) {
-    value = (value << 8) | byte;
-    bits += 8;
-    while (bits >= 5) {
-      output += BASE32_ALPHABET[(value >>> (bits - 5)) & 31];
-      bits -= 5;
-    }
-  }
-  if (bits > 0) {
-    output += BASE32_ALPHABET[(value << (5 - bits)) & 31];
-  }
-  return output;
-}
-
-function decodeBase32(base32: string): Buffer {
-  const cleaned = base32.toUpperCase().replace(/[^A-Z2-7]/g, '');
-  let bits = 0;
-  let value = 0;
-  const output: number[] = [];
-
-  for (const char of cleaned) {
-    const idx = BASE32_ALPHABET.indexOf(char);
-    if (idx === -1) continue;
-    value = (value << 5) | idx;
-    bits += 5;
-    if (bits >= 8) {
-      output.push((value >>> (bits - 8)) & 255);
-      bits -= 8;
-    }
-  }
-  return Buffer.from(output);
-}
-
-function generateTotpCode(
-  base32Secret: string,
-  windowOffset = 0,
-  timestampMs = Date.now(),
-): string {
-  const key = decodeBase32(base32Secret);
-  const counter = Math.floor(timestampMs / 1000 / 30) + windowOffset;
-  const counterBuf = Buffer.alloc(8);
-  counterBuf.writeBigInt64BE(BigInt(counter));
-
-  const hmac = createHmac('sha1', key).update(counterBuf).digest();
-  const offset = hmac[hmac.length - 1] & 0x0f;
-  const code =
-    ((hmac[offset] & 0x7f) << 24) |
-    ((hmac[offset + 1] & 0xff) << 16) |
-    ((hmac[offset + 2] & 0xff) << 8) |
-    (hmac[offset + 3] & 0xff);
-
-  return String(code % 1_000_000).padStart(6, '0');
-}
-
-function verifyTotpCode(base32Secret: string, inputCode: string): boolean {
-  const normalized = inputCode.trim();
-  if (!/^\d{6}$/.test(normalized)) {
-    return false;
-  }
-  const now = Date.now();
-  return [-1, 0, 1].some(
-    (offset) => generateTotpCode(base32Secret, offset, now) === normalized,
-  );
-}
-
 export interface TwoFactorSetupResponse {
   method: TwoFactorMethod;
   destination: string;
@@ -106,7 +42,13 @@ export interface TwoFactorSetupResponse {
   qrCodeDataUrl?: string;
   manualKey?: string;
   simulated?: boolean;
-  simulationCode?: string;
+}
+
+export interface ContactVerificationSetupResponse {
+  channel: 'EMAIL' | 'PHONE';
+  destination: string;
+  expiresInMinutes: number;
+  simulated?: boolean;
 }
 
 @Injectable()
@@ -116,6 +58,7 @@ export class ProfileService {
     private cloudinaryService: CloudinaryService,
     private auditService: AuditService,
     private mailService: MailService,
+    @Optional() private smsService?: SmsService,
   ) {}
 
   // Method to handle Avatar upload
@@ -218,6 +161,25 @@ export class ProfileService {
           scholarship_track: dto.scholarship_track,
         },
       });
+
+      if (
+        dto.phone_number !== undefined &&
+        dto.phone_number.trim() !==
+          (user.scholar_profile.phone_number ?? '').trim() &&
+        typeof this.prisma.auditLog?.findFirst === 'function'
+      ) {
+        const existingSettings = await this.findLatestSettingsRecord(userId);
+        const currentSettings = parseStoredUserSettings(
+          existingSettings?.details,
+        );
+        if (currentSettings.phoneVerified) {
+          await this.persistStoredSettings(
+            userId,
+            { ...currentSettings, phoneVerified: false },
+            existingSettings?.log_id,
+          );
+        }
+      }
     }
     // 2. If User is Staff (Coordinator / Grantor / Admin), update employees table
     else if (user.employee) {
@@ -329,11 +291,14 @@ export class ProfileService {
         nextTwoFactor === false
           ? null
           : (dto.twoFactorMethod ?? current.twoFactorMethod),
+      emailVerified: current.emailVerified,
+      phoneVerified: current.phoneVerified,
       publicProfile: dto.publicProfile ?? current.publicProfile,
       passwordChangedAt: current.passwordChangedAt,
       twoFactorSecret: nextTwoFactor === false ? null : current.twoFactorSecret,
       pendingTwoFactor:
         nextTwoFactor === false ? null : current.pendingTwoFactor,
+      pendingContactVerification: current.pendingContactVerification,
     };
 
     const serialized = await this.persistStoredSettings(
@@ -419,12 +384,23 @@ export class ProfileService {
         existing?.log_id,
       );
 
+      const firstName =
+        user.scholar_profile?.first_name ||
+        user.employee?.first_name ||
+        'Scholar';
+      const smsResult = await this.smsService?.sendOtpSms(phone, {
+        subscriberId: `user_${userId}`,
+        firstName,
+        code,
+        expiresInMinutes: 10,
+        purpose: 'TWO_FACTOR_SETUP',
+      });
+
       return {
         method: 'SMS_OTP',
         destination: phone,
         expiresInMinutes: 10,
-        simulated: true,
-        simulationCode: code,
+        simulated: smsResult ? smsResult.simulated : true,
       };
     }
 
@@ -452,15 +428,11 @@ export class ProfileService {
       },
     );
 
-    const exposeSimulationCode =
-      mailResult.simulated || process.env.NODE_ENV !== 'production';
-
     return {
       method: 'EMAIL_OTP',
       destination: user.email,
       expiresInMinutes: 10,
       simulated: mailResult.simulated,
-      ...(exposeSimulationCode ? { simulationCode: code } : {}),
     };
   }
 
@@ -505,6 +477,8 @@ export class ProfileService {
       ...current,
       twoFactor: true,
       twoFactorMethod: dto.method,
+      emailVerified: dto.method === 'EMAIL_OTP' ? true : current.emailVerified,
+      phoneVerified: dto.method === 'SMS_OTP' ? true : current.phoneVerified,
       twoFactorSecret:
         dto.method === 'AUTHENTICATOR_APP' ? (pending.secret ?? null) : null,
       pendingTwoFactor: null,
@@ -520,6 +494,144 @@ export class ProfileService {
       userId,
       'TWO_FACTOR_ENABLED',
       `User (ID: ${userId}) enabled two-factor authentication (${dto.method})`,
+    );
+
+    return parseUserSettings(serialized);
+  }
+
+  async initiateContactVerification(
+    userId: number,
+    dto: SendContactVerificationDto,
+  ): Promise<ContactVerificationSetupResponse> {
+    const user = await this.prisma.user.findUnique({
+      where: { user_id: userId },
+      include: { scholar_profile: true, employee: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found.');
+    }
+
+    const existing = await this.findLatestSettingsRecord(userId);
+    const current = parseStoredUserSettings(existing?.details);
+    const code = String(randomInt(100000, 1000000));
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const firstName =
+      user.scholar_profile?.first_name ||
+      user.employee?.first_name ||
+      'Scholar';
+
+    if (dto.channel === 'PHONE') {
+      const phone = user.scholar_profile?.phone_number?.trim();
+      if (!phone) {
+        throw new BadRequestException(
+          'Please add a mobile phone number in your profile before verifying your phone.',
+        );
+      }
+
+      const pending: PendingContactVerification = {
+        channel: 'PHONE',
+        code,
+        expiresAt,
+      };
+      await this.persistStoredSettings(
+        userId,
+        { ...current, pendingContactVerification: pending },
+        existing?.log_id,
+      );
+
+      const smsResult = await this.smsService?.sendOtpSms(phone, {
+        subscriberId: `user_${userId}`,
+        firstName,
+        code,
+        expiresInMinutes: 10,
+        purpose: 'PHONE_VERIFICATION',
+      });
+
+      return {
+        channel: 'PHONE',
+        destination: phone,
+        expiresInMinutes: 10,
+        simulated: smsResult ? smsResult.simulated : true,
+      };
+    }
+
+    const pending: PendingContactVerification = {
+      channel: 'EMAIL',
+      code,
+      expiresAt,
+    };
+    await this.persistStoredSettings(
+      userId,
+      { ...current, pendingContactVerification: pending },
+      existing?.log_id,
+    );
+
+    const mailResult = await this.mailService.sendTwoFactorOtpEmail(
+      user.email,
+      {
+        userName: firstName,
+        code,
+        expiresInMinutes: 10,
+      },
+    );
+
+    return {
+      channel: 'EMAIL',
+      destination: user.email,
+      expiresInMinutes: 10,
+      simulated: mailResult.simulated,
+    };
+  }
+
+  async verifyContactVerification(
+    userId: number,
+    dto: VerifyContactVerificationDto,
+  ): Promise<UserSettings> {
+    const user = await this.prisma.user.findUnique({
+      where: { user_id: userId },
+      select: { user_id: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found.');
+    }
+
+    const existing = await this.findLatestSettingsRecord(userId);
+    const current = parseStoredUserSettings(existing?.details);
+    const pending = current.pendingContactVerification;
+
+    if (
+      !pending ||
+      pending.channel !== dto.channel ||
+      new Date(pending.expiresAt).getTime() <= Date.now()
+    ) {
+      throw new BadRequestException(
+        'Verification session expired or not found. Please request a new code.',
+      );
+    }
+
+    if (pending.code !== dto.code.trim()) {
+      throw new BadRequestException('Invalid verification code.');
+    }
+
+    const nextRecord: StoredUserSettingsRecord = {
+      ...current,
+      emailVerified: dto.channel === 'EMAIL' ? true : current.emailVerified,
+      phoneVerified: dto.channel === 'PHONE' ? true : current.phoneVerified,
+      pendingContactVerification: null,
+    };
+
+    const serialized = await this.persistStoredSettings(
+      userId,
+      nextRecord,
+      existing?.log_id,
+    );
+
+    await this.auditService.log(
+      userId,
+      dto.channel === 'EMAIL' ? 'EMAIL_VERIFIED' : 'PHONE_VERIFIED',
+      `User (ID: ${userId}) verified their ${dto.channel === 'EMAIL' ? 'email address' : 'phone number'}`,
     );
 
     return parseUserSettings(serialized);
@@ -573,6 +685,45 @@ export class ProfileService {
     return {
       message: 'Password updated successfully.',
       passwordChangedAt,
+    };
+  }
+
+  async deactivateAccount(
+    userId: number,
+    dto: DeactivateAccountDto = {},
+  ): Promise<{ message: string }> {
+    const user = await this.prisma.user.findUnique({
+      where: { user_id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found.');
+    }
+
+    if (dto.password) {
+      const isPasswordValid = await bcrypt.compare(
+        dto.password,
+        user.password_hash,
+      );
+      if (!isPasswordValid) {
+        throw new BadRequestException('Incorrect password.');
+      }
+    }
+
+    await this.prisma.user.update({
+      where: { user_id: userId },
+      data: { is_active: false },
+    });
+
+    const trimmedReason = dto.reason?.trim();
+    const details = trimmedReason
+      ? `User (ID: ${userId}) deactivated their account (Reason: ${trimmedReason})`
+      : `User (ID: ${userId}) deactivated their account`;
+
+    await this.auditService.log(userId, 'ACCOUNT_DEACTIVATED', details);
+
+    return {
+      message: 'Your account has been deactivated.',
     };
   }
 }

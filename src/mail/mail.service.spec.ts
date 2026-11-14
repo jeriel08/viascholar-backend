@@ -6,6 +6,7 @@ import { MailService } from './mail.service.js';
 import { Resend } from 'resend';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { SmsService } from '../sms/sms.service.js';
 
 const { mockSend } = vi.hoisted(() => ({
   mockSend: vi.fn(),
@@ -47,13 +48,15 @@ const createConfigMock = (
 describe('MailService', () => {
   const buildService = async (
     config: ReturnType<typeof createConfigMock>,
-    prisma: ReturnType<typeof createPrismaMock>,
+    prisma: Record<string, unknown>,
+    sms?: { sendNotificationSms: ReturnType<typeof vi.fn> },
   ) => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MailService,
         { provide: ConfigService, useValue: config },
         { provide: PrismaService, useValue: prisma },
+        ...(sms ? [{ provide: SmsService, useValue: sms }] : []),
       ],
     }).compile();
 
@@ -604,6 +607,172 @@ describe('MailService', () => {
           subject: 'Reset Your Password - ViaScholar',
         }),
       );
+    });
+  });
+
+  describe('SMS notifications via SmsService', () => {
+    it('dispatches student SMS notifications alongside student events', async () => {
+      const findUnique = vi.fn().mockResolvedValue({
+        user_id: 21,
+        scholar_profile: { phone_number: '09171234567' },
+      });
+      const prisma = {
+        user: { findMany: vi.fn(), findUnique },
+      };
+      const sms = {
+        sendNotificationSms: vi.fn().mockResolvedValue({ simulated: true }),
+      };
+
+      const service = await buildService(createConfigMock(), prisma, sms);
+
+      await service.sendApplicationSubmittedStudent('juan@example.com', {
+        studentName: 'Juan Dela Cruz',
+        applicationId: 42,
+      });
+      await service.sendStageUpdated('juan@example.com', {
+        studentName: 'Juan Dela Cruz',
+        stage: 'Interview',
+        status: 'PASSED',
+      });
+      await service.sendContractReadyToSign('juan@example.com', {
+        studentName: 'Juan Dela Cruz',
+        contractNumber: 'CTX-001',
+      });
+      await service.sendDocumentActionRequired('juan@example.com', {
+        studentName: 'Juan Dela Cruz',
+        documentType: 'TOR',
+        reason: 'Blurred photo',
+      });
+      await service.sendGradeReportStatusUpdated('juan@example.com', {
+        studentName: 'Juan Dela Cruz',
+        academicYear: '2025-2026',
+        semester: '1st Semester',
+        status: 'APPROVED',
+      });
+
+      expect(findUnique).toHaveBeenCalledWith({
+        where: { email: 'juan@example.com' },
+        select: {
+          user_id: true,
+          scholar_profile: { select: { phone_number: true } },
+        },
+      });
+      expect(sms.sendNotificationSms).toHaveBeenCalledTimes(5);
+      expect(sms.sendNotificationSms).toHaveBeenNthCalledWith(
+        1,
+        21,
+        '09171234567',
+        stringContaining('application (#42) has been received'),
+      );
+      expect(sms.sendNotificationSms).toHaveBeenNthCalledWith(
+        2,
+        21,
+        '09171234567',
+        stringContaining('stage "Interview" was updated to PASSED'),
+      );
+      expect(sms.sendNotificationSms).toHaveBeenNthCalledWith(
+        3,
+        21,
+        '09171234567',
+        stringContaining('agreement (#CTX-001) is ready to sign'),
+      );
+      expect(sms.sendNotificationSms).toHaveBeenNthCalledWith(
+        4,
+        21,
+        '09171234567',
+        stringContaining('Please re-upload your TOR document'),
+      );
+      expect(sms.sendNotificationSms).toHaveBeenNthCalledWith(
+        5,
+        21,
+        '09171234567',
+        stringContaining(
+          'grade report for A.Y. 2025-2026 1st Semester was updated to APPROVED',
+        ),
+      );
+    });
+
+    it('still dispatches SMS notification when student has emailNotifs disabled', async () => {
+      const prisma = {
+        user: {
+          findMany: vi
+            .fn()
+            .mockResolvedValue([{ user_id: 22, email: 'smsonly@example.com' }]),
+          findUnique: vi.fn().mockResolvedValue({
+            user_id: 22,
+            scholar_profile: { phone_number: '09181112233' },
+          }),
+        },
+        auditLog: {
+          findMany: vi.fn().mockResolvedValue([
+            {
+              user_id: 22,
+              details: JSON.stringify({ emailNotifs: false, smsNotifs: true }),
+            },
+          ]),
+        },
+      };
+      const sms = {
+        sendNotificationSms: vi.fn().mockResolvedValue({ simulated: false }),
+      };
+
+      const service = await buildService(createConfigMock(), prisma, sms);
+
+      await service.sendApplicationApproved('smsonly@example.com', {
+        studentName: 'Maria Clara',
+        track: 'STEM Track',
+      });
+
+      expect(mockSend).not.toHaveBeenCalled();
+      expect(sms.sendNotificationSms).toHaveBeenCalledWith(
+        22,
+        '09181112233',
+        stringContaining('Congratulations Maria Clara!'),
+      );
+    });
+
+    it('skips SMS without throwing when phone number is missing or SMS dispatch throws', async () => {
+      const findUnique = vi
+        .fn()
+        .mockResolvedValueOnce({
+          user_id: 23,
+          scholar_profile: { phone_number: null },
+        })
+        .mockRejectedValueOnce(new Error('lookup failed'))
+        .mockResolvedValueOnce({
+          user_id: 24,
+          scholar_profile: { phone_number: '09190001122' },
+        });
+      const prisma = {
+        user: { findMany: vi.fn(), findUnique },
+      };
+      const sms = {
+        sendNotificationSms: vi.fn().mockRejectedValue(new Error('sms down')),
+      };
+
+      const service = await buildService(createConfigMock(), prisma, sms);
+
+      await expect(
+        service.sendInterviewScheduled('nophone@example.com', {
+          studentName: 'Pedro',
+          interviewAt: new Date('2026-10-01T08:00:00.000Z'),
+        }),
+      ).resolves.toBeUndefined();
+      expect(sms.sendNotificationSms).not.toHaveBeenCalled();
+
+      await expect(
+        service.sendInterviewCancelled('lookupfail@example.com', {
+          studentName: 'Pedro',
+        }),
+      ).resolves.toBeUndefined();
+
+      await expect(
+        service.sendInterviewRescheduled('smsfail@example.com', {
+          studentName: 'Pedro',
+          newInterviewAt: new Date('2026-10-02T08:00:00.000Z'),
+        }),
+      ).resolves.toBeUndefined();
+      expect(sms.sendNotificationSms).toHaveBeenCalledTimes(1);
     });
   });
 });

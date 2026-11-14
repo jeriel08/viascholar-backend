@@ -17,6 +17,7 @@ import { WebhooksModule } from './webhooks/webhooks.module.js';
 import { DocumentsModule } from './documents/documents.module.js';
 import { ContractsModule } from './contracts/contracts.module.js';
 import { MailModule } from './mail/mail.module.js';
+import { SmsModule } from './sms/sms.module.js';
 import { EventsModule } from './events/events.module.js';
 import { ChatModule } from './chat/chat.module.js';
 import { ForumModule } from './forum/forum.module.js';
@@ -55,6 +56,7 @@ import { AppController } from './app.controller.js';
     DisbursementsModule,
     AnalyticsModule,
     MailModule,
+    SmsModule,
     EventsModule,
     ChatModule,
     ForumModule,

@@ -11,6 +11,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
+import { SmsService } from '../sms/sms.service.js';
+import { generateTotpCode, signTrustedDeviceToken } from './mfa-token.util.js';
 import { AuthService } from './auth.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
@@ -397,6 +399,14 @@ describe('AuthService', () => {
         password_hash: await bcrypt.hash(password, 10),
       });
       prisma.user.findUnique.mockResolvedValue(user);
+      (prisma as Record<string, unknown>).auditLog = {
+        findFirst: vi.fn().mockResolvedValue({
+          log_id: 1,
+          details: JSON.stringify({ twoFactor: false }),
+        }),
+        create: vi.fn(),
+        update: vi.fn(),
+      };
 
       const result = await service.login(makeLoginDto({ password }));
 
@@ -925,6 +935,298 @@ describe('AuthService', () => {
           'Google authentication failed. Please try again.',
         ),
       );
+    });
+  });
+
+  describe('MFA registration, login, SMS channel switch, Google OAuth, and remember device', () => {
+    let mfaService: AuthService;
+    let mfaPrisma: {
+      user: {
+        findUnique: ReturnType<typeof vi.fn>;
+        findFirst: ReturnType<typeof vi.fn>;
+        create: ReturnType<typeof vi.fn>;
+        update: ReturnType<typeof vi.fn>;
+      };
+      scholarProfile: { findFirst: ReturnType<typeof vi.fn> };
+      auditLog: {
+        findFirst: ReturnType<typeof vi.fn>;
+        create: ReturnType<typeof vi.fn>;
+        update: ReturnType<typeof vi.fn>;
+      };
+    };
+    let mfaMail: {
+      sendPasswordResetEmail: ReturnType<typeof vi.fn>;
+      sendTwoFactorOtpEmail: ReturnType<typeof vi.fn>;
+    };
+    let mfaSms: {
+      sendOtpSms: ReturnType<typeof vi.fn>;
+    };
+    let mfaAudit: { log: ReturnType<typeof vi.fn> };
+    let storedSettingsDetails: string | null;
+
+    beforeEach(async () => {
+      storedSettingsDetails = null;
+      mfaPrisma = {
+        user: {
+          findUnique: vi.fn(),
+          findFirst: vi.fn(),
+          create: vi.fn(),
+          update: vi.fn(),
+        },
+        scholarProfile: {
+          findFirst: vi.fn(),
+        },
+        auditLog: {
+          findFirst: vi
+            .fn()
+            .mockImplementation(() =>
+              Promise.resolve(
+                storedSettingsDetails
+                  ? { log_id: 101, details: storedSettingsDetails }
+                  : null,
+              ),
+            ),
+          create: vi
+            .fn()
+            .mockImplementation(({ data }: { data: { details: string } }) => {
+              storedSettingsDetails = data.details;
+              return Promise.resolve({ log_id: 101, ...data });
+            }),
+          update: vi
+            .fn()
+            .mockImplementation(({ data }: { data: { details: string } }) => {
+              storedSettingsDetails = data.details;
+              return Promise.resolve({ log_id: 101, ...data });
+            }),
+        },
+      };
+      mfaMail = {
+        sendPasswordResetEmail: vi.fn(),
+        sendTwoFactorOtpEmail: vi.fn().mockResolvedValue({ simulated: true }),
+      };
+      mfaSms = {
+        sendOtpSms: vi.fn().mockResolvedValue({ simulated: true }),
+      };
+      mfaAudit = { log: vi.fn() };
+
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          AuthService,
+          { provide: PrismaService, useValue: mfaPrisma },
+          {
+            provide: JwtService,
+            useValue: {
+              signAsync: vi.fn().mockResolvedValue('signed-access-token'),
+            },
+          },
+          { provide: AuditService, useValue: mfaAudit },
+          {
+            provide: EventsGateway,
+            useValue: { emitGlobalNotification: vi.fn() },
+          },
+          { provide: MailService, useValue: mfaMail },
+          {
+            provide: ConfigService,
+            useValue: {
+              get: vi.fn((key: string) =>
+                key === 'JWT_SECRET' ? 'test-jwt-secret' : undefined,
+              ),
+            },
+          },
+          { provide: SmsService, useValue: mfaSms },
+        ],
+      }).compile();
+
+      mfaService = module.get<AuthService>(AuthService);
+    });
+
+    it('defaults new scholar registration to EMAIL_OTP, allows switching to SMS_OTP via Novu, and issues trusted_device_token', async () => {
+      mfaPrisma.user.findUnique.mockResolvedValueOnce(null);
+      mfaPrisma.scholarProfile.findFirst.mockResolvedValue(null);
+      const createdUser = makeUser({
+        email: 'newstudent@example.com',
+        role: Role.APPLICANT,
+        scholar_profile: {
+          profile_id: 10,
+          user_id: 1,
+          first_name: 'Juan',
+          last_name: 'Dela Cruz',
+          phone_number: '09171234567',
+        },
+      });
+      mfaPrisma.user.create.mockResolvedValue(createdUser);
+
+      const regResult = (await mfaService.registerScholar(
+        makeRegisterDto({
+          email: 'newstudent@example.com',
+          phone_number: '09171234567',
+        }),
+      )) as Record<string, unknown>;
+
+      expect(regResult.mfa_required).toBe(true);
+      expect(regResult.mfa_method).toBe('EMAIL_OTP');
+      expect(regResult.available_methods).toEqual(['EMAIL_OTP', 'SMS_OTP']);
+      expect(mfaMail.sendTwoFactorOtpEmail).toHaveBeenCalledTimes(1);
+
+      mfaPrisma.user.findUnique.mockResolvedValue(createdUser);
+      const smsChallenge = await mfaService.sendMfaChallenge({
+        mfa_token: String(regResult.mfa_token),
+        method: 'SMS_OTP',
+      });
+
+      expect(smsChallenge.mfa_method).toBe('SMS_OTP');
+      const smsCode = (mfaSms.sendOtpSms.mock.calls[0][1] as { code: string })
+        .code;
+      expect(smsCode).toMatch(/^\d{6}$/);
+      expect(mfaSms.sendOtpSms).toHaveBeenCalledWith(
+        '09171234567',
+        expect.objectContaining({
+          code: smsCode,
+          purpose: 'AUTH_MFA',
+        }),
+      );
+
+      const verified = await mfaService.verifyMfaChallenge({
+        mfa_token: String(regResult.mfa_token),
+        code: smsCode,
+        method: 'SMS_OTP',
+        remember_device: true,
+      });
+
+      expect(verified.access_token).toBe('signed-access-token');
+      expect(typeof verified.trusted_device_token).toBe('string');
+      expect(mfaAudit.log).toHaveBeenCalledWith(
+        createdUser.user_id,
+        'SCHOLAR_MFA_VERIFIED',
+        expect.stringContaining('SMS_OTP'),
+      );
+    });
+
+    it('requires MFA by default on Email+Password login and skips MFA for remembered devices', async () => {
+      const password = 'Password123!';
+      const baseUser = makeUser();
+      const user = makeUser({
+        password_hash: await bcrypt.hash(password, 10),
+        scholar_profile: {
+          ...baseUser.scholar_profile,
+          phone_number: '09171234567',
+        },
+      });
+      mfaPrisma.user.findUnique.mockResolvedValue(user);
+
+      const loginRes = (await mfaService.login(
+        makeLoginDto({ email: user.email, password }),
+      )) as Record<string, unknown>;
+
+      expect(loginRes.mfa_required).toBe(true);
+      expect(loginRes.mfa_method).toBe('EMAIL_OTP');
+      expect(loginRes.available_methods).toEqual(['EMAIL_OTP']);
+      await expect(
+        mfaService.sendMfaChallenge({
+          mfa_token: String(loginRes.mfa_token),
+          method: 'SMS_OTP',
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      const emailCode = (
+        mfaMail.sendTwoFactorOtpEmail.mock.calls[0][1] as { code: string }
+      ).code;
+      expect(emailCode).toMatch(/^\d{6}$/);
+
+      const verified = await mfaService.verifyMfaChallenge({
+        mfa_token: String(loginRes.mfa_token),
+        code: emailCode,
+        method: 'EMAIL_OTP',
+        remember_device: true,
+      });
+
+      expect(typeof verified.trusted_device_token).toBe('string');
+
+      const rememberedLogin = (await mfaService.login(
+        makeLoginDto({
+          email: user.email,
+          password,
+          trusted_device_token: verified.trusted_device_token,
+        }),
+      )) as Record<string, unknown>;
+
+      expect(rememberedLogin.mfa_required).toBeUndefined();
+      expect(rememberedLogin.access_token).toBe('signed-access-token');
+    });
+
+    it('skips redundant EMAIL_OTP on Google OAuth while enforcing SMS_OTP and AUTHENTICATOR_APP unless trusted', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              email: 'google.scholar@example.com',
+              given_name: 'Google',
+              family_name: 'Scholar',
+            }),
+        }),
+      );
+
+      const googleUser = makeUser({
+        user_id: 55,
+        email: 'google.scholar@example.com',
+        scholar_profile: {
+          profile_id: 55,
+          user_id: 55,
+          first_name: 'Google',
+          last_name: 'Scholar',
+          phone_number: '09171234567',
+        },
+      });
+      mfaPrisma.user.findUnique.mockResolvedValue(googleUser);
+      mfaPrisma.user.update.mockResolvedValue(googleUser);
+
+      // Default is EMAIL_OTP -> skipped on Google login
+      const defaultGoogleRes = (await mfaService.googleLogin({
+        credential: 'h.p.s',
+      })) as Record<string, unknown>;
+      expect(defaultGoogleRes.mfa_required).toBeUndefined();
+      expect(mfaMail.sendTwoFactorOtpEmail).not.toHaveBeenCalled();
+
+      // When user explicitly chose SMS_OTP -> enforced on untrusted device
+      storedSettingsDetails = JSON.stringify({
+        twoFactor: true,
+        twoFactorMethod: 'SMS_OTP',
+      });
+      const smsGoogleRes = (await mfaService.googleLogin({
+        credential: 'h.p.s',
+      })) as Record<string, unknown>;
+      expect(smsGoogleRes.mfa_required).toBe(true);
+      expect(smsGoogleRes.mfa_method).toBe('SMS_OTP');
+      expect(mfaSms.sendOtpSms).toHaveBeenCalledTimes(1);
+
+      // When user configured AUTHENTICATOR_APP -> enforced on untrusted device, bypassed once remembered
+      const totpSecret = 'JBSWY3DPEHPK3PXP';
+      storedSettingsDetails = JSON.stringify({
+        twoFactor: true,
+        twoFactorMethod: 'AUTHENTICATOR_APP',
+        twoFactorSecret: totpSecret,
+      });
+      const totpGoogleRes = (await mfaService.googleLogin({
+        credential: 'h.p.s',
+      })) as Record<string, unknown>;
+      expect(totpGoogleRes.mfa_required).toBe(true);
+      expect(totpGoogleRes.mfa_method).toBe('AUTHENTICATOR_APP');
+
+      const verifiedTotp = await mfaService.verifyMfaChallenge({
+        mfa_token: String(totpGoogleRes.mfa_token),
+        code: generateTotpCode(totpSecret),
+        method: 'AUTHENTICATOR_APP',
+        remember_device: true,
+      });
+      expect(typeof verifiedTotp.trusted_device_token).toBe('string');
+
+      const trustedGoogleRes = (await mfaService.googleLogin({
+        credential: 'h.p.s',
+        trusted_device_token: signTrustedDeviceToken(55, 'test-jwt-secret'),
+      })) as Record<string, unknown>;
+      expect(trustedGoogleRes.mfa_required).toBeUndefined();
     });
   });
 });

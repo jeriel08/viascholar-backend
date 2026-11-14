@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { CloudinaryService } from '../cloudinary/cloudinary.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { MailService } from '../mail/mail.service.js';
+import { SmsService } from '../sms/sms.service.js';
 import { Role } from '../generated/prisma/enums.js';
 import type { UpdateProfileDto } from './dto/update-profile.dto.js';
 
@@ -44,6 +45,10 @@ const createAuditMock = () => ({
 
 const createMailMock = () => ({
   sendTwoFactorOtpEmail: vi.fn().mockResolvedValue({ simulated: true }),
+});
+
+const createSmsMock = () => ({
+  sendOtpSms: vi.fn().mockResolvedValue({ simulated: true }),
 });
 
 const makeScholarUser = (overrides: Record<string, unknown> = {}) => ({
@@ -91,12 +96,14 @@ describe('ProfileService', () => {
   let cloudinary: ReturnType<typeof createCloudinaryMock>;
   let audit: ReturnType<typeof createAuditMock>;
   let mail: ReturnType<typeof createMailMock>;
+  let sms: ReturnType<typeof createSmsMock>;
 
   beforeEach(async () => {
     prisma = createPrismaMock();
     cloudinary = createCloudinaryMock();
     audit = createAuditMock();
     mail = createMailMock();
+    sms = createSmsMock();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -105,6 +112,7 @@ describe('ProfileService', () => {
         { provide: CloudinaryService, useValue: cloudinary },
         { provide: AuditService, useValue: audit },
         { provide: MailService, useValue: mail },
+        { provide: SmsService, useValue: sms },
       ],
     }).compile();
 
@@ -378,8 +386,10 @@ describe('ProfileService', () => {
         emailNotifs: true,
         smsNotifs: false,
         forumDigest: true,
-        twoFactor: false,
-        twoFactorMethod: null,
+        twoFactor: true,
+        twoFactorMethod: 'EMAIL_OTP',
+        emailVerified: false,
+        phoneVerified: false,
         publicProfile: true,
         passwordChangedAt: null,
       });
@@ -406,6 +416,8 @@ describe('ProfileService', () => {
         forumDigest: true,
         twoFactor: true,
         twoFactorMethod: 'EMAIL_OTP',
+        emailVerified: false,
+        phoneVerified: false,
         publicProfile: true,
         passwordChangedAt: null,
       });
@@ -430,12 +442,12 @@ describe('ProfileService', () => {
             emailNotifs: true,
             smsNotifs: true,
             forumDigest: false,
-            twoFactor: false,
-            twoFactorMethod: null,
+            twoFactor: true,
+            twoFactorMethod: 'EMAIL_OTP',
+            emailVerified: false,
+            phoneVerified: false,
             publicProfile: true,
             passwordChangedAt: null,
-            twoFactorSecret: null,
-            pendingTwoFactor: null,
           }),
         },
       });
@@ -444,8 +456,10 @@ describe('ProfileService', () => {
         emailNotifs: true,
         smsNotifs: true,
         forumDigest: false,
-        twoFactor: false,
-        twoFactorMethod: null,
+        twoFactor: true,
+        twoFactorMethod: 'EMAIL_OTP',
+        emailVerified: false,
+        phoneVerified: false,
         publicProfile: true,
         passwordChangedAt: null,
       });
@@ -477,10 +491,13 @@ describe('ProfileService', () => {
             forumDigest: false,
             twoFactor: false,
             twoFactorMethod: null,
+            emailVerified: false,
+            phoneVerified: false,
             publicProfile: true,
             passwordChangedAt: null,
             twoFactorSecret: null,
             pendingTwoFactor: null,
+            pendingContactVerification: null,
           }),
         },
       });
@@ -523,12 +540,15 @@ describe('ProfileService', () => {
 
       expect(res.method).toBe('EMAIL_OTP');
       expect(res.destination).toBe('scholar@example.com');
-      expect(res.simulationCode).toMatch(/^\d{6}$/);
+      const sentEmailCode = (
+        mail.sendTwoFactorOtpEmail.mock.calls[0][1] as { code: string }
+      ).code;
+      expect(sentEmailCode).toMatch(/^\d{6}$/);
       expect(mail.sendTwoFactorOtpEmail).toHaveBeenCalledWith(
         'scholar@example.com',
         {
           userName: 'Juan',
-          code: res.simulationCode,
+          code: sentEmailCode,
           expiresInMinutes: 10,
         },
       );
@@ -562,7 +582,16 @@ describe('ProfileService', () => {
 
       expect(res.method).toBe('SMS_OTP');
       expect(res.destination).toBe('09171234567');
-      expect(res.simulationCode).toMatch(/^\d{6}$/);
+      const sentSmsCode = (sms.sendOtpSms.mock.calls[0][1] as { code: string })
+        .code;
+      expect(sentSmsCode).toMatch(/^\d{6}$/);
+      expect(sms.sendOtpSms).toHaveBeenCalledWith('09171234567', {
+        subscriberId: 'user_1',
+        firstName: 'Juan',
+        code: sentSmsCode,
+        expiresInMinutes: 10,
+        purpose: 'TWO_FACTOR_SETUP',
+      });
       expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
     });
 
@@ -687,6 +716,210 @@ describe('ProfileService', () => {
         'PASSWORD_CHANGED',
         'User (ID: 1) changed their account password',
       );
+    });
+  });
+
+  describe('contact verification', () => {
+    it('sends an email verification code and marks emailVerified on verification', async () => {
+      prisma.user.findUnique.mockResolvedValue(makeScholarUser());
+      prisma.auditLog.findFirst.mockResolvedValue(null);
+
+      const setupRes = await service.initiateContactVerification(1, {
+        channel: 'EMAIL',
+      });
+
+      expect(setupRes.channel).toBe('EMAIL');
+      expect(setupRes.destination).toBe('scholar@example.com');
+      const sentEmailCode = (
+        mail.sendTwoFactorOtpEmail.mock.calls[0][1] as { code: string }
+      ).code;
+      expect(sentEmailCode).toMatch(/^\d{6}$/);
+      expect(mail.sendTwoFactorOtpEmail).toHaveBeenCalledWith(
+        'scholar@example.com',
+        {
+          userName: 'Juan',
+          code: sentEmailCode,
+          expiresInMinutes: 10,
+        },
+      );
+
+      prisma.auditLog.findFirst.mockResolvedValue({
+        log_id: 95,
+        details: JSON.stringify({
+          pendingContactVerification: {
+            channel: 'EMAIL',
+            code: sentEmailCode,
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          },
+        }),
+      });
+
+      const verified = await service.verifyContactVerification(1, {
+        channel: 'EMAIL',
+        code: sentEmailCode,
+      });
+
+      expect(verified.emailVerified).toBe(true);
+      expect(audit.log).toHaveBeenCalledWith(
+        1,
+        'EMAIL_VERIFIED',
+        'User (ID: 1) verified their email address',
+      );
+    });
+
+    it('rejects phone verification when no phone number exists and sends SMS via SmsService when present', async () => {
+      prisma.user.findUnique.mockResolvedValue(
+        makeScholarUser({
+          scholar_profile: {
+            profile_id: 10,
+            user_id: 1,
+            first_name: 'Juan',
+            last_name: 'Dela Cruz',
+            phone_number: '',
+          },
+        }),
+      );
+
+      await expect(
+        service.initiateContactVerification(1, { channel: 'PHONE' }),
+      ).rejects.toThrow(BadRequestException);
+
+      prisma.user.findUnique.mockResolvedValue(makeScholarUser());
+      prisma.auditLog.findFirst.mockResolvedValue(null);
+
+      const smsRes = await service.initiateContactVerification(1, {
+        channel: 'PHONE',
+      });
+
+      expect(smsRes.channel).toBe('PHONE');
+      expect(smsRes.destination).toBe('09171234567');
+      const sentSmsCode = (sms.sendOtpSms.mock.calls[0][1] as { code: string })
+        .code;
+      expect(sentSmsCode).toMatch(/^\d{6}$/);
+      expect(sms.sendOtpSms).toHaveBeenCalledWith('09171234567', {
+        subscriberId: 'user_1',
+        firstName: 'Juan',
+        code: sentSmsCode,
+        expiresInMinutes: 10,
+        purpose: 'PHONE_VERIFICATION',
+      });
+
+      prisma.auditLog.findFirst.mockResolvedValue({
+        log_id: 96,
+        details: JSON.stringify({
+          pendingContactVerification: {
+            channel: 'PHONE',
+            code: sentSmsCode,
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          },
+        }),
+      });
+
+      const verified = await service.verifyContactVerification(1, {
+        channel: 'PHONE',
+        code: sentSmsCode,
+      });
+
+      expect(verified.phoneVerified).toBe(true);
+      expect(audit.log).toHaveBeenCalledWith(
+        1,
+        'PHONE_VERIFIED',
+        'User (ID: 1) verified their phone number',
+      );
+    });
+
+    it('rejects invalid contact verification codes and resets phoneVerified when phone changes', async () => {
+      prisma.user.findUnique.mockResolvedValue({ user_id: 1 });
+      prisma.auditLog.findFirst.mockResolvedValue({
+        log_id: 97,
+        details: JSON.stringify({
+          pendingContactVerification: {
+            channel: 'PHONE',
+            code: '123456',
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          },
+        }),
+      });
+
+      await expect(
+        service.verifyContactVerification(1, {
+          channel: 'PHONE',
+          code: '000000',
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      const scholar = makeScholarUser();
+      const updatedScholar = makeScholarUser({
+        scholar_profile: {
+          ...scholar.scholar_profile,
+          phone_number: '09998887777',
+        },
+      });
+      prisma.user.findUnique
+        .mockResolvedValueOnce(scholar)
+        .mockResolvedValueOnce(updatedScholar);
+      prisma.scholarProfile.findFirst.mockResolvedValue(null);
+      prisma.scholarProfile.update.mockResolvedValue(
+        updatedScholar.scholar_profile,
+      );
+      prisma.auditLog.findFirst.mockResolvedValue({
+        log_id: 98,
+        details: JSON.stringify({ phoneVerified: true }),
+      });
+
+      await service.updateProfile(1, { phone_number: '09998887777' });
+
+      expect(prisma.auditLog.update).toHaveBeenCalledWith({
+        where: { log_id: 98 },
+        data: {
+          details: expect.stringContaining('"phoneVerified":false') as string,
+        },
+      });
+    });
+  });
+
+  describe('deactivateAccount', () => {
+    it('sets user is_active to false without archiving and records audit entry with reason', async () => {
+      prisma.user.findUnique.mockResolvedValue(makeScholarUser());
+      prisma.user.update.mockResolvedValue(
+        makeScholarUser({ is_active: false }),
+      );
+
+      const res = await service.deactivateAccount(1, {
+        reason: 'Taking a break',
+      });
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { user_id: 1 },
+        data: { is_active: false },
+      });
+      expect(prisma.scholarProfile.update).not.toHaveBeenCalled();
+      expect(audit.log).toHaveBeenCalledWith(
+        1,
+        'ACCOUNT_DEACTIVATED',
+        'User (ID: 1) deactivated their account (Reason: Taking a break)',
+      );
+      expect(res).toEqual({
+        message: 'Your account has been deactivated.',
+      });
+    });
+
+    it('validates optional password and throws NotFoundException when user is missing', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce(null);
+
+      await expect(service.deactivateAccount(999)).rejects.toThrow(
+        NotFoundException,
+      );
+
+      const passwordHash = await bcrypt.hash('CorrectPassword1!', 10);
+      prisma.user.findUnique.mockResolvedValue(
+        makeScholarUser({ password_hash: passwordHash }),
+      );
+
+      await expect(
+        service.deactivateAccount(1, { password: 'WrongPassword!' }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
     });
   });
 });
