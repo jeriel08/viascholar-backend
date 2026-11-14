@@ -1,5 +1,12 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, MinLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsInt,
+  IsOptional,
+  IsString,
+  MinLength,
+} from 'class-validator';
 
 export class UpdatePostDto {
   @ApiPropertyOptional({
@@ -29,4 +36,15 @@ export class UpdatePostDto {
   @IsString()
   @IsOptional()
   category?: string;
+
+  @ApiPropertyOptional({
+    example: [2, 5],
+    description: 'User IDs of Coordinators and Grantors tagged in the post',
+    type: [Number],
+  })
+  @IsOptional()
+  @IsArray()
+  @Type(() => Number)
+  @IsInt({ each: true })
+  tagged_user_ids?: number[];
 }

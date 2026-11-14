@@ -16,6 +16,9 @@ const stringContaining = (substr: string) =>
   expect.stringContaining(substr) as string;
 
 const createPrismaMock = () => ({
+  user: {
+    findMany: vi.fn(),
+  },
   forumPost: {
     create: vi.fn(),
     findUnique: vi.fn(),
@@ -112,6 +115,7 @@ describe('ForumService', () => {
     events = createEventsMock();
     notifications = createNotificationsMock();
 
+    prisma.user.findMany.mockResolvedValue([]);
     prisma.forumPost.create.mockResolvedValue(makePost());
     prisma.forumPost.findUnique.mockResolvedValue(makePost());
     prisma.forumPost.findMany.mockResolvedValue([makePost()]);
@@ -591,6 +595,194 @@ describe('ForumService', () => {
         message: 'Comment deleted successfully.',
         comment_id: 99,
       });
+    });
+  });
+
+  describe('coordinator and grantor tagging', () => {
+    const makeStaffRows = () => [
+      {
+        user_id: 2,
+        email: 'coordinator@example.com',
+        role: 'COORDINATOR',
+        is_active: true,
+        employee: {
+          first_name: 'Maria',
+          last_name: 'Santos',
+          title: 'Lead Coordinator',
+          avatar_url: null,
+        },
+      },
+      {
+        user_id: 5,
+        email: 'grantor@example.com',
+        role: 'GRANTOR',
+        is_active: true,
+        employee: {
+          first_name: 'Elena',
+          last_name: 'Reyes',
+          title: 'Foundation Director',
+          avatar_url: 'https://cdn.test/elena.png',
+        },
+      },
+    ];
+
+    it('lists active coordinators and grantors via getTaggableStaff', async () => {
+      prisma.user.findMany.mockResolvedValue(makeStaffRows());
+
+      const staff = await service.getTaggableStaff();
+
+      expect(staff).toHaveLength(2);
+      expect(staff[0]).toEqual({
+        user_id: 2,
+        name: 'Maria Santos',
+        first_name: 'Maria',
+        last_name: 'Santos',
+        email: 'coordinator@example.com',
+        role: 'COORDINATOR',
+        title: 'Lead Coordinator',
+        avatar_url: null,
+      });
+      expect(staff[1]).toEqual(
+        objectMatching({
+          user_id: 5,
+          name: 'Elena Reyes',
+          role: 'GRANTOR',
+        }),
+      );
+    });
+
+    it('persists tagged coordinators and grantors, strips tag marker in response, and sends notifications on createPost', async () => {
+      prisma.user.findMany.mockResolvedValue(makeStaffRows());
+      prisma.forumPost.create.mockImplementation(
+        ({ data }: { data: Record<string, unknown> }) =>
+          Promise.resolve(
+            makePost({
+              content: data.content,
+            }),
+          ),
+      );
+
+      const result = await service.createPost(7, {
+        ...postDto,
+        tagged_user_ids: [2, 5, 999],
+      });
+
+      expect(prisma.forumPost.create).toHaveBeenCalledWith({
+        data: objectMatching({
+          content:
+            'Please help me with my submission.\n<!-- forum-tags:[2,5] -->',
+        }),
+        include: anyArg(Object),
+      });
+      expect(result.content).toBe('Please help me with my submission.');
+      expect(result.tagged_user_ids).toEqual([2, 5]);
+      expect(result.tagged_users).toHaveLength(2);
+      expect(notifications.notifyUser).toHaveBeenCalledWith(
+        2,
+        objectMatching({
+          title: 'Tagged in Forum Post',
+          category: 'forum',
+          link: '/CoordinatorForum',
+        }),
+      );
+      expect(notifications.notifyUser).toHaveBeenCalledWith(
+        5,
+        objectMatching({
+          title: 'Tagged in Forum Post',
+          category: 'forum',
+          link: '/grantForum',
+        }),
+      );
+      expect(events.emitToUser).toHaveBeenCalledWith(
+        2,
+        'forum:post_tagged',
+        objectMatching({ post_id: 55 }),
+      );
+    });
+
+    it('resolves @Name mentions in post content and parses stored tags in getPosts', async () => {
+      prisma.user.findMany.mockResolvedValue(makeStaffRows());
+      prisma.forumPost.findMany.mockResolvedValue([
+        makePost({
+          content:
+            'Hi @Elena Reyes please check my COR.\n<!-- forum-tags:[2] -->',
+        }),
+      ]);
+
+      const result = await service.getPosts({});
+
+      expect(result.posts[0].content).toBe(
+        'Hi @Elena Reyes please check my COR.',
+      );
+      expect(result.posts[0].tagged_user_ids).toEqual([2, 5]);
+      expect(result.posts[0].tagged_users).toHaveLength(2);
+    });
+
+    it('notifies only newly tagged staff when a post is updated', async () => {
+      prisma.user.findMany.mockResolvedValue(makeStaffRows());
+      prisma.forumPost.findUnique.mockResolvedValue(
+        makePost({
+          content: 'Initial content\n<!-- forum-tags:[2] -->',
+        }),
+      );
+
+      const result = await service.updatePost(7, 55, {
+        content: 'Updated content',
+        tagged_user_ids: [2, 5],
+      });
+
+      expect(result.content).toBe('Updated content');
+      expect(result.tagged_user_ids).toEqual([2, 5]);
+      expect(notifications.notifyUser).toHaveBeenCalledTimes(1);
+      expect(notifications.notifyUser).toHaveBeenCalledWith(
+        5,
+        objectMatching({ link: '/grantForum' }),
+      );
+    });
+
+    it('excludes the requesting user from getTaggableStaff', async () => {
+      prisma.user.findMany.mockResolvedValue(makeStaffRows());
+
+      const staff = await service.getTaggableStaff(2);
+
+      expect(staff.map((s) => s.user_id)).toEqual([5]);
+    });
+
+    it('prevents the post owner from tagging themselves via ids or @Name mention', async () => {
+      prisma.user.findMany.mockResolvedValue(makeStaffRows());
+      prisma.forumPost.create.mockImplementation(
+        ({ data }: { data: Record<string, unknown> }) =>
+          Promise.resolve(
+            makePost({
+              author_user_id: 2,
+              content: data.content,
+              author: makeAuthor({
+                user_id: 2,
+                role: 'COORDINATOR',
+                scholar_profile: null,
+                employee: {
+                  first_name: 'Maria',
+                  last_name: 'Santos',
+                  avatar_url: null,
+                },
+              }),
+            }),
+          ),
+      );
+
+      const result = await service.createPost(2, {
+        title: 'Coordinator self tag attempt',
+        content: 'Ping @Maria Santos and @Elena Reyes please.',
+        tagged_user_ids: [2, 5],
+      });
+
+      expect(result.tagged_user_ids).toEqual([5]);
+      expect(result.tagged_users).toHaveLength(1);
+      expect(notifications.notifyUser).toHaveBeenCalledTimes(1);
+      expect(notifications.notifyUser).toHaveBeenCalledWith(
+        5,
+        objectMatching({ link: '/grantForum' }),
+      );
     });
   });
 

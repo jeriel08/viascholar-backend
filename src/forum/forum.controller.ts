@@ -12,7 +12,12 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { ForumService } from './forum.service.js';
 import { CreatePostDto } from './dto/create-post.dto.js';
 import { UpdatePostDto } from './dto/update-post.dto.js';
@@ -53,6 +58,19 @@ export class ForumController {
   })
   getPosts(@Query() query: QueryPostsDto) {
     return this.forumService.getPosts(query);
+  }
+
+  @Get('taggable-staff')
+  @ApiOperation({
+    summary:
+      'List active Coordinators and Grantors that can be tagged in forum posts',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Returns list of active coordinators and grantors.',
+  })
+  getTaggableStaff(@Request() req: AuthenticatedRequest) {
+    return this.forumService.getTaggableStaff(req.user.user_id);
   }
 
   @Get('posts/:id')

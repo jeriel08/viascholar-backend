@@ -21,6 +21,7 @@ describe('ForumController', () => {
     serviceMock = {
       createPost: vi.fn(),
       getPosts: vi.fn(),
+      getTaggableStaff: vi.fn(),
       getPostById: vi.fn(),
       addComment: vi.fn(),
       updatePost: vi.fn(),
@@ -64,6 +65,15 @@ describe('ForumController', () => {
     void controller.getPosts(query);
 
     expect(serviceMock.getPosts).toHaveBeenCalledWith(query);
+  });
+
+  it('delegates getTaggableStaff with the current user id', () => {
+    const request = makeRequest(2, 'COORDINATOR');
+    serviceMock.getTaggableStaff.mockReturnValue([]);
+
+    void controller.getTaggableStaff(request);
+
+    expect(serviceMock.getTaggableStaff).toHaveBeenCalledWith(2);
   });
 
   it('delegates getPostById with the parsed id', () => {
@@ -147,6 +157,7 @@ describe('ForumController', () => {
       for (const name of [
         'createPost',
         'getPosts',
+        'getTaggableStaff',
         'getPostById',
         'addComment',
         'updatePost',

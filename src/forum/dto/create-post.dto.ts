@@ -1,5 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MinLength,
+} from 'class-validator';
 
 export class CreatePostDto {
   @ApiProperty({
@@ -31,4 +39,15 @@ export class CreatePostDto {
   @IsString()
   @IsOptional()
   category?: string = 'GENERAL';
+
+  @ApiPropertyOptional({
+    example: [2, 5],
+    description: 'User IDs of Coordinators and Grantors tagged in the post',
+    type: [Number],
+  })
+  @IsOptional()
+  @IsArray()
+  @Type(() => Number)
+  @IsInt({ each: true })
+  tagged_user_ids?: number[];
 }
