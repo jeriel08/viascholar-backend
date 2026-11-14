@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { EventsGateway } from '../events/events.gateway.js';
 
+import { USER_SETTINGS_AUDIT_ACTION } from '../auth/user-settings.util.js';
+
 @Injectable()
 export class AuditService {
   constructor(
@@ -50,8 +52,12 @@ export class AuditService {
 
   async getLogs(page = 1, limit = 50) {
     const skip = (page - 1) * limit;
+    const where = {
+      action: { not: USER_SETTINGS_AUDIT_ACTION },
+    };
     const [logs, total] = await Promise.all([
       this.prisma.auditLog.findMany({
+        where,
         skip,
         take: limit,
         orderBy: { created_at: 'desc' },
@@ -71,7 +77,7 @@ export class AuditService {
           },
         },
       }),
-      this.prisma.auditLog.count(),
+      this.prisma.auditLog.count({ where }),
     ]);
 
     return { logs, total, page, limit };

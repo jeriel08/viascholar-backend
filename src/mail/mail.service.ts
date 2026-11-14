@@ -26,6 +26,10 @@ import {
   buildGradeReportStatusUpdatedHtml,
 } from './templates/document.templates.js';
 import { buildPasswordResetHtml } from './templates/password-reset.template.js';
+import {
+  USER_SETTINGS_AUDIT_ACTION,
+  parseUserSettings,
+} from '../auth/user-settings.util.js';
 
 @Injectable()
 export class MailService {
@@ -73,13 +77,69 @@ export class MailService {
     }
   }
 
+  private async filterEnabledRecipients(
+    recipients: string[],
+  ): Promise<string[]> {
+    if (!this.prisma.user?.findMany || !this.prisma.auditLog?.findMany) {
+      return recipients;
+    }
+
+    try {
+      const users = await this.prisma.user.findMany({
+        where: { email: { in: recipients } },
+        select: { user_id: true, email: true },
+      });
+      if (!Array.isArray(users) || users.length === 0) {
+        return recipients;
+      }
+
+      const logs = await this.prisma.auditLog.findMany({
+        where: {
+          user_id: { in: users.map((u) => u.user_id) },
+          action: USER_SETTINGS_AUDIT_ACTION,
+        },
+        orderBy: { created_at: 'desc' },
+      });
+      if (!Array.isArray(logs) || logs.length === 0) {
+        return recipients;
+      }
+
+      const latestByUser = new Map<number, string | null>();
+      for (const entry of logs) {
+        if (entry.user_id != null && !latestByUser.has(entry.user_id)) {
+          latestByUser.set(entry.user_id, entry.details);
+        }
+      }
+
+      const disabledEmails = new Set<string>();
+      for (const user of users) {
+        const details = latestByUser.get(user.user_id);
+        if (details && !parseUserSettings(details).emailNotifs && user.email) {
+          disabledEmails.add(user.email.toLowerCase());
+        }
+      }
+
+      return recipients.filter(
+        (email) => !disabledEmails.has(email.toLowerCase()),
+      );
+    } catch {
+      return recipients;
+    }
+  }
+
   // Core email dispatch method
   private async sendEmail(
     to: string | string[],
     subject: string,
     html: string,
+    options?: { bypassPreferences?: boolean },
   ): Promise<void> {
-    const recipients = Array.isArray(to) ? to : [to];
+    const rawRecipients = Array.isArray(to) ? to : [to];
+    if (rawRecipients.length === 0) return;
+
+    const recipients = options?.bypassPreferences
+      ? rawRecipients
+      : await this.filterEnabledRecipients(rawRecipients);
     if (recipients.length === 0) return;
 
     if (this.resend) {
@@ -367,6 +427,8 @@ export class MailService {
     },
   ) {
     const html = buildPasswordResetHtml(data);
-    await this.sendEmail(email, 'Reset Your Password - ViaScholar', html);
+    await this.sendEmail(email, 'Reset Your Password - ViaScholar', html, {
+      bypassPreferences: true,
+    });
   }
 }

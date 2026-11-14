@@ -8,6 +8,12 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { CloudinaryService } from '../cloudinary/cloudinary.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
+import { UpdateUserSettingsDto } from './dto/update-user-settings.dto.js';
+import {
+  USER_SETTINGS_AUDIT_ACTION,
+  UserSettings,
+  parseUserSettings,
+} from './user-settings.util.js';
 
 @Injectable()
 export class ProfileService {
@@ -153,5 +159,75 @@ export class ProfileService {
     const sanitizedUser: Partial<typeof updatedUser> = { ...updatedUser };
     delete sanitizedUser.password_hash;
     return sanitizedUser;
+  }
+
+  async getUserSettings(userId: number): Promise<UserSettings> {
+    const user = await this.prisma.user.findUnique({
+      where: { user_id: userId },
+      select: { user_id: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found.');
+    }
+
+    const record = await this.prisma.auditLog.findFirst({
+      where: {
+        user_id: userId,
+        action: USER_SETTINGS_AUDIT_ACTION,
+      },
+      orderBy: { created_at: 'desc' },
+    });
+
+    return parseUserSettings(record?.details);
+  }
+
+  async updateUserSettings(
+    userId: number,
+    dto: UpdateUserSettingsDto,
+  ): Promise<UserSettings> {
+    const user = await this.prisma.user.findUnique({
+      where: { user_id: userId },
+      select: { user_id: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found.');
+    }
+
+    const existing = await this.prisma.auditLog.findFirst({
+      where: {
+        user_id: userId,
+        action: USER_SETTINGS_AUDIT_ACTION,
+      },
+      orderBy: { created_at: 'desc' },
+    });
+
+    const current = parseUserSettings(existing?.details);
+    const updated: UserSettings = {
+      emailNotifs: dto.emailNotifs ?? current.emailNotifs,
+      smsNotifs: dto.smsNotifs ?? current.smsNotifs,
+      forumDigest: dto.forumDigest ?? current.forumDigest,
+      twoFactor: dto.twoFactor ?? current.twoFactor,
+      publicProfile: dto.publicProfile ?? current.publicProfile,
+    };
+
+    const serialized = JSON.stringify(updated);
+    if (existing) {
+      await this.prisma.auditLog.update({
+        where: { log_id: existing.log_id },
+        data: { details: serialized },
+      });
+    } else {
+      await this.prisma.auditLog.create({
+        data: {
+          user_id: userId,
+          action: USER_SETTINGS_AUDIT_ACTION,
+          details: serialized,
+        },
+      });
+    }
+
+    return updated;
   }
 }

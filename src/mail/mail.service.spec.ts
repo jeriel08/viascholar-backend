@@ -1,4 +1,4 @@
-﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -536,6 +536,72 @@ describe('MailService', () => {
       expect(mockSend).toHaveBeenCalledWith(
         objectMatching({
           subject: stringContaining('APPROVED'),
+        }),
+      );
+    });
+
+    it('skips non-password-reset emails when user disables emailNotifs', async () => {
+      const prisma = {
+        ...createPrismaMock(),
+        auditLog: {
+          findMany: vi.fn().mockResolvedValue([
+            {
+              user_id: 10,
+              details: JSON.stringify({ emailNotifs: false }),
+            },
+          ]),
+        },
+      };
+      prisma.user.findMany.mockResolvedValue([
+        { user_id: 10, email: 'optedout@example.com' },
+        { user_id: 11, email: 'optedin@example.com' },
+      ]);
+
+      const service = await buildService(createConfigMock(), prisma);
+
+      await service.sendApplicationSubmittedStaff(
+        ['optedout@example.com', 'optedin@example.com'],
+        {
+          studentName: 'Juan Dela Cruz',
+          applicationId: 1,
+        },
+      );
+
+      expect(mockSend).toHaveBeenCalledWith(
+        objectMatching({
+          to: ['optedin@example.com'],
+        }),
+      );
+    });
+
+    it('still sends password reset emails when emailNotifs is disabled', async () => {
+      const prisma = {
+        ...createPrismaMock(),
+        auditLog: {
+          findMany: vi.fn().mockResolvedValue([
+            {
+              user_id: 10,
+              details: JSON.stringify({ emailNotifs: false }),
+            },
+          ]),
+        },
+      };
+      prisma.user.findMany.mockResolvedValue([
+        { user_id: 10, email: 'optedout@example.com' },
+      ]);
+
+      const service = await buildService(createConfigMock(), prisma);
+
+      await service.sendPasswordResetEmail('optedout@example.com', {
+        userName: 'Juan',
+        resetUrl: 'https://app.example.com/reset/abc',
+        expiresInMinutes: 30,
+      });
+
+      expect(mockSend).toHaveBeenCalledWith(
+        objectMatching({
+          to: ['optedout@example.com'],
+          subject: 'Reset Your Password - ViaScholar',
         }),
       );
     });

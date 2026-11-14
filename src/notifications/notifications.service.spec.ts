@@ -1,4 +1,4 @@
-﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -261,7 +261,7 @@ describe('NotificationsService', () => {
         message: 'M',
       });
 
-      expect(result.id).toBe('1');
+      expect(result?.id).toBe('1');
     });
   });
 
@@ -395,6 +395,40 @@ describe('NotificationsService', () => {
           is_read: false,
         },
       });
+    });
+
+    it('suppresses forum notifications when user disables forumDigest', async () => {
+      (mockPrisma as Record<string, unknown>).auditLog = {
+        findFirst: vi.fn().mockResolvedValue({
+          details: JSON.stringify({ forumDigest: false }),
+        }),
+      };
+
+      const result = await service.notifyUser(7, {
+        title: 'Tagged in Forum Post',
+        message: 'Someone tagged you',
+        category: 'forum',
+        link: '/SchoForum',
+      });
+
+      expect(result).toBeNull();
+      expect(mockPrisma.notification.create).not.toHaveBeenCalled();
+    });
+
+    it('delivers system notifications even when forumDigest is disabled', async () => {
+      (mockPrisma as Record<string, unknown>).auditLog = {
+        findFirst: vi.fn().mockResolvedValue({
+          details: JSON.stringify({ forumDigest: false }),
+        }),
+      };
+
+      await service.notifyUser(7, {
+        title: 'System Alert',
+        message: 'Important update',
+        category: 'system',
+      });
+
+      expect(mockPrisma.notification.create).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -34,6 +34,7 @@ import { Roles } from './decorators/roles.decorator.js';
 import { RolesGuard } from './decorators/roles.guard.js';
 import { CreateStaffDto } from './dto/create-staff.dto.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
+import { UpdateUserSettingsDto } from './dto/update-user-settings.dto.js';
 import { FileInterceptor } from '@nestjs/platform-express';
 
 interface AuthenticatedRequest {
@@ -206,6 +207,29 @@ export class AuthController {
     @Body() dto: UpdateProfileDto,
   ) {
     return this.profileService.updateProfile(req.user.user_id, dto);
+  }
+
+  @Get('me/settings')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'))
+  @ApiOperation({
+    summary: 'Get preferences and settings for the authenticated user',
+  })
+  getMySettings(@Request() req: AuthenticatedRequest) {
+    return this.profileService.getUserSettings(req.user.user_id);
+  }
+
+  @Patch('me/settings')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'))
+  @ApiOperation({
+    summary: 'Update preferences and settings for the authenticated user',
+  })
+  updateMySettings(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: UpdateUserSettingsDto,
+  ) {
+    return this.profileService.updateUserSettings(req.user.user_id, dto);
   }
 
   @Throttle({ default: { limit: 10, ttl: 60000 } })

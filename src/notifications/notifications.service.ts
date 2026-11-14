@@ -4,6 +4,10 @@ import { EventsGateway } from '../events/events.gateway.js';
 import { Role } from '../generated/prisma/enums.js';
 import { CreateNotificationDto } from './dto/create-notification.dto.js';
 import { QueryNotificationsDto } from './dto/query-notifications.dto.js';
+import {
+  USER_SETTINGS_AUDIT_ACTION,
+  parseUserSettings,
+} from '../auth/user-settings.util.js';
 
 export interface FormattedNotification {
   id: string;
@@ -143,16 +147,39 @@ export class NotificationsService {
     };
   }
 
+  private async isForumDigestEnabled(userId: number): Promise<boolean> {
+    try {
+      const pref = await this.prisma.auditLog?.findFirst?.({
+        where: {
+          user_id: userId,
+          action: USER_SETTINGS_AUDIT_ACTION,
+        },
+        orderBy: { created_at: 'desc' },
+      });
+      return parseUserSettings(pref?.details).forumDigest;
+    } catch {
+      return true;
+    }
+  }
+
   async createNotification(
     userId: number,
     dto: CreateNotificationDto,
-  ): Promise<FormattedNotification> {
+  ): Promise<FormattedNotification | null> {
+    const category = dto.category || 'system';
+    if (category === 'forum') {
+      const enabled = await this.isForumDigestEnabled(userId);
+      if (!enabled) {
+        return null;
+      }
+    }
+
     const created = await this.prisma.notification.create({
       data: {
         user_id: userId,
         title: dto.title,
         message: dto.message,
-        category: dto.category || 'system',
+        category,
         link: dto.link,
         is_read: false,
       },
@@ -229,7 +256,7 @@ export class NotificationsService {
   async notifyUser(
     userId: number,
     data: { title: string; message: string; category?: string; link?: string },
-  ): Promise<FormattedNotification> {
+  ): Promise<FormattedNotification | null> {
     return this.createNotification(userId, data);
   }
 

@@ -27,6 +27,8 @@ const createProfileServiceMock = () => ({
   updateProfile: vi.fn(),
   uploadAvatar: vi.fn(),
   uploadBanner: vi.fn(),
+  getUserSettings: vi.fn(),
+  updateUserSettings: vi.fn(),
 });
 
 describe('AuthController', () => {
@@ -196,5 +198,40 @@ describe('AuthController', () => {
 
     expect(profileService.uploadBanner).toHaveBeenCalledWith(42, file);
     expect(result).toEqual({ banner_url: 'url' });
+  });
+
+  it('delegates fetching settings to ProfileService', async () => {
+    const req = { user: { user_id: 42 } };
+    const settings = {
+      emailNotifs: true,
+      smsNotifs: false,
+      forumDigest: true,
+      twoFactor: false,
+      publicProfile: true,
+    };
+    profileService.getUserSettings.mockResolvedValue(settings);
+
+    const result = await controller.getMySettings(req);
+
+    expect(profileService.getUserSettings).toHaveBeenCalledWith(42);
+    expect(result).toEqual(settings);
+  });
+
+  it('delegates updating settings to ProfileService', async () => {
+    const req = { user: { user_id: 42 } };
+    const dto = { emailNotifs: false, smsNotifs: true };
+    const updated = {
+      emailNotifs: false,
+      smsNotifs: true,
+      forumDigest: true,
+      twoFactor: false,
+      publicProfile: true,
+    };
+    profileService.updateUserSettings.mockResolvedValue(updated);
+
+    const result = await controller.updateMySettings(req, dto);
+
+    expect(profileService.updateUserSettings).toHaveBeenCalledWith(42, dto);
+    expect(result).toEqual(updated);
   });
 });

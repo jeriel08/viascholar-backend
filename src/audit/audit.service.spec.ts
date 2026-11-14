@@ -1,4 +1,4 @@
-﻿import {
+import {
   afterAll,
   afterEach,
   beforeAll,
@@ -162,11 +162,14 @@ describe('AuditService', () => {
       });
       expect(prisma.auditLog.findMany).toHaveBeenCalledWith(
         objectMatching({
+          where: { action: { not: 'USER_SETTINGS_PREFERENCES' } },
           skip: 10,
           take: 10,
         }),
       );
-      expect(prisma.auditLog.count).toHaveBeenCalledWith();
+      expect(prisma.auditLog.count).toHaveBeenCalledWith({
+        where: { action: { not: 'USER_SETTINGS_PREFERENCES' } },
+      });
     });
 
     it('uses sensible pagination defaults', async () => {

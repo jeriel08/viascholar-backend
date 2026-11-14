@@ -19,6 +19,11 @@ const createPrismaMock = () => ({
   employee: {
     update: vi.fn(),
   },
+  auditLog: {
+    findFirst: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+  },
 });
 
 const createCloudinaryMock = () => ({
@@ -336,6 +341,117 @@ describe('ProfileService', () => {
         'User (ID: 1) uploaded a new banner',
       );
       expect(result).toBe(updatedProfile);
+    });
+  });
+
+  describe('getUserSettings', () => {
+    it('throws NotFoundException when the user does not exist', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(service.getUserSettings(999)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('returns default settings when no saved preferences exist', async () => {
+      prisma.user.findUnique.mockResolvedValue({ user_id: 1 });
+      prisma.auditLog.findFirst.mockResolvedValue(null);
+
+      const result = await service.getUserSettings(1);
+
+      expect(result).toEqual({
+        emailNotifs: true,
+        smsNotifs: false,
+        forumDigest: true,
+        twoFactor: false,
+        publicProfile: true,
+      });
+    });
+
+    it('merges saved preference fields with defaults', async () => {
+      prisma.user.findUnique.mockResolvedValue({ user_id: 1 });
+      prisma.auditLog.findFirst.mockResolvedValue({
+        audit_log_id: 50,
+        details: JSON.stringify({ emailNotifs: false, smsNotifs: true }),
+      });
+
+      const result = await service.getUserSettings(1);
+
+      expect(result).toEqual({
+        emailNotifs: false,
+        smsNotifs: true,
+        forumDigest: true,
+        twoFactor: false,
+        publicProfile: true,
+      });
+    });
+  });
+
+  describe('updateUserSettings', () => {
+    it('creates a preferences entry when none exists yet', async () => {
+      prisma.user.findUnique.mockResolvedValue({ user_id: 1 });
+      prisma.auditLog.findFirst.mockResolvedValue(null);
+
+      const result = await service.updateUserSettings(1, {
+        smsNotifs: true,
+        forumDigest: false,
+      });
+
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: {
+          user_id: 1,
+          action: 'USER_SETTINGS_PREFERENCES',
+          details: JSON.stringify({
+            emailNotifs: true,
+            smsNotifs: true,
+            forumDigest: false,
+            twoFactor: false,
+            publicProfile: true,
+          }),
+        },
+      });
+      expect(audit.log).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        emailNotifs: true,
+        smsNotifs: true,
+        forumDigest: false,
+        twoFactor: false,
+        publicProfile: true,
+      });
+    });
+
+    it('updates the existing preferences row and preserves unchanged fields', async () => {
+      prisma.user.findUnique.mockResolvedValue({ user_id: 1 });
+      prisma.auditLog.findFirst.mockResolvedValue({
+        log_id: 77,
+        details: JSON.stringify({
+          emailNotifs: false,
+          smsNotifs: true,
+          forumDigest: true,
+          twoFactor: false,
+          publicProfile: true,
+        }),
+      });
+
+      const result = await service.updateUserSettings(1, {
+        forumDigest: false,
+      });
+
+      expect(prisma.auditLog.update).toHaveBeenCalledWith({
+        where: { log_id: 77 },
+        data: {
+          details: JSON.stringify({
+            emailNotifs: false,
+            smsNotifs: true,
+            forumDigest: false,
+            twoFactor: false,
+            publicProfile: true,
+          }),
+        },
+      });
+      expect(result.emailNotifs).toBe(false);
+      expect(result.smsNotifs).toBe(true);
+      expect(result.forumDigest).toBe(false);
     });
   });
 });
