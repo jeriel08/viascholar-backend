@@ -35,6 +35,8 @@ import { RolesGuard } from './decorators/roles.guard.js';
 import { CreateStaffDto } from './dto/create-staff.dto.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
 import { UpdateUserSettingsDto } from './dto/update-user-settings.dto.js';
+import { SetupTwoFactorDto, VerifyTwoFactorDto } from './dto/two-factor.dto.js';
+import { ChangePasswordDto } from './dto/change-password.dto.js';
 import { FileInterceptor } from '@nestjs/platform-express';
 
 interface AuthenticatedRequest {
@@ -230,6 +232,49 @@ export class AuthController {
     @Body() dto: UpdateUserSettingsDto,
   ) {
     return this.profileService.updateUserSettings(req.user.user_id, dto);
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Post('me/2fa/setup')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'))
+  @ApiOperation({
+    summary:
+      'Initiate two-factor authentication setup (Email OTP, SMS OTP, or Authenticator App)',
+  })
+  setupTwoFactor(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: SetupTwoFactorDto,
+  ) {
+    return this.profileService.initiateTwoFactorSetup(req.user.user_id, dto);
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Post('me/2fa/verify')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'))
+  @ApiOperation({
+    summary: 'Verify and enable two-factor authentication',
+  })
+  verifyTwoFactor(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: VerifyTwoFactorDto,
+  ) {
+    return this.profileService.verifyTwoFactorSetup(req.user.user_id, dto);
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Post('me/change-password')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'))
+  @ApiOperation({
+    summary: 'Change password for the currently authenticated user',
+  })
+  changePassword(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: ChangePasswordDto,
+  ) {
+    return this.profileService.changePassword(req.user.user_id, dto);
   }
 
   @Throttle({ default: { limit: 10, ttl: 60000 } })

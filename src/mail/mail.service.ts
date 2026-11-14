@@ -26,6 +26,7 @@ import {
   buildGradeReportStatusUpdatedHtml,
 } from './templates/document.templates.js';
 import { buildPasswordResetHtml } from './templates/password-reset.template.js';
+import { buildTwoFactorOtpHtml } from './templates/two-factor.template.js';
 import {
   USER_SETTINGS_AUDIT_ACTION,
   parseUserSettings,
@@ -430,5 +431,24 @@ export class MailService {
     await this.sendEmail(email, 'Reset Your Password - ViaScholar', html, {
       bypassPreferences: true,
     });
+  }
+
+  // 15. Two-Factor OTP Verification Email
+  async sendTwoFactorOtpEmail(
+    email: string,
+    data: {
+      userName: string;
+      code: string;
+      expiresInMinutes: number;
+    },
+  ): Promise<{ simulated: boolean }> {
+    const html = buildTwoFactorOtpHtml(data);
+    await this.sendEmail(
+      email,
+      'Your Two-Factor Verification Code - ViaScholar',
+      html,
+      { bypassPreferences: true },
+    );
+    return { simulated: !this.resend };
   }
 }

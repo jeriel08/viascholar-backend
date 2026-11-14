@@ -29,6 +29,9 @@ const createProfileServiceMock = () => ({
   uploadBanner: vi.fn(),
   getUserSettings: vi.fn(),
   updateUserSettings: vi.fn(),
+  initiateTwoFactorSetup: vi.fn(),
+  verifyTwoFactorSetup: vi.fn(),
+  changePassword: vi.fn(),
 });
 
 describe('AuthController', () => {
@@ -225,7 +228,9 @@ describe('AuthController', () => {
       smsNotifs: true,
       forumDigest: true,
       twoFactor: false,
+      twoFactorMethod: null,
       publicProfile: true,
+      passwordChangedAt: null,
     };
     profileService.updateUserSettings.mockResolvedValue(updated);
 
@@ -233,5 +238,61 @@ describe('AuthController', () => {
 
     expect(profileService.updateUserSettings).toHaveBeenCalledWith(42, dto);
     expect(result).toEqual(updated);
+  });
+
+  it('delegates two-factor setup initiation to ProfileService', async () => {
+    const req = { user: { user_id: 42 } };
+    const dto = { method: 'EMAIL_OTP' as const };
+    const setupRes = {
+      method: 'EMAIL_OTP',
+      destination: 'scholar@example.com',
+      expiresInMinutes: 10,
+      simulated: true,
+      simulationCode: '123456',
+    };
+    profileService.initiateTwoFactorSetup.mockResolvedValue(setupRes);
+
+    const result = await controller.setupTwoFactor(req, dto);
+
+    expect(profileService.initiateTwoFactorSetup).toHaveBeenCalledWith(42, dto);
+    expect(result).toEqual(setupRes);
+  });
+
+  it('delegates two-factor verification to ProfileService', async () => {
+    const req = { user: { user_id: 42 } };
+    const dto = { method: 'AUTHENTICATOR_APP' as const, code: '654321' };
+    const verifiedSettings = {
+      emailNotifs: true,
+      smsNotifs: false,
+      forumDigest: true,
+      twoFactor: true,
+      twoFactorMethod: 'AUTHENTICATOR_APP',
+      publicProfile: true,
+      passwordChangedAt: null,
+    };
+    profileService.verifyTwoFactorSetup.mockResolvedValue(verifiedSettings);
+
+    const result = await controller.verifyTwoFactor(req, dto);
+
+    expect(profileService.verifyTwoFactorSetup).toHaveBeenCalledWith(42, dto);
+    expect(result).toEqual(verifiedSettings);
+  });
+
+  it('delegates password change to ProfileService', async () => {
+    const req = { user: { user_id: 42 } };
+    const dto = {
+      current_password: 'OldPassword1!',
+      new_password: 'NewPassword2@',
+    };
+    const response = {
+      message: 'Password updated successfully.',
+      passwordChangedAt: '2026-11-14T10:00:00.000Z',
+    };
+    profileService.changePassword.mockResolvedValue(response);
+
+    const result = await controller.changePassword(req, dto);
+
+    expect(profileService.changePassword).toHaveBeenCalledWith(42, dto);
+    expect(result).toEqual(response);
   });
 });

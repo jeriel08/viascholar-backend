@@ -1,16 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
+import { createHmac } from 'node:crypto';
+import * as bcrypt from 'bcrypt';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ProfileService } from './profile.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CloudinaryService } from '../cloudinary/cloudinary.service.js';
 import { AuditService } from '../audit/audit.service.js';
+import { MailService } from '../mail/mail.service.js';
 import { Role } from '../generated/prisma/enums.js';
 import type { UpdateProfileDto } from './dto/update-profile.dto.js';
 
 const createPrismaMock = () => ({
   user: {
     findUnique: vi.fn(),
+    update: vi.fn(),
   },
   scholarProfile: {
     findFirst: vi.fn(),
@@ -32,6 +40,10 @@ const createCloudinaryMock = () => ({
 
 const createAuditMock = () => ({
   log: vi.fn(),
+});
+
+const createMailMock = () => ({
+  sendTwoFactorOtpEmail: vi.fn().mockResolvedValue({ simulated: true }),
 });
 
 const makeScholarUser = (overrides: Record<string, unknown> = {}) => ({
@@ -78,11 +90,13 @@ describe('ProfileService', () => {
   let prisma: ReturnType<typeof createPrismaMock>;
   let cloudinary: ReturnType<typeof createCloudinaryMock>;
   let audit: ReturnType<typeof createAuditMock>;
+  let mail: ReturnType<typeof createMailMock>;
 
   beforeEach(async () => {
     prisma = createPrismaMock();
     cloudinary = createCloudinaryMock();
     audit = createAuditMock();
+    mail = createMailMock();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -90,6 +104,7 @@ describe('ProfileService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: CloudinaryService, useValue: cloudinary },
         { provide: AuditService, useValue: audit },
+        { provide: MailService, useValue: mail },
       ],
     }).compile();
 
@@ -364,15 +379,23 @@ describe('ProfileService', () => {
         smsNotifs: false,
         forumDigest: true,
         twoFactor: false,
+        twoFactorMethod: null,
         publicProfile: true,
+        passwordChangedAt: null,
       });
     });
 
     it('merges saved preference fields with defaults', async () => {
       prisma.user.findUnique.mockResolvedValue({ user_id: 1 });
       prisma.auditLog.findFirst.mockResolvedValue({
-        audit_log_id: 50,
-        details: JSON.stringify({ emailNotifs: false, smsNotifs: true }),
+        log_id: 50,
+        details: JSON.stringify({
+          emailNotifs: false,
+          smsNotifs: true,
+          twoFactor: true,
+          twoFactorMethod: 'EMAIL_OTP',
+          twoFactorSecret: 'SHOULD_BE_STRIPPED',
+        }),
       });
 
       const result = await service.getUserSettings(1);
@@ -381,8 +404,10 @@ describe('ProfileService', () => {
         emailNotifs: false,
         smsNotifs: true,
         forumDigest: true,
-        twoFactor: false,
+        twoFactor: true,
+        twoFactorMethod: 'EMAIL_OTP',
         publicProfile: true,
+        passwordChangedAt: null,
       });
     });
   });
@@ -406,7 +431,11 @@ describe('ProfileService', () => {
             smsNotifs: true,
             forumDigest: false,
             twoFactor: false,
+            twoFactorMethod: null,
             publicProfile: true,
+            passwordChangedAt: null,
+            twoFactorSecret: null,
+            pendingTwoFactor: null,
           }),
         },
       });
@@ -416,7 +445,9 @@ describe('ProfileService', () => {
         smsNotifs: true,
         forumDigest: false,
         twoFactor: false,
+        twoFactorMethod: null,
         publicProfile: true,
+        passwordChangedAt: null,
       });
     });
 
@@ -445,13 +476,217 @@ describe('ProfileService', () => {
             smsNotifs: true,
             forumDigest: false,
             twoFactor: false,
+            twoFactorMethod: null,
             publicProfile: true,
+            passwordChangedAt: null,
+            twoFactorSecret: null,
+            pendingTwoFactor: null,
           }),
         },
       });
       expect(result.emailNotifs).toBe(false);
       expect(result.smsNotifs).toBe(true);
       expect(result.forumDigest).toBe(false);
+    });
+
+    it('clears 2FA method and secret and logs when disabling 2FA', async () => {
+      prisma.user.findUnique.mockResolvedValue({ user_id: 1 });
+      prisma.auditLog.findFirst.mockResolvedValue({
+        log_id: 80,
+        details: JSON.stringify({
+          twoFactor: true,
+          twoFactorMethod: 'AUTHENTICATOR_APP',
+          twoFactorSecret: 'JBSWY3DPEHPK3PXP',
+        }),
+      });
+
+      const result = await service.updateUserSettings(1, { twoFactor: false });
+
+      expect(result.twoFactor).toBe(false);
+      expect(result.twoFactorMethod).toBeNull();
+      expect(audit.log).toHaveBeenCalledWith(
+        1,
+        'TWO_FACTOR_DISABLED',
+        'User (ID: 1) disabled two-factor authentication',
+      );
+    });
+  });
+
+  describe('two-factor setup and verification', () => {
+    it('initiates Email OTP setup and sends the verification email', async () => {
+      prisma.user.findUnique.mockResolvedValue(makeScholarUser());
+      prisma.auditLog.findFirst.mockResolvedValue(null);
+
+      const res = await service.initiateTwoFactorSetup(1, {
+        method: 'EMAIL_OTP',
+      });
+
+      expect(res.method).toBe('EMAIL_OTP');
+      expect(res.destination).toBe('scholar@example.com');
+      expect(res.simulationCode).toMatch(/^\d{6}$/);
+      expect(mail.sendTwoFactorOtpEmail).toHaveBeenCalledWith(
+        'scholar@example.com',
+        {
+          userName: 'Juan',
+          code: res.simulationCode,
+          expiresInMinutes: 10,
+        },
+      );
+    });
+
+    it('rejects SMS OTP setup when scholar has no phone number', async () => {
+      prisma.user.findUnique.mockResolvedValue(
+        makeScholarUser({
+          scholar_profile: {
+            profile_id: 10,
+            user_id: 1,
+            first_name: 'Juan',
+            last_name: 'Dela Cruz',
+            phone_number: '',
+          },
+        }),
+      );
+
+      await expect(
+        service.initiateTwoFactorSetup(1, { method: 'SMS_OTP' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('initiates SMS OTP setup when a phone number is present', async () => {
+      prisma.user.findUnique.mockResolvedValue(makeScholarUser());
+      prisma.auditLog.findFirst.mockResolvedValue(null);
+
+      const res = await service.initiateTwoFactorSetup(1, {
+        method: 'SMS_OTP',
+      });
+
+      expect(res.method).toBe('SMS_OTP');
+      expect(res.destination).toBe('09171234567');
+      expect(res.simulationCode).toMatch(/^\d{6}$/);
+      expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('generates a QR code and verifies Authenticator App TOTP setup', async () => {
+      prisma.user.findUnique.mockResolvedValue(makeScholarUser());
+      prisma.auditLog.findFirst.mockResolvedValue(null);
+
+      const setupRes = await service.initiateTwoFactorSetup(1, {
+        method: 'AUTHENTICATOR_APP',
+      });
+
+      expect(setupRes.method).toBe('AUTHENTICATOR_APP');
+      expect(setupRes.qrCodeDataUrl).toMatch(/^data:image\/png;base64,/);
+      expect(setupRes.manualKey).toMatch(/^[A-Z2-7]+$/);
+
+      const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+      let bits = 0;
+      let val = 0;
+      const bytes: number[] = [];
+      for (const ch of setupRes.manualKey ?? '') {
+        val = (val << 5) | alphabet.indexOf(ch);
+        bits += 5;
+        if (bits >= 8) {
+          bytes.push((val >>> (bits - 8)) & 255);
+          bits -= 8;
+        }
+      }
+      const counter = Math.floor(Date.now() / 1000 / 30);
+      const buf = Buffer.alloc(8);
+      buf.writeBigInt64BE(BigInt(counter));
+      const hmac = createHmac('sha1', Buffer.from(bytes)).update(buf).digest();
+      const offset = hmac[hmac.length - 1] & 0x0f;
+      const totp = String(
+        (((hmac[offset] & 0x7f) << 24) |
+          ((hmac[offset + 1] & 0xff) << 16) |
+          ((hmac[offset + 2] & 0xff) << 8) |
+          (hmac[offset + 3] & 0xff)) %
+          1_000_000,
+      ).padStart(6, '0');
+
+      prisma.auditLog.findFirst.mockResolvedValue({
+        log_id: 91,
+        details: JSON.stringify({
+          pendingTwoFactor: {
+            method: 'AUTHENTICATOR_APP',
+            secret: setupRes.manualKey,
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          },
+        }),
+      });
+
+      const verified = await service.verifyTwoFactorSetup(1, {
+        method: 'AUTHENTICATOR_APP',
+        code: totp,
+      });
+
+      expect(verified.twoFactor).toBe(true);
+      expect(verified.twoFactorMethod).toBe('AUTHENTICATOR_APP');
+      expect(audit.log).toHaveBeenCalledWith(
+        1,
+        'TWO_FACTOR_ENABLED',
+        'User (ID: 1) enabled two-factor authentication (AUTHENTICATOR_APP)',
+      );
+    });
+
+    it('rejects expired or mismatched OTP codes during verification', async () => {
+      prisma.user.findUnique.mockResolvedValue({ user_id: 1 });
+      prisma.auditLog.findFirst.mockResolvedValue({
+        log_id: 92,
+        details: JSON.stringify({
+          pendingTwoFactor: {
+            method: 'EMAIL_OTP',
+            code: '123456',
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          },
+        }),
+      });
+
+      await expect(
+        service.verifyTwoFactorSetup(1, {
+          method: 'EMAIL_OTP',
+          code: '999999',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('changePassword', () => {
+    it('rejects incorrect current password', async () => {
+      const hash = await bcrypt.hash('CorrectPass1!', 10);
+      prisma.user.findUnique.mockResolvedValue(
+        makeScholarUser({ password_hash: hash }),
+      );
+
+      await expect(
+        service.changePassword(1, {
+          current_password: 'WrongPassword1!',
+          new_password: 'NewPassword2@',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('updates password hash, stores passwordChangedAt, and logs an audit entry', async () => {
+      const hash = await bcrypt.hash('OldPassword1!', 10);
+      prisma.user.findUnique.mockResolvedValue(
+        makeScholarUser({ password_hash: hash }),
+      );
+      prisma.auditLog.findFirst.mockResolvedValue(null);
+
+      const res = await service.changePassword(1, {
+        current_password: 'OldPassword1!',
+        new_password: 'NewPassword2@',
+      });
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { user_id: 1 },
+        data: { password_hash: expect.any(String) as string },
+      });
+      expect(res.passwordChangedAt).toEqual(expect.any(String));
+      expect(audit.log).toHaveBeenCalledWith(
+        1,
+        'PASSWORD_CHANGED',
+        'User (ID: 1) changed their account password',
+      );
     });
   });
 });

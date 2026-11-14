@@ -1,5 +1,9 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsOptional } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional } from 'class-validator';
+import {
+  VALID_TWO_FACTOR_METHODS,
+  type TwoFactorMethod,
+} from '../user-settings.util.js';
 
 export class UpdateUserSettingsDto {
   @ApiPropertyOptional({
@@ -30,6 +34,14 @@ export class UpdateUserSettingsDto {
   @IsBoolean()
   @IsOptional()
   twoFactor?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Preferred two-factor authentication method',
+    enum: VALID_TWO_FACTOR_METHODS,
+  })
+  @IsIn(VALID_TWO_FACTOR_METHODS)
+  @IsOptional()
+  twoFactorMethod?: TwoFactorMethod;
 
   @ApiPropertyOptional({
     description: 'Allow other scholars to view forum activity and bio',
