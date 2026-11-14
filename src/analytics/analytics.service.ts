@@ -321,18 +321,21 @@ export class AnalyticsService {
           const cleanAy = ay?.trim();
           const cleanSem = sem?.trim();
           if (!cleanAy || !cleanSem) return;
-          
+
           // An academic year is ONLY valid if it has a legitimate semester/trimester (not Annual and not ALL)
           const lowerSem = cleanSem.toLowerCase();
           const isValidSem = lowerSem !== 'all' && !lowerSem.includes('annual');
 
           if (isValidSem) {
-            foundYears.add(cleanAy);
-            if (!termsByYear[cleanAy]) {
-              termsByYear[cleanAy] = new Set<string>();
+            const canonicalAy = normalizeAcademicYear(cleanAy) || cleanAy;
+            const canonicalSem = normalizeSemester(cleanSem) || cleanSem;
+
+            foundYears.add(canonicalAy);
+            if (!termsByYear[canonicalAy]) {
+              termsByYear[canonicalAy] = new Set<string>();
             }
-            termsByYear[cleanAy].add(cleanSem);
-            foundSemesters.add(cleanSem);
+            termsByYear[canonicalAy].add(canonicalSem);
+            foundSemesters.add(canonicalSem);
           }
         };
 
@@ -341,6 +344,28 @@ export class AnalyticsService {
         }
         for (const d of allDisbursements) {
           registerTerm(d.academic_year, d.semester);
+        }
+
+        // Collapse standalone single-year Summer entries (e.g. "2024" -> Summer)
+        // into their parent academic year (e.g. "2023-2024") when that parent SY exists.
+        for (const y of Array.from(foundYears)) {
+          if (/^\d{4}$/.test(y)) {
+            const parentAy = `${Number(y) - 1}-${y}`;
+            const semsForSingleYear = termsByYear[y];
+            if (
+              foundYears.has(parentAy) &&
+              semsForSingleYear &&
+              Array.from(semsForSingleYear).every(
+                (s) => normalizeSemester(s) === 'Summer',
+              )
+            ) {
+              for (const s of semsForSingleYear) {
+                termsByYear[parentAy].add(s);
+              }
+              foundYears.delete(y);
+              delete termsByYear[y];
+            }
+          }
         }
         // Grade reports intentionally do NOT register term filters on their own.
         // A CCG/grade report can carry a stale or mismatched school year (e.g.
@@ -394,12 +419,37 @@ export class AnalyticsService {
           normalizeAcademicYear(ayStr) || (ayStr || '').trim().toLowerCase();
 
         // 2. Resolve Active / Filtered Term
+        const rawQueryAy = query.academicYear?.trim();
+        const rawQuerySem = query.semester?.trim();
+        const normQueryAy = normalizeAy(rawQueryAy);
+        const isSummerQuery =
+          normalizeSemester(rawQuerySem || 'Summer') === 'Summer';
+
+        const matchedAvailableYear =
+          rawQueryAy && rawQueryAy !== 'ALL'
+            ? availableAcademicYears.find(
+                (y) => normalizeAy(y) === normQueryAy,
+              ) ||
+              (isSummerQuery && /^\d{4}$/.test(normQueryAy)
+                ? availableAcademicYears.find(
+                    (y) =>
+                      normalizeAy(y) ===
+                      `${Number(normQueryAy) - 1}-${normQueryAy}`,
+                  )
+                : undefined) ||
+              availableAcademicYears.find((y) =>
+                academicYearsMatchForTerm(
+                  y,
+                  rawQueryAy,
+                  rawQuerySem || 'Summer',
+                ),
+              )
+            : undefined;
+
         const selectedAcademicYear =
-          query.academicYear &&
-          (availableAcademicYears.some((y) => normalizeAy(y) === normalizeAy(query.academicYear)) ||
-            query.academicYear === 'ALL')
-            ? query.academicYear
-            : availableAcademicYears[0];
+          rawQueryAy === 'ALL'
+            ? 'ALL'
+            : matchedAvailableYear || availableAcademicYears[0];
 
         // Semesters valid for the selected academic year
         const yearSemesters =
@@ -408,11 +458,23 @@ export class AnalyticsService {
             ? formattedTermsByYear[selectedAcademicYear]
             : availableSemesters;
 
-        const querySem = query.semester?.trim();
+        const normalizedQuerySem = (
+          normalizeSemester(rawQuerySem) ||
+          rawQuerySem ||
+          ''
+        ).toLowerCase();
+        const matchedYearSemester = rawQuerySem
+          ? yearSemesters.find(
+              (s) =>
+                (normalizeSemester(s) || s.trim()).toLowerCase() ===
+                normalizedQuerySem,
+            )
+          : undefined;
         const selectedSemester =
-          querySem && yearSemesters.some((s) => s.toLowerCase() === querySem.toLowerCase())
-            ? querySem
-            : yearSemesters[0] || availableSemesters[0] || '1st Semester';
+          matchedYearSemester ||
+          yearSemesters[0] ||
+          availableSemesters[0] ||
+          '1st Semester';
 
         const isMatchTerm = (ay?: string | null, sem?: string | null) => {
           const normAy = normalizeAy(ay);

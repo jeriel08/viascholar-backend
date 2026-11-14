@@ -1013,6 +1013,98 @@ describe('AnalyticsService', () => {
     );
   });
 
+  it('unifies different school year formats and single-year Summer into a canonical SY filter', async () => {
+    prisma.termEnrollment.findMany.mockResolvedValue([
+      {
+        academic_year: '2023-2024',
+        semester: '1st Semester',
+        total_assessment: '30000',
+        status: 'APPROVED',
+      },
+      {
+        academic_year: '2023-24',
+        semester: '2nd Semester',
+        total_assessment: '25000',
+        status: 'APPROVED',
+      },
+      {
+        academic_year: '2024',
+        semester: 'Summer',
+        total_assessment: '12699',
+        status: 'COMPLETED',
+      },
+    ]);
+    prisma.disbursement.findMany.mockResolvedValue([
+      {
+        academic_year: 'SY 2023-24',
+        semester: '2nd Semester',
+        amount: '25000',
+        status: 'SETTLED',
+      },
+    ]);
+    prisma.scholarProfile.findMany.mockResolvedValue([
+      makeScholar({
+        profile_id: 201,
+        enrollments: [
+          makeEnrollment({
+            academic_year: '2023-24',
+            semester: '2nd Semester',
+            total_assessment: '25000',
+            status: 'APPROVED',
+          }),
+        ],
+        disbursements: [
+          makeDisbursement({
+            academic_year: 'SY 2023-24',
+            semester: '2nd Semester',
+            amount: '25000',
+            status: 'SETTLED',
+          }),
+        ],
+        grade_reports: [
+          makeGradeReport({
+            gpa: '3.6',
+            academic_year: '2023-2024',
+            semester: '2nd Semester',
+            status: 'APPROVED',
+            is_eligible: true,
+          }),
+        ],
+      }),
+    ]);
+
+    const shortYearQuery = await loadAnalytics({
+      academicYear: '2023-24',
+      semester: '2nd Semester',
+    });
+
+    expect(shortYearQuery.filterOptions.availableAcademicYears).toEqual([
+      '2023-2024',
+    ]);
+    expect(shortYearQuery.filterOptions.termsByYear).toEqual({
+      '2023-2024': ['1st Semester', '2nd Semester', 'Summer'],
+    });
+    expect(shortYearQuery.filterOptions.selectedAcademicYear).toBe('2023-2024');
+    expect(shortYearQuery.filterOptions.selectedSemester).toBe('2nd Semester');
+    expect(shortYearQuery.financialAspect).toMatchObject({
+      totalSemesterAssessment: 25000,
+      totalDisbursedAmount: 25000,
+      disbursedCount: 1,
+    });
+    expect(shortYearQuery.scholars[0]).toMatchObject({
+      enrollmentStatus: 'ENROLLED',
+      gradeStatus: 'SUBMITTED',
+      disbursementStatus: 'DISBURSED',
+    });
+
+    const fullYearQuery = await loadAnalytics({
+      academicYear: '2023-2024',
+      semester: '2nd Semester',
+    });
+    expect(fullYearQuery.filterOptions.selectedAcademicYear).toBe('2023-2024');
+    expect(fullYearQuery.financialAspect.totalDisbursedAmount).toBe(25000);
+  });
+
   describe('explainChartWithAi', () => {
     const metrics = {
       disbursedPercent: 65,
