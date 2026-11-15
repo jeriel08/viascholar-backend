@@ -312,6 +312,7 @@ export class ActiveScholarsAnalyticsService {
             passing_grade: true,
             highest_grade: true,
             failing_grade: true,
+            special_codes: true,
             is_verified: true,
           },
         },
