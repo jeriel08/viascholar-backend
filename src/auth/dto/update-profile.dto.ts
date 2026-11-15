@@ -14,6 +14,7 @@ export class UpdateProfileDto {
   @ApiProperty({ description: 'The first name of the user' })
   @IsString()
   @IsOptional()
+  @Matches(/\S/, { message: 'First name is required.' })
   @Matches(/^[a-zA-ZÀ-ÿñÑ\s]+$/, {
     message: 'First name cannot contain numbers or special characters.',
   })
@@ -26,14 +27,15 @@ export class UpdateProfileDto {
   @IsString()
   @IsOptional()
   @MaxLength(100)
-  @Matches(/^[a-zA-ZÀ-ÿñÑ\s.\-']*$/, {
-    message: 'Middle name contains invalid characters.',
+  @Matches(/^[a-zA-ZÀ-ÿñÑ\s]*$/, {
+    message: 'Middle name cannot contain numbers or special characters.',
   })
   middle_name?: string;
 
   @ApiProperty({ description: 'The last name of the user' })
   @IsString()
   @IsOptional()
+  @Matches(/\S/, { message: 'Last name is required.' })
   @Matches(/^[a-zA-ZÀ-ÿñÑ\s]+$/, {
     message: 'Last name cannot contain numbers or special characters.',
   })
@@ -79,6 +81,11 @@ export class UpdateProfileDto {
   })
   @IsString()
   @IsOptional()
+  @Matches(/\S/, { message: 'Phone number is required.' })
+  @Matches(/^09\d{9}$/, {
+    message:
+      'Phone number must be an 11-digit Philippine mobile number starting with 09 (e.g., 0917 123 4567).',
+  })
   phone_number?: string;
 
   @ApiProperty({
@@ -87,6 +94,7 @@ export class UpdateProfileDto {
   })
   @IsString()
   @IsOptional()
+  @Matches(/\S/, { message: 'Permanent residence address is required.' })
   student_address?: string;
 
   @ApiProperty({
@@ -150,6 +158,7 @@ export class UpdateProfileDto {
   })
   @IsString()
   @IsOptional()
+  @Matches(/\S/, { message: 'Title is required.' })
   title?: string;
 
   @ApiProperty({
@@ -158,5 +167,6 @@ export class UpdateProfileDto {
   })
   @IsString()
   @IsOptional()
+  @Matches(/\S/, { message: 'Department is required.' })
   department?: string;
 }
