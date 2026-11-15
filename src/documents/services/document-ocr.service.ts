@@ -5,7 +5,6 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { AuditService } from '../../audit/audit.service.js';
 import { EventsGateway } from '../../events/events.gateway.js';
@@ -14,7 +13,6 @@ import { LlamaExtractService } from '../extractors/llama-extract.service.js';
 import { ForensicMetadataResult } from './file-forensics.service.js';
 import { DocumentReconciliationService } from './document-reconciliation.service.js';
 import { DocumentSchoolLinkerService } from './document-school-linker.service.js';
-import { ParseurSyncService } from './parseur-sync.service.js';
 import { DocumentDataQueryService } from './document-data-query.service.js';
 import {
   formatNameMismatchMessage,
@@ -38,11 +36,9 @@ export class DocumentOcrService {
 
   constructor(
     private prisma: PrismaService,
-    private configService: ConfigService,
     private auditService: AuditService,
     private documentReconciliationService: DocumentReconciliationService,
     private documentSchoolLinkerService: DocumentSchoolLinkerService,
-    private parseurSyncService: ParseurSyncService,
     private documentDataQueryService: DocumentDataQueryService,
     private eventsGateway: EventsGateway,
     private llamaExtractService: LlamaExtractService,
@@ -59,22 +55,9 @@ export class DocumentOcrService {
     documentType: string = 'document',
     rawFiles?: Express.Multer.File[],
   ) {
-    const provider = (
-      this.configService.get<string>('OCR_PROVIDER') || 'llama-extract'
-    ).toLowerCase();
-
     this.logger.log(
-      `Processing OCR for Document ID ${documentId} using provider '${provider}'...`,
+      `Processing OCR for Document ID ${documentId} using LlamaExtract...`,
     );
-
-    if (provider === 'parseur') {
-      return this.parseurSyncService.sendToParseur(
-        documentId,
-        buffer,
-        fileName,
-        mimeType,
-      );
-    }
 
     try {
       const doc = await this.prisma.scholarDocument.findUnique({
@@ -457,24 +440,5 @@ export class DocumentOcrService {
       documentId,
       callerRole,
     );
-  }
-
-  // Delegated Parseur sync methods
-  sendToParseur(
-    documentId: number,
-    buffer: Buffer,
-    fileName: string,
-    mimeType: string,
-  ) {
-    return this.parseurSyncService.sendToParseur(
-      documentId,
-      buffer,
-      fileName,
-      mimeType,
-    );
-  }
-
-  syncFromParseur(actorUserId: number, documentId: number) {
-    return this.parseurSyncService.syncFromParseur(actorUserId, documentId);
   }
 }

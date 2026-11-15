@@ -51,10 +51,3 @@ export interface InputDocumentFile {
   fileName?: string;
   fileUrl?: string;
 }
-
-export interface IDocumentExtractor {
-  extractData(
-    input: InputDocumentFile | InputDocumentFile[],
-    documentType: string,
-  ): Promise<ExtractedResult>;
-}

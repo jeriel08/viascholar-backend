@@ -322,8 +322,9 @@ model ScholarDocument {
   file_type               String         @db.VarChar(20)
   status                  DocumentStatus @default(PENDING)
   rejection_reason        String?        @db.Text
-  extracted_data          Json?          @db.JsonB // Raw JSON returned by Parseur AI
+  extracted_data          Json?          @db.JsonB // Raw JSON returned by LlamaExtract OCR
   confirmed_data          Json?          @db.JsonB // Student-reviewed/corrected data
+  /// @deprecated Legacy Parseur column preserved non-destructively for deployed DB compatibility
   parseur_doc_id          String?        @db.VarChar(100)
   uploaded_at             DateTime       @default(now())
   verified_at             DateTime?

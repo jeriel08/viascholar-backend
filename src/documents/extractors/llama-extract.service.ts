@@ -5,7 +5,6 @@ import { LlamaCloud, toFile } from '@llamaindex/llama-cloud';
 import { PDFDocument } from 'pdf-lib';
 import {
   ExtractedResult,
-  IDocumentExtractor,
   InputDocumentFile,
 } from './document-extractor.interface.js';
 import {
@@ -282,7 +281,7 @@ const PROSPECTUS_DATA_SCHEMA = {
 };
 
 @Injectable()
-export class LlamaExtractService implements IDocumentExtractor {
+export class LlamaExtractService {
   private readonly logger = new Logger(LlamaExtractService.name);
 
   // In-memory SHA-256 deduplication cache with TTL

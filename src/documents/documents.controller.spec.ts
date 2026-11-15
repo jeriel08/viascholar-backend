@@ -53,7 +53,6 @@ describe('DocumentsController', () => {
     };
     ocrMock = {
       getExtractedData: vi.fn(),
-      syncFromParseur: vi.fn(),
       retryDocumentOcr: vi.fn(),
     };
     evaluationMock = {
@@ -209,12 +208,6 @@ describe('DocumentsController', () => {
       void controller.getDocumentDetail(55);
 
       expect(storageMock.getDocumentDetail).toHaveBeenCalledWith(55);
-    });
-
-    it('delegates syncFromParseur with user and id', () => {
-      void controller.syncFromParseur(makeRequest(3), 55);
-
-      expect(ocrMock.syncFromParseur).toHaveBeenCalledWith(3, 55);
     });
 
     it('delegates retryDocumentOcr with user, id, and caller role', () => {

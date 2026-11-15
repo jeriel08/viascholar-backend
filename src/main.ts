@@ -20,7 +20,6 @@ async function bootstrap() {
 
   app.enableCsrfProtection({
     trustedOrigins: allowedOrigins,
-    exclude: ['webhooks/*path'],
   });
 
   app.enableCors({

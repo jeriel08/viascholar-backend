@@ -7,7 +7,6 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConfigService } from '@nestjs/config';
 import { DocumentOcrService } from './document-ocr.service.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { AuditService } from '../../audit/audit.service.js';
@@ -15,7 +14,6 @@ import { EventsGateway } from '../../events/events.gateway.js';
 import { LlamaExtractService } from '../extractors/llama-extract.service.js';
 import { DocumentReconciliationService } from './document-reconciliation.service.js';
 import { DocumentSchoolLinkerService } from './document-school-linker.service.js';
-import { ParseurSyncService } from './parseur-sync.service.js';
 import { DocumentDataQueryService } from './document-data-query.service.js';
 
 const objectMatching = (shape: Record<string, unknown>) =>
@@ -47,18 +45,7 @@ const createReconciliationMock = () => ({
 const createSchoolLinkerMock = () => ({
   linkSchoolGradingSystem: vi.fn().mockResolvedValue(undefined),
 });
-const createParseurSyncMock = () => ({
-  sendToParseur: vi.fn(),
-  syncFromParseur: vi.fn(),
-});
 const createDataQueryMock = () => ({ getExtractedData: vi.fn() });
-const createConfigMock = (provider?: string) => ({
-  get: vi
-    .fn()
-    .mockImplementation((key: string) =>
-      key === 'OCR_PROVIDER' ? (provider ?? 'llama-extract') : null,
-    ),
-});
 
 const makeDoc = (overrides: Record<string, unknown> = {}) => ({
   document_id: 55,
@@ -107,17 +94,15 @@ describe('DocumentOcrService', () => {
   let llama: ReturnType<typeof createLlamaMock>;
   let reconciliation: ReturnType<typeof createReconciliationMock>;
   let schoolLinker: ReturnType<typeof createSchoolLinkerMock>;
-  let parseurSync: ReturnType<typeof createParseurSyncMock>;
   let dataQuery: ReturnType<typeof createDataQueryMock>;
 
-  const build = async (provider?: string) => {
+  const build = async () => {
     prisma = createPrismaMock();
     audit = createAuditMock();
     events = createEventsMock();
     llama = createLlamaMock();
     reconciliation = createReconciliationMock();
     schoolLinker = createSchoolLinkerMock();
-    parseurSync = createParseurSyncMock();
     dataQuery = createDataQueryMock();
 
     prisma.scholarDocument.findUnique.mockResolvedValue(makeDoc());
@@ -131,13 +116,11 @@ describe('DocumentOcrService', () => {
       providers: [
         DocumentOcrService,
         { provide: PrismaService, useValue: prisma },
-        { provide: ConfigService, useValue: createConfigMock(provider) },
         { provide: AuditService, useValue: audit },
         { provide: EventsGateway, useValue: events },
         { provide: LlamaExtractService, useValue: llama },
         { provide: DocumentReconciliationService, useValue: reconciliation },
         { provide: DocumentSchoolLinkerService, useValue: schoolLinker },
-        { provide: ParseurSyncService, useValue: parseurSync },
         { provide: DocumentDataQueryService, useValue: dataQuery },
       ],
     }).compile();
@@ -162,26 +145,6 @@ describe('DocumentOcrService', () => {
   });
 
   describe('processDocumentExtraction', () => {
-    it('routes to the Parseur provider without touching the database', async () => {
-      await build('parseur');
-
-      const result = await service.processDocumentExtraction(
-        55,
-        Buffer.from('pdf'),
-        'doc.pdf',
-        'application/pdf',
-      );
-
-      expect(parseurSync.sendToParseur).toHaveBeenCalledWith(
-        55,
-        expect.any(Buffer),
-        'doc.pdf',
-        'application/pdf',
-      );
-      expect(llama.extractData).not.toHaveBeenCalled();
-      expect(result).toBeUndefined();
-    });
-
     it('throws NotFoundException when the document does not exist', async () => {
       prisma.scholarDocument.findUnique.mockResolvedValue(null);
 
@@ -797,28 +760,6 @@ describe('DocumentOcrService', () => {
       void service.getExtractedData(7, 55, 'SCHOLAR');
 
       expect(dataQuery.getExtractedData).toHaveBeenCalledWith(7, 55, 'SCHOLAR');
-    });
-
-    it('delegates sendToParseur to the parseur service', () => {
-      void service.sendToParseur(
-        55,
-        Buffer.from('x'),
-        'f.pdf',
-        'application/pdf',
-      );
-
-      expect(parseurSync.sendToParseur).toHaveBeenCalledWith(
-        55,
-        expect.any(Buffer),
-        'f.pdf',
-        'application/pdf',
-      );
-    });
-
-    it('delegates syncFromParseur to the parseur service', () => {
-      void service.syncFromParseur(7, 55);
-
-      expect(parseurSync.syncFromParseur).toHaveBeenCalledWith(7, 55);
     });
   });
 });

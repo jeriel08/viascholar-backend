@@ -275,7 +275,8 @@ export class DocumentsController {
     Role.ADMIN,
   )
   @ApiOperation({
-    summary: 'Retrieve the Parseur OCR-extracted data of a specific document',
+    summary:
+      'Retrieve the LlamaExtract OCR-extracted data of a specific document',
   })
   getExtractedData(
     @Request() req: AuthenticatedRequest,
@@ -316,25 +317,6 @@ export class DocumentsController {
   @ApiOperation({ summary: 'View full detail of a document submission' })
   getDocumentDetail(@Param('id', ParseIntPipe) id: number) {
     return this.storageService.getDocumentDetail(id);
-  }
-
-  @Post(':id/sync-parseur')
-  @Roles(
-    Role.ADMIN,
-    Role.GRANTOR,
-    Role.COORDINATOR,
-    Role.APPLICANT,
-    Role.SCHOLAR,
-  )
-  @ApiOperation({
-    summary:
-      'Re-fetch OCR results from Parseur and backfill the extracted data',
-  })
-  syncFromParseur(
-    @Request() req: AuthenticatedRequest,
-    @Param('id', ParseIntPipe) id: number,
-  ) {
-    return this.ocrService.syncFromParseur(req.user.user_id, id);
   }
 
   @Post(':id/retry-ocr')
