@@ -51,13 +51,13 @@ export class UpdateProfileDto {
   suffix?: string;
 
   @ApiProperty({
-    description: 'The biological sex of the user',
+    description: 'The gender of the user',
     required: false,
   })
   @IsString()
   @IsOptional()
   @MaxLength(30)
-  sex?: string;
+  gender?: string;
 
   @ApiProperty({ description: 'The bio of the user', required: false })
   @IsString()

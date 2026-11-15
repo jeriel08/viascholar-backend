@@ -489,7 +489,7 @@ export class AuthService {
               : {}),
             last_name: dto.last_name,
             ...(dto.suffix?.trim() ? { suffix: dto.suffix.trim() } : {}),
-            ...(dto.sex?.trim() ? { sex: dto.sex.trim() } : {}),
+            ...(dto.gender?.trim() ? { gender: dto.gender.trim() } : {}),
             phone_number: dto.phone_number,
           },
         },
@@ -560,7 +560,7 @@ export class AuthService {
               : {}),
             last_name: dto.last_name,
             ...(dto.suffix?.trim() ? { suffix: dto.suffix.trim() } : {}),
-            ...(dto.sex?.trim() ? { sex: dto.sex.trim() } : {}),
+            ...(dto.gender?.trim() ? { gender: dto.gender.trim() } : {}),
             title: dto.title,
             department: dto.department,
           },
@@ -1055,7 +1055,7 @@ export class AuthService {
         middle_name?: string | null;
         last_name?: string;
         suffix?: string | null;
-        sex?: string | null;
+        gender?: string | null;
         bio?: string;
         avatar_url?: string;
         banner_url?: string;
@@ -1072,7 +1072,7 @@ export class AuthService {
         middle_name: profile.middle_name ?? null,
         last_name: profile.last_name || '',
         suffix: profile.suffix ?? null,
-        sex: profile.sex ?? null,
+        gender: profile.gender ?? null,
         bio: profile.bio ?? null,
         avatar_url: profile.avatar_url ?? null,
         banner_url: profile.banner_url ?? null,

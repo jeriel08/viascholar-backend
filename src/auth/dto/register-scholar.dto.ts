@@ -58,13 +58,13 @@ export class RegisterScholarDto {
   suffix?: string;
 
   @ApiProperty({
-    description: 'The biological sex of the scholar',
+    description: 'The gender of the scholar',
     required: false,
   })
   @IsString()
   @IsOptional()
   @MaxLength(30)
-  sex?: string;
+  gender?: string;
 
   @ApiProperty({
     description: 'The contact mobile phone number of the scholar',

@@ -539,7 +539,7 @@ export class ActiveScholarsAnalyticsService {
         middle_name: scholar.middle_name,
         last_name: scholar.last_name,
         suffix: scholar.suffix,
-        sex: scholar.sex,
+        gender: scholar.gender,
         email: scholar.user.email,
         role: scholar.user.role,
         is_active: scholar.user.is_active,

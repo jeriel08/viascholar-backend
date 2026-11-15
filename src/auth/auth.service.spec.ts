@@ -1230,8 +1230,8 @@ describe('AuthService', () => {
     });
   });
 
-  describe('optional name/sex fields and DB column settings', () => {
-    it('persists middle_name, suffix, and sex on registerScholar and createStaff when provided', async () => {
+  describe('optional name/gender fields and DB column settings', () => {
+    it('persists middle_name, suffix, and gender on registerScholar and createStaff when provided', async () => {
       prisma.user.findUnique.mockResolvedValue(null);
       prisma.scholarProfile.findFirst.mockResolvedValue(null);
       const createdScholar = makeUser({
@@ -1244,7 +1244,7 @@ describe('AuthService', () => {
           middle_name: 'Reyes',
           last_name: 'Santos',
           suffix: 'Jr.',
-          sex: 'Female',
+          gender: 'Female',
           phone_number: '09171234567',
           bio: null,
           avatar_url: null,
@@ -1261,7 +1261,7 @@ describe('AuthService', () => {
         middle_name: '  Reyes  ',
         last_name: 'Santos',
         suffix: 'Jr.',
-        sex: 'Female',
+        gender: 'Female',
         phone_number: '09171234567',
       });
 
@@ -1273,7 +1273,7 @@ describe('AuthService', () => {
         middle_name: 'Reyes',
         last_name: 'Santos',
         suffix: 'Jr.',
-        sex: 'Female',
+        gender: 'Female',
         phone_number: '09171234567',
       });
       expect(regResult.user).toMatchObject({
@@ -1281,7 +1281,7 @@ describe('AuthService', () => {
         middle_name: 'Reyes',
         last_name: 'Santos',
         suffix: 'Jr.',
-        sex: 'Female',
+        gender: 'Female',
       });
 
       const createdStaff = makeUser({
@@ -1295,7 +1295,7 @@ describe('AuthService', () => {
           middle_name: 'Cruz',
           last_name: 'Diaz',
           suffix: 'III',
-          sex: 'Male',
+          gender: 'Male',
           title: 'Coordinator',
           department: 'Scholarships',
         },
@@ -1310,7 +1310,7 @@ describe('AuthService', () => {
         middle_name: 'Cruz',
         last_name: 'Diaz',
         suffix: 'III',
-        sex: 'Male',
+        gender: 'Male',
         title: 'Coordinator',
         department: 'Scholarships',
       });
@@ -1323,7 +1323,7 @@ describe('AuthService', () => {
         middle_name: 'Cruz',
         last_name: 'Diaz',
         suffix: 'III',
-        sex: 'Male',
+        gender: 'Male',
         title: 'Coordinator',
         department: 'Scholarships',
       });

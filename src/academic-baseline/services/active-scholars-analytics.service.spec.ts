@@ -686,7 +686,7 @@ describe('ActiveScholarsAnalyticsService', () => {
         ...makeScholar({
           middle_name: 'Reyes',
           suffix: null,
-          sex: 'Female',
+          gender: 'Female',
           phone_number: '09171234567',
           is_phone_verified: true,
           student_address: 'Davao City',

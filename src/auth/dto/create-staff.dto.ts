@@ -65,13 +65,13 @@ export class CreateStaffDto {
   suffix?: string;
 
   @ApiProperty({
-    description: 'The biological sex of the staff',
+    description: 'The gender of the staff',
     required: false,
   })
   @IsString()
   @IsOptional()
   @MaxLength(30)
-  sex?: string;
+  gender?: string;
 
   @ApiProperty({ description: 'The title of the staff', required: false })
   @IsString()

@@ -71,7 +71,7 @@ export interface PublicScholarProfile {
   middle_name: string | null;
   last_name: string;
   suffix: string | null;
-  sex: string | null;
+  gender: string | null;
   email: string;
   bio: string | null;
   avatar_url: string | null;
@@ -189,7 +189,9 @@ export class ProfileService {
           ...(dto.suffix !== undefined
             ? { suffix: dto.suffix.trim() || null }
             : {}),
-          ...(dto.sex !== undefined ? { sex: dto.sex.trim() || null } : {}),
+          ...(dto.gender !== undefined
+            ? { gender: dto.gender.trim() || null }
+            : {}),
           phone_number: dto.phone_number,
           student_address: dto.student_address,
           school_address: dto.school_address,
@@ -240,7 +242,9 @@ export class ProfileService {
           ...(dto.suffix !== undefined
             ? { suffix: dto.suffix.trim() || null }
             : {}),
-          ...(dto.sex !== undefined ? { sex: dto.sex.trim() || null } : {}),
+          ...(dto.gender !== undefined
+            ? { gender: dto.gender.trim() || null }
+            : {}),
           bio: dto.bio,
           avatar_url: dto.avatar_url,
           banner_url: dto.banner_url,
@@ -940,7 +944,7 @@ export class ProfileService {
             middle_name: true,
             last_name: true,
             suffix: true,
-            sex: true,
+            gender: true,
             bio: true,
             avatar_url: true,
             banner_url: true,
@@ -1030,7 +1034,7 @@ export class ProfileService {
       middle_name: profile.middle_name ?? null,
       last_name: profile.last_name,
       suffix: profile.suffix ?? null,
-      sex: profile.sex ?? null,
+      gender: profile.gender ?? null,
       email: targetUser.email,
       bio: profile.bio ?? null,
       avatar_url: profile.avatar_url ?? null,

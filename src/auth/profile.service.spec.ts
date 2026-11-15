@@ -972,7 +972,7 @@ describe('ProfileService', () => {
   });
 
   describe('schema column persistence and optional profile fields', () => {
-    it('normalizes and persists middle_name, suffix, and sex for scholar and staff updates', async () => {
+    it('normalizes and persists middle_name, suffix, and gender for scholar and staff updates', async () => {
       const scholar = makeScholarUser();
       prisma.user.findUnique
         .mockResolvedValueOnce(scholar)
@@ -984,7 +984,7 @@ describe('ProfileService', () => {
         middle_name: '  Reyes  ',
         last_name: 'Dela Cruz',
         suffix: '   ',
-        sex: 'Male',
+        gender: 'Male',
       });
 
       const scholarUpdateArgs = prisma.scholarProfile.update.mock
@@ -998,7 +998,7 @@ describe('ProfileService', () => {
         middle_name: 'Reyes',
         last_name: 'Dela Cruz',
         suffix: null,
-        sex: 'Male',
+        gender: 'Male',
       });
 
       const staff = makeStaffUser();
@@ -1012,7 +1012,7 @@ describe('ProfileService', () => {
         middle_name: '',
         last_name: 'Santos',
         suffix: 'PhD',
-        sex: 'Female',
+        gender: 'Female',
       });
 
       const staffUpdateArgs = prisma.employee.update.mock.calls[0]?.[0] as {
@@ -1025,7 +1025,7 @@ describe('ProfileService', () => {
         middle_name: null,
         last_name: 'Santos',
         suffix: 'PhD',
-        sex: 'Female',
+        gender: 'Female',
       });
     });
 
@@ -1156,7 +1156,7 @@ describe('ProfileService', () => {
           middle_name: 'Santos',
           last_name: 'Dela Cruz',
           suffix: 'Jr.',
-          sex: 'Male',
+          gender: 'Male',
           bio: 'Engineering scholar',
           avatar_url: 'https://cdn.example/avatar.png',
           banner_url: 'https://cdn.example/banner.png',
