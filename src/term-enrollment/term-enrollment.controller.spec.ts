@@ -288,12 +288,42 @@ describe('TermEnrollmentController', () => {
       expect(scholarMock.uploadAndParseCor).toHaveBeenCalledWith(3, files[0]);
     });
 
-    it('rejects an unsupported MIME type with the offending file name', async () => {
+    it('rejects an unsupported MIME type / extension with a descriptive message', async () => {
       const files = [makeFile(1024, 'notes.txt', 'text/plain')];
 
       await expect(controller.uploadCor(makeRequest(), files)).rejects.toThrow(
         new BadRequestException(
-          'Invalid file format: notes.txt. Only PDF, PNG, JPG, and WEBP files are supported.',
+          'Unsupported file type (.txt) for "notes.txt". Only PDF, PNG, JPG, JPEG, and WEBP files are accepted.',
+        ),
+      );
+    });
+
+    it('rejects executable files even when sent with generic octet-stream MIME', async () => {
+      const files = [makeFile(1024, 'payload.exe', 'application/octet-stream')];
+
+      await expect(controller.uploadCor(makeRequest(), files)).rejects.toThrow(
+        new BadRequestException(
+          'Unsupported file type (.exe) for "payload.exe". Only PDF, PNG, JPG, JPEG, and WEBP files are accepted.',
+        ),
+      );
+    });
+
+    it('rejects files without an extension when MIME type is unsupported', async () => {
+      const files = [makeFile(1024, 'README', 'text/plain')];
+
+      await expect(controller.uploadCor(makeRequest(), files)).rejects.toThrow(
+        new BadRequestException(
+          'Unsupported file format for "README". Only PDF, PNG, JPG, JPEG, and WEBP files are accepted.',
+        ),
+      );
+    });
+
+    it('rejects an empty 0-byte file', async () => {
+      const files = [makeFile(0, 'blank.pdf', 'application/pdf')];
+
+      await expect(controller.uploadCor(makeRequest(), files)).rejects.toThrow(
+        new BadRequestException(
+          'File "blank.pdf" is empty. Please upload a readable PDF or image document.',
         ),
       );
     });
@@ -306,7 +336,7 @@ describe('TermEnrollmentController', () => {
 
       await expect(controller.uploadCor(makeRequest(), files)).rejects.toThrow(
         new BadRequestException(
-          'Invalid file format: bad.docx. Only PDF, PNG, JPG, and WEBP files are supported.',
+          'Unsupported file type (.docx) for "bad.docx". Only PDF, PNG, JPG, JPEG, and WEBP files are accepted.',
         ),
       );
     });
@@ -336,7 +366,7 @@ describe('TermEnrollmentController', () => {
         ]),
       ).rejects.toThrow(
         new BadRequestException(
-          'Invalid file format: envelope.zip. Only PDF, PNG, JPG, and WEBP files are supported.',
+          'Unsupported file type (.zip) for "envelope.zip". Only PDF, PNG, JPG, JPEG, and WEBP files are accepted.',
         ),
       );
       expect(scholarMock.uploadAndParseConsolidated).not.toHaveBeenCalled();

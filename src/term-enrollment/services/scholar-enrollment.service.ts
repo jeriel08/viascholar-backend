@@ -138,6 +138,14 @@ export class ScholarEnrollmentService {
     }
   }
 
+  private parseOptionalDate(value?: string | null): Date | null {
+    if (!value || typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = new Date(trimmed);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
   private async getScholarProfile(userId: number) {
     const scholar = await this.prisma.scholarProfile.findUnique({
       where: { user_id: userId },
@@ -230,7 +238,8 @@ export class ScholarEnrollmentService {
     }
 
     const appealStatus =
-      latestFlaggedReport?.appeal_status || (isProfileDiscontinued ? 'DENIED' : 'NONE');
+      latestFlaggedReport?.appeal_status ||
+      (isProfileDiscontinued ? 'DENIED' : 'NONE');
     let reason = 'APPEAL_REQUIRED';
     let message =
       'Your academic standing is under review due to a flagged grade report. Please submit a Second Chance Appeal before enrolling for the next term.';
@@ -507,12 +516,9 @@ export class ScholarEnrollmentService {
       (preferredAy &&
         preferredSem &&
         drafts.find(
-          (d) =>
-            d.academic_year === preferredAy && d.semester === preferredSem,
+          (d) => d.academic_year === preferredAy && d.semester === preferredSem,
         )) ||
-      drafts.find(
-        (d) => d.academic_year && d.academic_year !== '2026-2027',
-      ) ||
+      drafts.find((d) => d.academic_year && d.academic_year !== '2026-2027') ||
       drafts.find((d) => d.cor_document_id != null) ||
       drafts[0];
 
@@ -587,20 +593,17 @@ export class ScholarEnrollmentService {
     }
     if (!file) throw new BadRequestException('No COR file uploaded.');
 
-    // Concurrently upload to Cloudinary and parse via OCR
-    const uploadPromise = this.cloudinaryService.uploadDocument(
+    // Validate & parse via OCR first so invalid/wrong documents fail cleanly without uploading
+    const extractedData = await this.enrollmentOcrService.parseCor({
+      buffer: file.buffer,
+      fileName: file.originalname,
+      mimeType: file.mimetype,
+    });
+
+    const uploadRes = await this.cloudinaryService.uploadDocument(
       file,
       'viascholar/enrollment/cor',
     );
-
-    const [uploadRes, extractedData] = await Promise.all([
-      uploadPromise,
-      this.enrollmentOcrService.parseCor({
-        buffer: file.buffer,
-        fileName: file.originalname,
-        mimeType: file.mimetype,
-      }),
-    ]);
 
     const ay = extractedData.academic_year || '2026-2027';
     const sem = extractedData.semester || '1st Semester';
@@ -757,20 +760,17 @@ export class ScholarEnrollmentService {
     }
     if (!file) throw new BadRequestException('No SOA file uploaded.');
 
-    // Concurrently upload to Cloudinary and parse via OCR
-    const uploadPromise = this.cloudinaryService.uploadDocument(
+    // Validate & parse via OCR first so invalid/wrong documents fail cleanly without uploading
+    const extractedData = await this.enrollmentOcrService.parseSoa({
+      buffer: file.buffer,
+      fileName: file.originalname,
+      mimeType: file.mimetype,
+    });
+
+    const uploadRes = await this.cloudinaryService.uploadDocument(
       file,
       'viascholar/enrollment/soa',
     );
-
-    const [uploadRes, extractedData] = await Promise.all([
-      uploadPromise,
-      this.enrollmentOcrService.parseSoa({
-        buffer: file.buffer,
-        fileName: file.originalname,
-        mimeType: file.mimetype,
-      }),
-    ]);
 
     let ay = extractedData.academic_year || '2026-2027';
     let sem = extractedData.semester || '1st Semester';
@@ -925,9 +925,7 @@ export class ScholarEnrollmentService {
         soa_document_id: doc.document_id,
         total_units: 0,
         total_assessment: extractedData.total_assessment || 0,
-        assessment_date: extractedData.assessment_date
-          ? new Date(extractedData.assessment_date)
-          : null,
+        assessment_date: this.parseOptionalDate(extractedData.assessment_date),
         status: 'DRAFT',
         audit_flags: auditResult.flags as any,
         billing_breakdown: billingBreakdown as any,
@@ -937,9 +935,7 @@ export class ScholarEnrollmentService {
       update: {
         soa_document_id: doc.document_id,
         total_assessment: extractedData.total_assessment || 0,
-        assessment_date: extractedData.assessment_date
-          ? new Date(extractedData.assessment_date)
-          : null,
+        assessment_date: this.parseOptionalDate(extractedData.assessment_date),
         audit_flags: auditResult.flags as any,
         billing_breakdown: billingBreakdown as any,
         cross_doc_reconciliation: auditResult.cross_doc_reconciliation as any,
@@ -969,20 +965,17 @@ export class ScholarEnrollmentService {
     }
     if (!file) throw new BadRequestException('No consolidated file uploaded.');
 
-    // Concurrently upload to Cloudinary and parse via OCR
-    const uploadPromise = this.cloudinaryService.uploadDocument(
+    // Validate & parse via OCR first so invalid/wrong documents fail cleanly without uploading
+    const extractedData = await this.enrollmentOcrService.parseConsolidated({
+      buffer: file.buffer,
+      fileName: file.originalname,
+      mimeType: file.mimetype,
+    });
+
+    const uploadRes = await this.cloudinaryService.uploadDocument(
       file,
       'viascholar/enrollment/consolidated',
     );
-
-    const [uploadRes, extractedData] = await Promise.all([
-      uploadPromise,
-      this.enrollmentOcrService.parseConsolidated({
-        buffer: file.buffer,
-        fileName: file.originalname,
-        mimeType: file.mimetype,
-      }),
-    ]);
 
     const ay = extractedData.academic_year || '2026-2027';
     const sem = extractedData.semester || '1st Semester';
@@ -1066,9 +1059,7 @@ export class ScholarEnrollmentService {
         soa_document_id: doc.document_id,
         total_units: extractedData.total_units || 0,
         total_assessment: extractedData.total_assessment || 0,
-        assessment_date: extractedData.assessment_date
-          ? new Date(extractedData.assessment_date)
-          : null,
+        assessment_date: this.parseOptionalDate(extractedData.assessment_date),
         status: 'DRAFT',
         audit_flags: auditResult.flags as any,
         enrolled_subjects: extractedData.subjects as any,
@@ -1081,9 +1072,7 @@ export class ScholarEnrollmentService {
         soa_document_id: doc.document_id,
         total_units: extractedData.total_units || 0,
         total_assessment: extractedData.total_assessment || 0,
-        assessment_date: extractedData.assessment_date
-          ? new Date(extractedData.assessment_date)
-          : null,
+        assessment_date: this.parseOptionalDate(extractedData.assessment_date),
         audit_flags: auditResult.flags as any,
         enrolled_subjects: extractedData.subjects as any,
         billing_breakdown: billingBreakdown as any,

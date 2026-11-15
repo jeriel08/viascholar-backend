@@ -469,6 +469,17 @@ describe('ScholarEnrollmentService', () => {
       ).rejects.toThrow(new BadRequestException('No COR file uploaded.'));
     });
 
+    it('rejects wrong COR documents before uploading to Cloudinary', async () => {
+      ocr.parseCor.mockRejectedValue(
+        new BadRequestException('Wrong document uploaded.'),
+      );
+
+      await expect(service.uploadAndParseCor(3, makeFile())).rejects.toThrow(
+        new BadRequestException('Wrong document uploaded.'),
+      );
+      expect(cloudinary.uploadDocument).not.toHaveBeenCalled();
+    });
+
     it('uploads, parses, audits, stores the document, and upserts a draft', async () => {
       ocr.parseCor.mockResolvedValue(extractedCor);
       prisma.termEnrollment.upsert.mockResolvedValue({
@@ -814,10 +825,10 @@ describe('ScholarEnrollmentService', () => {
       expect(prisma.scholarDocument.delete).not.toHaveBeenCalled();
     });
 
-    it('stores a null assessment date when OCR does not provide one', async () => {
+    it('stores a null assessment date when OCR does not provide a valid date', async () => {
       ocr.parseSoa.mockResolvedValue({
         ...extractedSoa,
-        assessment_date: undefined,
+        assessment_date: 'N/A',
       });
 
       await service.uploadAndParseSoa(3, makeFile());
@@ -827,6 +838,17 @@ describe('ScholarEnrollmentService', () => {
       };
 
       expect(upsertArgs.create.assessment_date).toBeNull();
+    });
+
+    it('rejects wrong SOA documents before uploading to Cloudinary', async () => {
+      ocr.parseSoa.mockRejectedValue(
+        new BadRequestException('Wrong SOA document uploaded.'),
+      );
+
+      await expect(service.uploadAndParseSoa(3, makeFile())).rejects.toThrow(
+        new BadRequestException('Wrong SOA document uploaded.'),
+      );
+      expect(cloudinary.uploadDocument).not.toHaveBeenCalled();
     });
   });
 

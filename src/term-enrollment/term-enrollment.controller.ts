@@ -39,6 +39,33 @@ interface AuthenticatedRequest {
   };
 }
 
+const ALLOWED_ENROLLMENT_MIME_TYPES = new Set([
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/webp',
+]);
+
+const ALLOWED_ENROLLMENT_EXTENSIONS = new Set([
+  'pdf',
+  'png',
+  'jpg',
+  'jpeg',
+  'webp',
+]);
+
+const ACCEPTED_ENROLLMENT_FORMATS_TEXT = 'PDF, PNG, JPG, JPEG, and WEBP';
+const MAX_ENROLLMENT_FILE_BYTES = 15 * 1024 * 1024;
+
+function extractFileExtension(filename: string | undefined): string {
+  if (!filename) return '';
+  const trimmed = filename.trim();
+  const dotIndex = trimmed.lastIndexOf('.');
+  if (dotIndex <= 0 || dotIndex === trimmed.length - 1) return '';
+  return trimmed.slice(dotIndex + 1).toLowerCase();
+}
+
 @ApiTags('Term Enrollment & Statement of Account (Phase 2)')
 @ApiBearerAuth()
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -53,20 +80,26 @@ export class TermEnrollmentController {
     if (!files || files.length === 0) {
       throw new BadRequestException('At least one document file is required.');
     }
-    const allowedMimeTypes = [
-      'application/pdf',
-      'image/png',
-      'image/jpeg',
-      'image/jpg',
-      'image/webp',
-    ];
     for (const file of files) {
-      if (!allowedMimeTypes.includes(file.mimetype)) {
+      const ext = extractFileExtension(file.originalname);
+      const mime = (file.mimetype || '').trim().toLowerCase();
+
+      if (ext && !ALLOWED_ENROLLMENT_EXTENSIONS.has(ext)) {
         throw new BadRequestException(
-          `Invalid file format: ${file.originalname}. Only PDF, PNG, JPG, and WEBP files are supported.`,
+          `Unsupported file type (.${ext}) for "${file.originalname}". Only ${ACCEPTED_ENROLLMENT_FORMATS_TEXT} files are accepted.`,
         );
       }
-      if (file.size > 15 * 1024 * 1024) {
+      if (!ALLOWED_ENROLLMENT_MIME_TYPES.has(mime)) {
+        throw new BadRequestException(
+          `Unsupported file format for "${file.originalname}". Only ${ACCEPTED_ENROLLMENT_FORMATS_TEXT} files are accepted.`,
+        );
+      }
+      if (file.size === 0) {
+        throw new BadRequestException(
+          `File "${file.originalname}" is empty. Please upload a readable PDF or image document.`,
+        );
+      }
+      if (file.size > MAX_ENROLLMENT_FILE_BYTES) {
         throw new BadRequestException(
           `File ${file.originalname} exceeds the maximum upload limit of 15 MB.`,
         );

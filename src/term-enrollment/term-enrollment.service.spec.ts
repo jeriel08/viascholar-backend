@@ -192,6 +192,27 @@ describe('TermEnrollment Services', () => {
       );
     });
 
+    it('turns extractor errors or null results into a BadRequestException instead of 500', async () => {
+      mockLlamaExtract.extractEnrollmentCorData.mockRejectedValueOnce(
+        new Error('LlamaExtract job 123 ended with status FAILED'),
+      );
+      await expect(ocrService.parseCor(ocrInput)).rejects.toThrow(
+        BadRequestException,
+      );
+
+      mockLlamaExtract.extractEnrollmentCorData.mockResolvedValueOnce(null);
+      await expect(ocrService.parseCor(ocrInput)).rejects.toThrow(
+        BadRequestException,
+      );
+
+      mockLlamaExtract.extractEnrollmentCorData.mockResolvedValueOnce({
+        subjects: 'not-an-array',
+      });
+      await expect(ocrService.parseCor(ocrInput)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
     it('normalizes academic subjects, drops fee rows, and computes the unit total', async () => {
       mockLlamaExtract.extractEnrollmentCorData.mockResolvedValue({
         detected_document_type: 'CERTIFICATE_OF_REGISTRATION',
@@ -451,6 +472,28 @@ describe('TermEnrollment Services', () => {
       expect(result.tuition_fee).toBe(5000);
       expect(result.net_balance_due).toBe(0);
     });
+
+    it('rejects non-numeric fee strings like N/A and wraps extractor errors as BadRequestException', async () => {
+      mockLlamaExtract.extractEnrollmentSoaData.mockResolvedValueOnce({
+        total_assessment: 'N/A',
+        tuition_fee: 'N/A',
+      });
+      await expect(ocrService.parseSoa(ocrInput)).rejects.toThrow(
+        BadRequestException,
+      );
+
+      mockLlamaExtract.extractEnrollmentSoaData.mockRejectedValueOnce(
+        new Error('LlamaExtract job 456 ended with status FAILED'),
+      );
+      await expect(ocrService.parseSoa(ocrInput)).rejects.toThrow(
+        BadRequestException,
+      );
+
+      mockLlamaExtract.extractEnrollmentSoaData.mockResolvedValueOnce(null);
+      await expect(ocrService.parseSoa(ocrInput)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
   });
 
   describe('EnrollmentOcrService.parseConsolidated', () => {
@@ -545,6 +588,22 @@ describe('TermEnrollment Services', () => {
           },
         ],
       });
+    });
+
+    it('rejects OTHER document type and wraps extractor failures as BadRequestException', async () => {
+      mockLlamaExtract.extractConsolidatedEnrollmentData.mockResolvedValueOnce({
+        detected_document_type: 'OTHER',
+      });
+      await expect(ocrService.parseConsolidated(ocrInput)).rejects.toThrow(
+        BadRequestException,
+      );
+
+      mockLlamaExtract.extractConsolidatedEnrollmentData.mockRejectedValueOnce(
+        new Error('LlamaExtract job 789 ended with status FAILED'),
+      );
+      await expect(ocrService.parseConsolidated(ocrInput)).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 

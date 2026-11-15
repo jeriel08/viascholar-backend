@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { LlamaExtractService } from '../../documents/extractors/llama-extract.service.js';
 import { InputDocumentFile } from '../../documents/extractors/document-extractor.interface.js';
 
@@ -178,11 +184,91 @@ export class EnrollmentOcrService {
     return 1;
   }
 
+  private sanitizeAmount(value: unknown): number | undefined {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : undefined;
+    }
+    if (typeof value === 'string') {
+      const cleaned = value.replace(/php|₱|,/gi, '').trim();
+      if (!cleaned) return undefined;
+      const parsed = Number(cleaned);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
+  }
+
+  private extractBillingFields(raw: any) {
+    const totalAssessment = this.sanitizeAmount(raw.total_assessment) ?? 0;
+    const tuition_fee = this.sanitizeAmount(raw.tuition_fee);
+    const lab_fees = this.sanitizeAmount(raw.lab_fees);
+    const misc_fees = this.sanitizeAmount(raw.misc_fees);
+    const other_fees = this.sanitizeAmount(raw.other_fees);
+    const previous_balance = this.sanitizeAmount(raw.previous_balance);
+    const discounts = this.sanitizeAmount(raw.discounts);
+    const net_balance_due =
+      this.sanitizeAmount(raw.net_balance_due) ?? totalAssessment;
+
+    const hasFeeBreakdown = [
+      tuition_fee,
+      lab_fees,
+      misc_fees,
+      other_fees,
+      net_balance_due,
+    ].some((amt) => amt != null && amt > 0);
+
+    return {
+      totalAssessment,
+      hasFeeBreakdown,
+      tuition_fee,
+      lab_fees,
+      misc_fees,
+      other_fees,
+      previous_balance,
+      discounts,
+      net_balance_due,
+    };
+  }
+
+  private async extractRawSafely(
+    docLabel: string,
+    guidanceMessage: string,
+    extractor: () => Promise<any>,
+  ): Promise<any> {
+    let raw: any;
+    try {
+      raw = await extractor();
+    } catch (err: any) {
+      if (err instanceof HttpException) {
+        throw err;
+      }
+      const message = String(err?.message || err || '');
+      if (message.includes('LLAMA_CLOUD_API_KEY')) {
+        throw new ServiceUnavailableException(
+          'Document OCR service is temporarily unavailable because credentials are not configured.',
+        );
+      }
+      this.logger.warn(
+        `Failed to parse uploaded file as ${docLabel}: ${message}`,
+      );
+      throw new BadRequestException(guidanceMessage);
+    }
+
+    if (!raw || typeof raw !== 'object') {
+      throw new BadRequestException(guidanceMessage);
+    }
+    return raw;
+  }
+
   async parseCor(
     input: InputDocumentFile | InputDocumentFile[],
   ): Promise<ExtractedCorData> {
     this.logger.log('Dispatching COR document to LlamaExtract...');
-    const raw = await this.llamaExtractService.extractEnrollmentCorData(input);
+    const raw = await this.extractRawSafely(
+      'Certificate of Registration (COR)',
+      'We could not read a valid Certificate of Registration or Class Schedule from this file. Please upload a clear PDF or image of your official COR / Study Load.',
+      () => this.llamaExtractService.extractEnrollmentCorData(input),
+    );
 
     // 1. Strict Document Type Checking
     if (
@@ -193,17 +279,14 @@ export class EnrollmentOcrService {
         'The uploaded document is a Statement of Account or Tuition Fee Assessment. Please upload your Proof of Enrolled Subjects (Certificate of Registration / Class Schedule) in this input, or switch to Consolidated mode if your form contains both.',
       );
     }
-    if (
-      raw.detected_document_type === 'OTHER' ||
-      !raw.subjects ||
-      raw.subjects.length === 0
-    ) {
+    const rawSubjects = Array.isArray(raw.subjects) ? raw.subjects : [];
+    if (raw.detected_document_type === 'OTHER' || rawSubjects.length === 0) {
       throw new BadRequestException(
         'The uploaded document does not appear to be an official Certificate of Registration or Class Schedule. Please upload a valid enrollment document.',
       );
     }
 
-    const subjects: ExtractedCorSubject[] = (raw.subjects || [])
+    const subjects: ExtractedCorSubject[] = rawSubjects
       .map((s: any) => this.sanitizeSubject(s))
       .filter((s: ExtractedCorSubject) => Boolean(s.subject_code));
 
@@ -227,9 +310,10 @@ export class EnrollmentOcrService {
       );
     }
 
+    const parsedTotalUnits = this.sanitizeAmount(raw.total_units);
     const totalUnits =
-      Number(raw.total_units) > 0
-        ? Number(raw.total_units)
+      parsedTotalUnits && parsedTotalUnits > 0
+        ? parsedTotalUnits
         : academicSubjects.reduce((sum, s) => sum + s.units, 0);
 
     return {
@@ -252,7 +336,11 @@ export class EnrollmentOcrService {
     input: InputDocumentFile | InputDocumentFile[],
   ): Promise<ExtractedSoaData> {
     this.logger.log('Dispatching SOA document to LlamaExtract...');
-    const raw = await this.llamaExtractService.extractEnrollmentSoaData(input);
+    const raw = await this.extractRawSafely(
+      'Statement of Account (SOA)',
+      'We could not read a valid Statement of Account or Tuition Assessment from this file. Please upload a clear PDF or image of your official SOA / Student Ledger.',
+      () => this.llamaExtractService.extractEnrollmentSoaData(input),
+    );
 
     // 1. Strict Document Type Checking
     if (
@@ -269,16 +357,9 @@ export class EnrollmentOcrService {
       );
     }
 
-    const totalAssessment = Number(raw.total_assessment) || 0;
-    const hasFeeBreakdown = Boolean(
-      raw.tuition_fee ||
-        raw.lab_fees ||
-        raw.misc_fees ||
-        raw.other_fees ||
-        raw.net_balance_due,
-    );
+    const billing = this.extractBillingFields(raw);
 
-    if (totalAssessment <= 0 && !hasFeeBreakdown) {
+    if (billing.totalAssessment <= 0 && !billing.hasFeeBreakdown) {
       throw new BadRequestException(
         'No tuition assessment balance or fee charges were detected in the uploaded file. Please upload an official Statement of Account (SOA), Tuition Fee Assessment, or Student Ledger.',
       );
@@ -294,19 +375,14 @@ export class EnrollmentOcrService {
       ),
       semester: this.normalizeSemester(raw.semester),
       assessment_date: raw.assessment_date,
-      total_assessment: totalAssessment,
-      tuition_fee:
-        raw.tuition_fee != null ? Number(raw.tuition_fee) : undefined,
-      lab_fees: raw.lab_fees != null ? Number(raw.lab_fees) : undefined,
-      misc_fees: raw.misc_fees != null ? Number(raw.misc_fees) : undefined,
-      other_fees: raw.other_fees != null ? Number(raw.other_fees) : undefined,
-      previous_balance:
-        raw.previous_balance != null ? Number(raw.previous_balance) : undefined,
-      discounts: raw.discounts != null ? Number(raw.discounts) : undefined,
-      net_balance_due:
-        raw.net_balance_due != null
-          ? Number(raw.net_balance_due)
-          : totalAssessment,
+      total_assessment: billing.totalAssessment,
+      tuition_fee: billing.tuition_fee,
+      lab_fees: billing.lab_fees,
+      misc_fees: billing.misc_fees,
+      other_fees: billing.other_fees,
+      previous_balance: billing.previous_balance,
+      discounts: billing.discounts,
+      net_balance_due: billing.net_balance_due,
     };
   }
 
@@ -316,10 +392,20 @@ export class EnrollmentOcrService {
     this.logger.log(
       'Dispatching Consolidated COR+SOA document to LlamaExtract...',
     );
-    const raw =
-      await this.llamaExtractService.extractConsolidatedEnrollmentData(input);
+    const raw = await this.extractRawSafely(
+      'Consolidated Enrollment & Assessment Form',
+      'We could not read a valid Consolidated Enrollment & Assessment Form from this file. Please upload a clear PDF or image containing both your enrolled subjects and tuition fees.',
+      () => this.llamaExtractService.extractConsolidatedEnrollmentData(input),
+    );
 
-    const subjects: ExtractedCorSubject[] = (raw.subjects || [])
+    if (raw.detected_document_type === 'OTHER') {
+      throw new BadRequestException(
+        'The uploaded document does not appear to be an official Consolidated Enrollment & Assessment Form. Please upload a valid matriculation document showing both enrolled subjects and tuition fees.',
+      );
+    }
+
+    const rawSubjects = Array.isArray(raw.subjects) ? raw.subjects : [];
+    const subjects: ExtractedCorSubject[] = rawSubjects
       .map((s: any) => this.sanitizeSubject(s))
       .filter((s: ExtractedCorSubject) => Boolean(s.subject_code));
 
@@ -329,23 +415,17 @@ export class EnrollmentOcrService {
       );
     }
 
-    const totalAssessment = Number(raw.total_assessment) || 0;
-    const hasFeeBreakdown = Boolean(
-      raw.tuition_fee ||
-        raw.lab_fees ||
-        raw.misc_fees ||
-        raw.other_fees ||
-        raw.net_balance_due,
-    );
-    if (totalAssessment <= 0 && !hasFeeBreakdown) {
+    const billing = this.extractBillingFields(raw);
+    if (billing.totalAssessment <= 0 && !billing.hasFeeBreakdown) {
       throw new BadRequestException(
         'No tuition assessment balance found in the consolidated document. If your school issues separate documents for class schedule and tuition billing, please turn off Consolidated mode.',
       );
     }
 
+    const parsedTotalUnits = this.sanitizeAmount(raw.total_units);
     const totalUnits =
-      Number(raw.total_units) > 0
-        ? Number(raw.total_units)
+      parsedTotalUnits && parsedTotalUnits > 0
+        ? parsedTotalUnits
         : subjects.reduce((sum, s) => sum + s.units, 0);
 
     return {
@@ -361,19 +441,14 @@ export class EnrollmentOcrService {
       year_level: this.normalizeYearLevel(raw.year_level),
       total_units: totalUnits,
       assessment_date: raw.assessment_date,
-      total_assessment: totalAssessment,
-      tuition_fee:
-        raw.tuition_fee != null ? Number(raw.tuition_fee) : undefined,
-      lab_fees: raw.lab_fees != null ? Number(raw.lab_fees) : undefined,
-      misc_fees: raw.misc_fees != null ? Number(raw.misc_fees) : undefined,
-      other_fees: raw.other_fees != null ? Number(raw.other_fees) : undefined,
-      previous_balance:
-        raw.previous_balance != null ? Number(raw.previous_balance) : undefined,
-      discounts: raw.discounts != null ? Number(raw.discounts) : undefined,
-      net_balance_due:
-        raw.net_balance_due != null
-          ? Number(raw.net_balance_due)
-          : totalAssessment,
+      total_assessment: billing.totalAssessment,
+      tuition_fee: billing.tuition_fee,
+      lab_fees: billing.lab_fees,
+      misc_fees: billing.misc_fees,
+      other_fees: billing.other_fees,
+      previous_balance: billing.previous_balance,
+      discounts: billing.discounts,
+      net_balance_due: billing.net_balance_due,
       subjects,
     };
   }
