@@ -24,6 +24,7 @@ const createPrismaMock = () => ({
   scholarProfile: {
     findFirst: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
   },
   employee: {
     update: vi.fn(),
@@ -430,7 +431,7 @@ describe('ProfileService', () => {
       prisma.auditLog.findFirst.mockResolvedValue(null);
 
       const result = await service.updateUserSettings(1, {
-        smsNotifs: true,
+        emailNotifs: false,
         forumDigest: false,
       });
 
@@ -439,8 +440,8 @@ describe('ProfileService', () => {
           user_id: 1,
           action: 'USER_SETTINGS_PREFERENCES',
           details: JSON.stringify({
-            emailNotifs: true,
-            smsNotifs: true,
+            emailNotifs: false,
+            smsNotifs: false,
             forumDigest: false,
             twoFactor: true,
             twoFactorMethod: 'EMAIL_OTP',
@@ -451,10 +452,14 @@ describe('ProfileService', () => {
           }),
         },
       });
-      expect(audit.log).not.toHaveBeenCalled();
+      expect(audit.log).toHaveBeenCalledWith(
+        1,
+        'USER_SETTINGS_UPDATED',
+        'User (ID: 1) updated settings: emailNotifs=false, forumDigest=false',
+      );
       expect(result).toEqual({
-        emailNotifs: true,
-        smsNotifs: true,
+        emailNotifs: false,
+        smsNotifs: false,
         forumDigest: false,
         twoFactor: true,
         twoFactorMethod: 'EMAIL_OTP',
@@ -504,6 +509,11 @@ describe('ProfileService', () => {
       expect(result.emailNotifs).toBe(false);
       expect(result.smsNotifs).toBe(true);
       expect(result.forumDigest).toBe(false);
+      expect(audit.log).toHaveBeenCalledWith(
+        1,
+        'USER_SETTINGS_UPDATED',
+        'User (ID: 1) updated settings: forumDigest=false',
+      );
     });
 
     it('clears 2FA method and secret and logs when disabling 2FA', async () => {
@@ -525,6 +535,37 @@ describe('ProfileService', () => {
         1,
         'TWO_FACTOR_DISABLED',
         'User (ID: 1) disabled two-factor authentication',
+      );
+    });
+
+    it('rejects enabling smsNotifs when phoneVerified is false and allows it when phoneVerified is true', async () => {
+      prisma.user.findUnique.mockResolvedValue({ user_id: 1 });
+      prisma.auditLog.findFirst.mockResolvedValueOnce({
+        log_id: 81,
+        details: JSON.stringify({ phoneVerified: false, smsNotifs: false }),
+      });
+
+      await expect(
+        service.updateUserSettings(1, { smsNotifs: true }),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'Please verify your phone number before enabling SMS notifications.',
+        ),
+      );
+      expect(prisma.auditLog.update).not.toHaveBeenCalled();
+
+      prisma.auditLog.findFirst.mockResolvedValueOnce({
+        log_id: 81,
+        details: JSON.stringify({ phoneVerified: true, smsNotifs: false }),
+      });
+
+      const updated = await service.updateUserSettings(1, { smsNotifs: true });
+
+      expect(updated.smsNotifs).toBe(true);
+      expect(audit.log).toHaveBeenCalledWith(
+        1,
+        'USER_SETTINGS_UPDATED',
+        'User (ID: 1) updated settings: smsNotifs=true',
       );
     });
   });
@@ -864,7 +905,7 @@ describe('ProfileService', () => {
       );
       prisma.auditLog.findFirst.mockResolvedValue({
         log_id: 98,
-        details: JSON.stringify({ phoneVerified: true }),
+        details: JSON.stringify({ phoneVerified: true, smsNotifs: true }),
       });
 
       await service.updateProfile(1, { phone_number: '09998887777' });
@@ -873,6 +914,12 @@ describe('ProfileService', () => {
         where: { log_id: 98 },
         data: {
           details: expect.stringContaining('"phoneVerified":false') as string,
+        },
+      });
+      expect(prisma.auditLog.update).toHaveBeenCalledWith({
+        where: { log_id: 98 },
+        data: {
+          details: expect.stringContaining('"smsNotifs":false') as string,
         },
       });
     });
@@ -920,6 +967,159 @@ describe('ProfileService', () => {
         service.deactivateAccount(1, { password: 'WrongPassword!' }),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('schema column persistence and optional profile fields', () => {
+    it('normalizes and persists middle_name, suffix, and sex for scholar and staff updates', async () => {
+      const scholar = makeScholarUser();
+      prisma.user.findUnique
+        .mockResolvedValueOnce(scholar)
+        .mockResolvedValueOnce(scholar);
+      prisma.scholarProfile.update.mockResolvedValue(scholar.scholar_profile);
+
+      await service.updateProfile(1, {
+        first_name: 'Juan',
+        middle_name: '  Reyes  ',
+        last_name: 'Dela Cruz',
+        suffix: '   ',
+        sex: 'Male',
+      });
+
+      const scholarUpdateArgs = prisma.scholarProfile.update.mock
+        .calls[0]?.[0] as {
+        where: { profile_id: number };
+        data: Record<string, unknown>;
+      };
+      expect(scholarUpdateArgs.where).toEqual({ profile_id: 10 });
+      expect(scholarUpdateArgs.data).toMatchObject({
+        first_name: 'Juan',
+        middle_name: 'Reyes',
+        last_name: 'Dela Cruz',
+        suffix: null,
+        sex: 'Male',
+      });
+
+      const staff = makeStaffUser();
+      prisma.user.findUnique
+        .mockResolvedValueOnce(staff)
+        .mockResolvedValueOnce(staff);
+      prisma.employee.update.mockResolvedValue(staff.employee);
+
+      await service.updateProfile(2, {
+        first_name: 'Maria',
+        middle_name: '',
+        last_name: 'Santos',
+        suffix: 'PhD',
+        sex: 'Female',
+      });
+
+      const staffUpdateArgs = prisma.employee.update.mock.calls[0]?.[0] as {
+        where: { employee_id: number };
+        data: Record<string, unknown>;
+      };
+      expect(staffUpdateArgs.where).toEqual({ employee_id: 20 });
+      expect(staffUpdateArgs.data).toMatchObject({
+        first_name: 'Maria',
+        middle_name: null,
+        last_name: 'Santos',
+        suffix: 'PhD',
+        sex: 'Female',
+      });
+    });
+
+    it('reads settings from User/ScholarProfile columns and syncs columns on update and phone verification', async () => {
+      prisma.user.findUnique.mockResolvedValue(
+        makeScholarUser({
+          is_email_verified: true,
+          two_factor_enabled: true,
+          two_factor_method: 'SMS_OTP',
+          email_notifs: false,
+          sms_notifs: true,
+          forum_digest: false,
+          public_profile: false,
+          scholar_profile: {
+            profile_id: 10,
+            user_id: 1,
+            first_name: 'Juan',
+            last_name: 'Dela Cruz',
+            phone_number: '09171234567',
+            is_phone_verified: true,
+          },
+        }),
+      );
+      prisma.auditLog.findFirst.mockResolvedValue(null);
+
+      const loaded = await service.getUserSettings(1);
+      expect(loaded).toEqual({
+        emailNotifs: false,
+        smsNotifs: true,
+        forumDigest: false,
+        twoFactor: true,
+        twoFactorMethod: 'SMS_OTP',
+        emailVerified: true,
+        phoneVerified: true,
+        publicProfile: false,
+        passwordChangedAt: null,
+      });
+
+      prisma.user.findUnique.mockResolvedValue(
+        makeScholarUser({
+          is_email_verified: false,
+          two_factor_enabled: true,
+          two_factor_method: 'EMAIL_OTP',
+          email_notifs: true,
+          sms_notifs: false,
+          forum_digest: true,
+          public_profile: true,
+          scholar_profile: {
+            profile_id: 10,
+            user_id: 1,
+            first_name: 'Juan',
+            last_name: 'Dela Cruz',
+            phone_number: '09171234567',
+            is_phone_verified: true,
+          },
+        }),
+      );
+      prisma.auditLog.findFirst.mockResolvedValue({
+        log_id: 50,
+        details: JSON.stringify({
+          pendingContactVerification: {
+            channel: 'PHONE',
+            code: '654321',
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          },
+        }),
+      });
+
+      await service.updateUserSettings(1, {
+        publicProfile: false,
+        emailNotifs: false,
+      });
+
+      const settingsUpdateArgs = prisma.user.update.mock.calls[0]?.[0] as {
+        where: { user_id: number };
+        data: Record<string, unknown>;
+      };
+      expect(settingsUpdateArgs.where).toEqual({ user_id: 1 });
+      expect(settingsUpdateArgs.data).toMatchObject({
+        public_profile: false,
+        email_notifs: false,
+      });
+
+      await service.verifyContactVerification(1, {
+        channel: 'PHONE',
+        code: '654321',
+      });
+
+      expect(prisma.scholarProfile.updateMany).toHaveBeenCalledWith({
+        where: { user_id: 1 },
+        data: {
+          is_phone_verified: true,
+          phone_verified_at: expect.any(Date) as Date,
+        },
+      });
     });
   });
 });

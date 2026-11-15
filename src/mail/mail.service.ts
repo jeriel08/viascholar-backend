@@ -83,42 +83,61 @@ export class MailService {
   private async filterEnabledRecipients(
     recipients: string[],
   ): Promise<string[]> {
-    if (!this.prisma.user?.findMany || !this.prisma.auditLog?.findMany) {
+    if (!this.prisma.user?.findMany) {
       return recipients;
     }
 
     try {
       const users = await this.prisma.user.findMany({
         where: { email: { in: recipients } },
-        select: { user_id: true, email: true },
+        select: { user_id: true, email: true, email_notifs: true },
       });
       if (!Array.isArray(users) || users.length === 0) {
         return recipients;
       }
 
-      const logs = await this.prisma.auditLog.findMany({
-        where: {
-          user_id: { in: users.map((u) => u.user_id) },
-          action: USER_SETTINGS_AUDIT_ACTION,
-        },
-        orderBy: { created_at: 'desc' },
-      });
-      if (!Array.isArray(logs) || logs.length === 0) {
-        return recipients;
-      }
-
-      const latestByUser = new Map<number, string | null>();
-      for (const entry of logs) {
-        if (entry.user_id != null && !latestByUser.has(entry.user_id)) {
-          latestByUser.set(entry.user_id, entry.details);
+      const disabledEmails = new Set<string>();
+      const fallbackUserIds: number[] = [];
+      for (const user of users) {
+        if (typeof user.email_notifs === 'boolean') {
+          if (!user.email_notifs && user.email) {
+            disabledEmails.add(user.email.toLowerCase());
+          }
+        } else {
+          fallbackUserIds.push(user.user_id);
         }
       }
 
-      const disabledEmails = new Set<string>();
-      for (const user of users) {
-        const details = latestByUser.get(user.user_id);
-        if (details && !parseUserSettings(details).emailNotifs && user.email) {
-          disabledEmails.add(user.email.toLowerCase());
+      if (
+        fallbackUserIds.length > 0 &&
+        typeof this.prisma.auditLog?.findMany === 'function'
+      ) {
+        const logs = await this.prisma.auditLog.findMany({
+          where: {
+            user_id: { in: fallbackUserIds },
+            action: USER_SETTINGS_AUDIT_ACTION,
+          },
+          orderBy: { created_at: 'desc' },
+        });
+        if (Array.isArray(logs) && logs.length > 0) {
+          const latestByUser = new Map<number, string | null>();
+          for (const entry of logs) {
+            if (entry.user_id != null && !latestByUser.has(entry.user_id)) {
+              latestByUser.set(entry.user_id, entry.details);
+            }
+          }
+
+          for (const user of users) {
+            if (typeof user.email_notifs === 'boolean') continue;
+            const details = latestByUser.get(user.user_id);
+            if (
+              details &&
+              !parseUserSettings(details).emailNotifs &&
+              user.email
+            ) {
+              disabledEmails.add(user.email.toLowerCase());
+            }
+          }
         }
       }
 

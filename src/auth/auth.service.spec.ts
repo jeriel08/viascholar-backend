@@ -1229,4 +1229,124 @@ describe('AuthService', () => {
       expect(trustedGoogleRes.mfa_required).toBeUndefined();
     });
   });
+
+  describe('optional name/sex fields and DB column settings', () => {
+    it('persists middle_name, suffix, and sex on registerScholar and createStaff when provided', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.scholarProfile.findFirst.mockResolvedValue(null);
+      const createdScholar = makeUser({
+        user_id: 88,
+        email: 'ana@example.com',
+        role: Role.APPLICANT,
+        scholar_profile: {
+          profile_id: 880,
+          first_name: 'Ana',
+          middle_name: 'Reyes',
+          last_name: 'Santos',
+          suffix: 'Jr.',
+          sex: 'Female',
+          phone_number: '09171234567',
+          bio: null,
+          avatar_url: null,
+          banner_url: null,
+        },
+      });
+      prisma.user.create.mockResolvedValue(createdScholar);
+      jwt.signAsync.mockResolvedValue('jwt-token');
+
+      const regResult = await service.registerScholar({
+        email: 'ana@example.com',
+        password: 'Password1!',
+        first_name: 'Ana',
+        middle_name: '  Reyes  ',
+        last_name: 'Santos',
+        suffix: 'Jr.',
+        sex: 'Female',
+        phone_number: '09171234567',
+      });
+
+      const scholarCreateArgs = prisma.user.create.mock.calls[0]?.[0] as {
+        data: { scholar_profile: { create: Record<string, unknown> } };
+      };
+      expect(scholarCreateArgs.data.scholar_profile.create).toEqual({
+        first_name: 'Ana',
+        middle_name: 'Reyes',
+        last_name: 'Santos',
+        suffix: 'Jr.',
+        sex: 'Female',
+        phone_number: '09171234567',
+      });
+      expect(regResult.user).toMatchObject({
+        first_name: 'Ana',
+        middle_name: 'Reyes',
+        last_name: 'Santos',
+        suffix: 'Jr.',
+        sex: 'Female',
+      });
+
+      const createdStaff = makeUser({
+        user_id: 89,
+        email: 'staff2@example.com',
+        role: Role.COORDINATOR,
+        scholar_profile: null,
+        employee: {
+          employee_id: 89,
+          first_name: 'Jose',
+          middle_name: 'Cruz',
+          last_name: 'Diaz',
+          suffix: 'III',
+          sex: 'Male',
+          title: 'Coordinator',
+          department: 'Scholarships',
+        },
+      });
+      prisma.user.create.mockResolvedValue(createdStaff);
+
+      await service.createStaff({
+        email: 'staff2@example.com',
+        password: 'Password1!',
+        role: Role.COORDINATOR,
+        first_name: 'Jose',
+        middle_name: 'Cruz',
+        last_name: 'Diaz',
+        suffix: 'III',
+        sex: 'Male',
+        title: 'Coordinator',
+        department: 'Scholarships',
+      });
+
+      const staffCreateArgs = prisma.user.create.mock.calls[1]?.[0] as {
+        data: { employee: { create: Record<string, unknown> } };
+      };
+      expect(staffCreateArgs.data.employee.create).toEqual({
+        first_name: 'Jose',
+        middle_name: 'Cruz',
+        last_name: 'Diaz',
+        suffix: 'III',
+        sex: 'Male',
+        title: 'Coordinator',
+        department: 'Scholarships',
+      });
+    });
+
+    it('uses User two_factor_enabled column during login even without audit settings row', async () => {
+      const passwordHash = await bcrypt.hash('Password1!', 10);
+      const userWithDisabledMfa = makeUser({
+        password_hash: passwordHash,
+        two_factor_enabled: false,
+        two_factor_method: null,
+      });
+      prisma.user.findUnique.mockResolvedValue(userWithDisabledMfa);
+      prisma.user.update.mockResolvedValue(userWithDisabledMfa);
+      jwt.signAsync.mockResolvedValue('direct-login-token');
+
+      const result = (await service.login({
+        email: userWithDisabledMfa.email,
+        password: 'Password1!',
+      })) as Record<string, unknown>;
+
+      expect(result.mfa_required).toBeUndefined();
+      expect(result.access_token).toBe('direct-login-token');
+    });
+  });
 });

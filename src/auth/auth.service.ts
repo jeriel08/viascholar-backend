@@ -27,9 +27,11 @@ import { randomInt } from 'node:crypto';
 import { SmsService } from '../sms/sms.service.js';
 import {
   USER_SETTINGS_AUDIT_ACTION,
-  parseStoredUserSettings,
   type StoredUserSettingsRecord,
   type TwoFactorMethod,
+  type UserSettingsColumnSource,
+  mergeUserColumnsIntoSettings,
+  parseStoredUserSettings,
 } from './user-settings.util.js';
 import {
   signMfaChallengeToken,
@@ -75,7 +77,10 @@ export class AuthService {
     @Optional() private smsService?: SmsService,
   ) {}
 
-  private async getStoredUserSettings(userId: number): Promise<{
+  private async getStoredUserSettings(
+    userId: number,
+    userColumns?: UserSettingsColumnSource | null,
+  ): Promise<{
     logId?: number;
     settings: StoredUserSettingsRecord;
   }> {
@@ -87,9 +92,13 @@ export class AuthService {
       orderBy: { created_at: 'desc' },
     });
 
+    const auditRecord = existing?.details
+      ? parseStoredUserSettings(existing.details)
+      : undefined;
+
     return {
       logId: existing?.log_id,
-      settings: parseStoredUserSettings(existing?.details),
+      settings: mergeUserColumnsIntoSettings(userColumns, auditRecord),
     };
   }
 
@@ -97,7 +106,45 @@ export class AuthService {
     userId: number,
     next: StoredUserSettingsRecord,
     logId?: number,
+    timestamps?: {
+      emailVerifiedAt?: Date | null;
+      phoneVerifiedAt?: Date | null;
+    },
   ): Promise<void> {
+    if (typeof this.prisma.user?.update === 'function') {
+      await this.prisma.user.update({
+        where: { user_id: userId },
+        data: {
+          is_email_verified: next.emailVerified,
+          ...(timestamps?.emailVerifiedAt !== undefined
+            ? { email_verified_at: timestamps.emailVerifiedAt }
+            : {}),
+          two_factor_enabled: next.twoFactor,
+          two_factor_method: next.twoFactor ? next.twoFactorMethod : null,
+          two_factor_secret: next.twoFactorSecret ?? null,
+          email_notifs: next.emailNotifs,
+          sms_notifs: next.smsNotifs,
+          forum_digest: next.forumDigest,
+          public_profile: next.publicProfile,
+          password_changed_at: next.passwordChangedAt
+            ? new Date(next.passwordChangedAt)
+            : null,
+        },
+      });
+    }
+
+    if (typeof this.prisma.scholarProfile?.updateMany === 'function') {
+      await this.prisma.scholarProfile.updateMany({
+        where: { user_id: userId },
+        data: {
+          is_phone_verified: next.phoneVerified,
+          ...(timestamps?.phoneVerifiedAt !== undefined
+            ? { phone_verified_at: timestamps.phoneVerifiedAt }
+            : {}),
+        },
+      });
+    }
+
     if (!this.prisma.auditLog) return;
 
     const serialized = JSON.stringify(next);
@@ -274,7 +321,10 @@ export class AuthService {
       throw new UnauthorizedException('User account is unavailable.');
     }
 
-    const { logId, settings } = await this.getStoredUserSettings(user.user_id);
+    const { logId, settings } = await this.getStoredUserSettings(
+      user.user_id,
+      user,
+    );
     if (payload.purpose === 'LOGIN') {
       const phone = user.scholar_profile?.phone_number?.trim() || null;
       const configuredMethod = this.resolveLoginMfaMethod(settings, phone);
@@ -315,7 +365,10 @@ export class AuthService {
       throw new UnauthorizedException('User account is unavailable.');
     }
 
-    const { logId, settings } = await this.getStoredUserSettings(user.user_id);
+    const { logId, settings } = await this.getStoredUserSettings(
+      user.user_id,
+      user,
+    );
     const method: TwoFactorMethod =
       dto.method ??
       (settings.twoFactorMethod === 'AUTHENTICATOR_APP' &&
@@ -349,6 +402,10 @@ export class AuthService {
       }
     }
 
+    const emailNewlyVerified =
+      method === 'EMAIL_OTP' && !settings.emailVerified;
+    const phoneNewlyVerified = method === 'SMS_OTP' && !settings.phoneVerified;
+
     await this.persistStoredUserSettings(
       user.user_id,
       {
@@ -358,6 +415,10 @@ export class AuthService {
         pendingTwoFactor: null,
       },
       logId,
+      {
+        ...(emailNewlyVerified ? { emailVerifiedAt: new Date() } : {}),
+        ...(phoneNewlyVerified ? { phoneVerifiedAt: new Date() } : {}),
+      },
     );
 
     if (payload.purpose === 'REGISTER') {
@@ -423,7 +484,12 @@ export class AuthService {
         scholar_profile: {
           create: {
             first_name: dto.first_name,
+            ...(dto.middle_name?.trim()
+              ? { middle_name: dto.middle_name.trim() }
+              : {}),
             last_name: dto.last_name,
+            ...(dto.suffix?.trim() ? { suffix: dto.suffix.trim() } : {}),
+            ...(dto.sex?.trim() ? { sex: dto.sex.trim() } : {}),
             phone_number: dto.phone_number,
           },
         },
@@ -443,7 +509,10 @@ export class AuthService {
       `Scholar registered (User ID: ${user.user_id}, Email: ${user.email})`,
     );
 
-    const { logId, settings } = await this.getStoredUserSettings(user.user_id);
+    const { logId, settings } = await this.getStoredUserSettings(
+      user.user_id,
+      user,
+    );
     const tokenPayload = await this.generateToken(
       user.user_id,
       user.email,
@@ -486,7 +555,12 @@ export class AuthService {
         employee: {
           create: {
             first_name: dto.first_name,
+            ...(dto.middle_name?.trim()
+              ? { middle_name: dto.middle_name.trim() }
+              : {}),
             last_name: dto.last_name,
+            ...(dto.suffix?.trim() ? { suffix: dto.suffix.trim() } : {}),
+            ...(dto.sex?.trim() ? { sex: dto.sex.trim() } : {}),
             title: dto.title,
             department: dto.department,
           },
@@ -570,7 +644,10 @@ export class AuthService {
       data: { last_login_at: new Date() },
     });
 
-    const { logId, settings } = await this.getStoredUserSettings(user.user_id);
+    const { logId, settings } = await this.getStoredUserSettings(
+      user.user_id,
+      user,
+    );
     const jwtSecret = this.configService.get<string>('JWT_SECRET');
     const isTrustedDevice = verifyTrustedDeviceToken(
       dto.trusted_device_token,
@@ -745,7 +822,10 @@ export class AuthService {
 
     await this.prisma.user.update({
       where: { user_id: user.user_id },
-      data: { password_hash: newHashedPassword },
+      data: {
+        password_hash: newHashedPassword,
+        password_changed_at: new Date(),
+      },
     });
 
     await this.auditService.log(
@@ -902,7 +982,10 @@ export class AuthService {
     }
 
     const { logId, settings: loadedSettings } =
-      await this.getStoredUserSettings(authenticatedUser.user_id);
+      await this.getStoredUserSettings(
+        authenticatedUser.user_id,
+        authenticatedUser,
+      );
     let settings = loadedSettings;
     if (!settings.emailVerified) {
       settings = {
@@ -913,6 +996,7 @@ export class AuthService {
         authenticatedUser.user_id,
         settings,
         logId,
+        { emailVerifiedAt: new Date() },
       );
     }
     const jwtSecret = this.configService.get<string>('JWT_SECRET');
@@ -968,7 +1052,10 @@ export class AuthService {
     const profile =
       ((scholar_profile ?? employee ?? {}) as {
         first_name?: string;
+        middle_name?: string | null;
         last_name?: string;
+        suffix?: string | null;
+        sex?: string | null;
         bio?: string;
         avatar_url?: string;
         banner_url?: string;
@@ -982,7 +1069,10 @@ export class AuthService {
         email,
         role,
         first_name: profile.first_name || '',
+        middle_name: profile.middle_name ?? null,
         last_name: profile.last_name || '',
+        suffix: profile.suffix ?? null,
+        sex: profile.sex ?? null,
         bio: profile.bio ?? null,
         avatar_url: profile.avatar_url ?? null,
         banner_url: profile.banner_url ?? null,

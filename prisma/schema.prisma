@@ -69,12 +69,22 @@ enum DocumentStatus {
 // ==========================================
 
 model User {
-  user_id       Int       @id @default(autoincrement())
-  email         String    @unique @db.VarChar(255)
-  password_hash String    @db.VarChar(255)
-  role          Role      @default(APPLICANT)
-  is_active     Boolean   @default(true)
-  last_login_at DateTime?
+  user_id             Int       @id @default(autoincrement())
+  email               String    @unique @db.VarChar(255)
+  password_hash       String    @db.VarChar(255)
+  role                Role      @default(APPLICANT)
+  is_active           Boolean   @default(true)
+  is_email_verified   Boolean   @default(false)
+  email_verified_at   DateTime?
+  two_factor_enabled  Boolean   @default(true)
+  two_factor_method   String?   @default("EMAIL_OTP") @db.VarChar(30)
+  two_factor_secret   String?   @db.Text
+  email_notifs        Boolean   @default(true)
+  sms_notifs          Boolean   @default(false)
+  forum_digest        Boolean   @default(true)
+  public_profile      Boolean   @default(true)
+  password_changed_at DateTime?
+  last_login_at       DateTime?
   created_at    DateTime  @default(now())
   updated_at    DateTime  @updatedAt
 
@@ -103,7 +113,10 @@ model Employee {
   employee_id Int     @id @default(autoincrement())
   user_id     Int     @unique
   first_name  String  @db.VarChar(100)
+  middle_name String? @db.VarChar(100)
   last_name   String  @db.VarChar(100)
+  suffix      String? @db.VarChar(30)
+  sex         String? @db.VarChar(30)
   title       String? @db.VarChar(150)
   department  String? @db.VarChar(150)
   bio         String? @db.Text
@@ -128,11 +141,16 @@ model Employee {
 }
 
 model ScholarProfile {
-  profile_id               Int     @id @default(autoincrement())
-  user_id                  Int     @unique
-  first_name               String  @default("")  @db.VarChar(100)
-  last_name                String  @default("")  @db.VarChar(100)
-  phone_number             String  @unique @db.VarChar(30)
+  profile_id               Int       @id @default(autoincrement())
+  user_id                  Int       @unique
+  first_name               String    @default("")  @db.VarChar(100)
+  middle_name              String?   @db.VarChar(100)
+  last_name                String    @default("")  @db.VarChar(100)
+  suffix                   String?   @db.VarChar(30)
+  sex                      String?   @db.VarChar(30)
+  phone_number             String    @unique @db.VarChar(30)
+  is_phone_verified        Boolean   @default(false)
+  phone_verified_at        DateTime?
   student_address          String? @db.Text
   school_address           String? @db.Text
   student_number           String? @unique @db.VarChar(50)

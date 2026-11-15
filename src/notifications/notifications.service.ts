@@ -149,6 +149,16 @@ export class NotificationsService {
 
   private async isForumDigestEnabled(userId: number): Promise<boolean> {
     try {
+      if (typeof this.prisma.user?.findUnique === 'function') {
+        const user = await this.prisma.user.findUnique({
+          where: { user_id: userId },
+          select: { forum_digest: true },
+        });
+        if (typeof user?.forum_digest === 'boolean') {
+          return user.forum_digest;
+        }
+      }
+
       const pref = await this.prisma.auditLog?.findFirst?.({
         where: {
           user_id: userId,

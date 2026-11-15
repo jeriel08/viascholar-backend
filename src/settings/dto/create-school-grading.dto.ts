@@ -5,6 +5,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  Matches,
 } from 'class-validator';
 
 export class CreateSchoolGradingDto {
@@ -14,6 +15,9 @@ export class CreateSchoolGradingDto {
   })
   @IsString()
   @IsNotEmpty()
+  @Matches(/^[^()]*$/, {
+    message: 'School name must not contain parentheses or abbreviations.',
+  })
   school_name: string;
 
   @ApiProperty({ example: 'UM_SCALE', description: 'Grading scale identifier' })

@@ -134,6 +134,23 @@ export class SmsService {
     message: string,
   ): Promise<{ simulated: boolean; skipped?: boolean }> {
     try {
+      if (typeof this.prisma.user?.findUnique === 'function') {
+        const user = await this.prisma.user.findUnique({
+          where: { user_id: userId },
+          select: { sms_notifs: true },
+        });
+        if (typeof user?.sms_notifs === 'boolean') {
+          if (!user.sms_notifs) {
+            return { simulated: false, skipped: true };
+          }
+          return this.dispatchTextBeeSms({
+            subscriberId: `user_${userId}`,
+            phone,
+            message,
+          });
+        }
+      }
+
       const pref = await this.prisma.auditLog?.findFirst?.({
         where: {
           user_id: userId,

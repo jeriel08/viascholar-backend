@@ -31,8 +31,10 @@ import {
   type TwoFactorMethod,
   USER_SETTINGS_AUDIT_ACTION,
   type UserSettings,
+  type UserSettingsColumnSource,
+  mergeUserColumnsIntoSettings,
   parseStoredUserSettings,
-  parseUserSettings,
+  stripInternalSettings,
 } from './user-settings.util.js';
 
 export interface TwoFactorSetupResponse {
@@ -147,7 +149,14 @@ export class ProfileService {
         where: { profile_id: user.scholar_profile.profile_id },
         data: {
           first_name: dto.first_name,
+          ...(dto.middle_name !== undefined
+            ? { middle_name: dto.middle_name.trim() || null }
+            : {}),
           last_name: dto.last_name,
+          ...(dto.suffix !== undefined
+            ? { suffix: dto.suffix.trim() || null }
+            : {}),
+          ...(dto.sex !== undefined ? { sex: dto.sex.trim() || null } : {}),
           phone_number: dto.phone_number,
           student_address: dto.student_address,
           school_address: dto.school_address,
@@ -165,18 +174,22 @@ export class ProfileService {
       if (
         dto.phone_number !== undefined &&
         dto.phone_number.trim() !==
-          (user.scholar_profile.phone_number ?? '').trim() &&
-        typeof this.prisma.auditLog?.findFirst === 'function'
+          (user.scholar_profile.phone_number ?? '').trim()
       ) {
-        const existingSettings = await this.findLatestSettingsRecord(userId);
-        const currentSettings = parseStoredUserSettings(
-          existingSettings?.details,
+        const existingSettings =
+          typeof this.prisma.auditLog?.findFirst === 'function'
+            ? await this.findLatestSettingsRecord(userId)
+            : null;
+        const currentSettings = mergeUserColumnsIntoSettings(
+          user,
+          parseStoredUserSettings(existingSettings?.details),
         );
-        if (currentSettings.phoneVerified) {
+        if (currentSettings.phoneVerified || currentSettings.smsNotifs) {
           await this.persistStoredSettings(
             userId,
-            { ...currentSettings, phoneVerified: false },
+            { ...currentSettings, phoneVerified: false, smsNotifs: false },
             existingSettings?.log_id,
+            { phoneVerifiedAt: null },
           );
         }
       }
@@ -187,7 +200,14 @@ export class ProfileService {
         where: { employee_id: user.employee.employee_id },
         data: {
           first_name: dto.first_name,
+          ...(dto.middle_name !== undefined
+            ? { middle_name: dto.middle_name.trim() || null }
+            : {}),
           last_name: dto.last_name,
+          ...(dto.suffix !== undefined
+            ? { suffix: dto.suffix.trim() || null }
+            : {}),
+          ...(dto.sex !== undefined ? { sex: dto.sex.trim() || null } : {}),
           bio: dto.bio,
           avatar_url: dto.avatar_url,
           banner_url: dto.banner_url,
@@ -219,6 +239,9 @@ export class ProfileService {
   }
 
   private async findLatestSettingsRecord(userId: number) {
+    if (typeof this.prisma.auditLog?.findFirst !== 'function') {
+      return null;
+    }
     return this.prisma.auditLog.findFirst({
       where: {
         user_id: userId,
@@ -228,18 +251,73 @@ export class ProfileService {
     });
   }
 
+  private async loadUserSettingsState(
+    userId: number,
+    userColumns?: UserSettingsColumnSource | null,
+  ): Promise<{
+    existingLogId?: number;
+    current: StoredUserSettingsRecord;
+  }> {
+    const existing = await this.findLatestSettingsRecord(userId);
+    const auditRecord = existing?.details
+      ? parseStoredUserSettings(existing.details)
+      : undefined;
+    return {
+      existingLogId: existing?.log_id,
+      current: mergeUserColumnsIntoSettings(userColumns, auditRecord),
+    };
+  }
+
   private async persistStoredSettings(
     userId: number,
     record: StoredUserSettingsRecord,
     existingLogId?: number,
-  ): Promise<string> {
+    timestamps?: {
+      emailVerifiedAt?: Date | null;
+      phoneVerifiedAt?: Date | null;
+    },
+  ): Promise<UserSettings> {
+    if (typeof this.prisma.user?.update === 'function') {
+      await this.prisma.user.update({
+        where: { user_id: userId },
+        data: {
+          is_email_verified: record.emailVerified,
+          ...(timestamps?.emailVerifiedAt !== undefined
+            ? { email_verified_at: timestamps.emailVerifiedAt }
+            : {}),
+          two_factor_enabled: record.twoFactor,
+          two_factor_method: record.twoFactor ? record.twoFactorMethod : null,
+          two_factor_secret: record.twoFactorSecret ?? null,
+          email_notifs: record.emailNotifs,
+          sms_notifs: record.smsNotifs,
+          forum_digest: record.forumDigest,
+          public_profile: record.publicProfile,
+          password_changed_at: record.passwordChangedAt
+            ? new Date(record.passwordChangedAt)
+            : null,
+        },
+      });
+    }
+
+    if (typeof this.prisma.scholarProfile?.updateMany === 'function') {
+      await this.prisma.scholarProfile.updateMany({
+        where: { user_id: userId },
+        data: {
+          is_phone_verified: record.phoneVerified,
+          ...(timestamps?.phoneVerifiedAt !== undefined
+            ? { phone_verified_at: timestamps.phoneVerifiedAt }
+            : {}),
+        },
+      });
+    }
+
     const serialized = JSON.stringify(record);
-    if (existingLogId) {
+    if (existingLogId && typeof this.prisma.auditLog?.update === 'function') {
       await this.prisma.auditLog.update({
         where: { log_id: existingLogId },
         data: { details: serialized },
       });
-    } else {
+    } else if (typeof this.prisma.auditLog?.create === 'function') {
       await this.prisma.auditLog.create({
         data: {
           user_id: userId,
@@ -248,21 +326,41 @@ export class ProfileService {
         },
       });
     }
-    return serialized;
+    return stripInternalSettings(record);
   }
+
+  private settingsUserSelect = {
+    user_id: true,
+    is_email_verified: true,
+    email_verified_at: true,
+    two_factor_enabled: true,
+    two_factor_method: true,
+    two_factor_secret: true,
+    email_notifs: true,
+    sms_notifs: true,
+    forum_digest: true,
+    public_profile: true,
+    password_changed_at: true,
+    scholar_profile: {
+      select: {
+        is_phone_verified: true,
+        phone_verified_at: true,
+      },
+    },
+  } as const;
 
   async getUserSettings(userId: number): Promise<UserSettings> {
     const user = await this.prisma.user.findUnique({
       where: { user_id: userId },
-      select: { user_id: true },
+      select: this.settingsUserSelect,
     });
 
     if (!user) {
       throw new NotFoundException('User not found.');
     }
 
-    const record = await this.findLatestSettingsRecord(userId);
-    return parseUserSettings(record?.details);
+    const { current } = await this.loadUserSettingsState(userId, user);
+    return stripInternalSettings(current);
   }
 
   async updateUserSettings(
@@ -271,15 +369,23 @@ export class ProfileService {
   ): Promise<UserSettings> {
     const user = await this.prisma.user.findUnique({
       where: { user_id: userId },
-      select: { user_id: true },
+      select: this.settingsUserSelect,
     });
 
     if (!user) {
       throw new NotFoundException('User not found.');
     }
 
-    const existing = await this.findLatestSettingsRecord(userId);
-    const current = parseStoredUserSettings(existing?.details);
+    const { existingLogId, current } = await this.loadUserSettingsState(
+      userId,
+      user,
+    );
+
+    if (dto.smsNotifs === true && !current.phoneVerified) {
+      throw new BadRequestException(
+        'Please verify your phone number before enabling SMS notifications.',
+      );
+    }
 
     const nextTwoFactor = dto.twoFactor ?? current.twoFactor;
     const updatedRecord: StoredUserSettingsRecord = {
@@ -301,11 +407,42 @@ export class ProfileService {
       pendingContactVerification: current.pendingContactVerification,
     };
 
-    const serialized = await this.persistStoredSettings(
+    const nextSettings = await this.persistStoredSettings(
       userId,
       updatedRecord,
-      existing?.log_id,
+      existingLogId,
     );
+
+    const changedFields: string[] = [];
+    if (
+      dto.emailNotifs !== undefined &&
+      dto.emailNotifs !== current.emailNotifs
+    ) {
+      changedFields.push(`emailNotifs=${dto.emailNotifs}`);
+    }
+    if (dto.smsNotifs !== undefined && dto.smsNotifs !== current.smsNotifs) {
+      changedFields.push(`smsNotifs=${dto.smsNotifs}`);
+    }
+    if (
+      dto.forumDigest !== undefined &&
+      dto.forumDigest !== current.forumDigest
+    ) {
+      changedFields.push(`forumDigest=${dto.forumDigest}`);
+    }
+    if (
+      dto.publicProfile !== undefined &&
+      dto.publicProfile !== current.publicProfile
+    ) {
+      changedFields.push(`publicProfile=${dto.publicProfile}`);
+    }
+
+    if (changedFields.length > 0) {
+      await this.auditService.log(
+        userId,
+        'USER_SETTINGS_UPDATED',
+        `User (ID: ${userId}) updated settings: ${changedFields.join(', ')}`,
+      );
+    }
 
     if (dto.twoFactor === false && current.twoFactor) {
       await this.auditService.log(
@@ -315,7 +452,7 @@ export class ProfileService {
       );
     }
 
-    return parseUserSettings(serialized);
+    return nextSettings;
   }
 
   async initiateTwoFactorSetup(
@@ -331,8 +468,10 @@ export class ProfileService {
       throw new NotFoundException('User not found.');
     }
 
-    const existing = await this.findLatestSettingsRecord(userId);
-    const current = parseStoredUserSettings(existing?.details);
+    const { existingLogId, current } = await this.loadUserSettingsState(
+      userId,
+      user,
+    );
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
     if (dto.method === 'AUTHENTICATOR_APP') {
@@ -351,7 +490,7 @@ export class ProfileService {
       await this.persistStoredSettings(
         userId,
         { ...current, pendingTwoFactor: pending },
-        existing?.log_id,
+        existingLogId,
       );
 
       return {
@@ -381,7 +520,7 @@ export class ProfileService {
       await this.persistStoredSettings(
         userId,
         { ...current, pendingTwoFactor: pending },
-        existing?.log_id,
+        existingLogId,
       );
 
       const firstName =
@@ -412,7 +551,7 @@ export class ProfileService {
     await this.persistStoredSettings(
       userId,
       { ...current, pendingTwoFactor: pending },
-      existing?.log_id,
+      existingLogId,
     );
 
     const userName =
@@ -442,15 +581,17 @@ export class ProfileService {
   ): Promise<UserSettings> {
     const user = await this.prisma.user.findUnique({
       where: { user_id: userId },
-      select: { user_id: true },
+      select: this.settingsUserSelect,
     });
 
     if (!user) {
       throw new NotFoundException('User not found.');
     }
 
-    const existing = await this.findLatestSettingsRecord(userId);
-    const current = parseStoredUserSettings(existing?.details);
+    const { existingLogId, current } = await this.loadUserSettingsState(
+      userId,
+      user,
+    );
     const pending = current.pendingTwoFactor;
 
     if (
@@ -473,6 +614,11 @@ export class ProfileService {
       throw new BadRequestException('Invalid verification code.');
     }
 
+    const emailNewlyVerified =
+      dto.method === 'EMAIL_OTP' && !current.emailVerified;
+    const phoneNewlyVerified =
+      dto.method === 'SMS_OTP' && !current.phoneVerified;
+
     const nextRecord: StoredUserSettingsRecord = {
       ...current,
       twoFactor: true,
@@ -484,10 +630,14 @@ export class ProfileService {
       pendingTwoFactor: null,
     };
 
-    const serialized = await this.persistStoredSettings(
+    const nextSettings = await this.persistStoredSettings(
       userId,
       nextRecord,
-      existing?.log_id,
+      existingLogId,
+      {
+        ...(emailNewlyVerified ? { emailVerifiedAt: new Date() } : {}),
+        ...(phoneNewlyVerified ? { phoneVerifiedAt: new Date() } : {}),
+      },
     );
 
     await this.auditService.log(
@@ -496,7 +646,7 @@ export class ProfileService {
       `User (ID: ${userId}) enabled two-factor authentication (${dto.method})`,
     );
 
-    return parseUserSettings(serialized);
+    return nextSettings;
   }
 
   async initiateContactVerification(
@@ -512,8 +662,10 @@ export class ProfileService {
       throw new NotFoundException('User not found.');
     }
 
-    const existing = await this.findLatestSettingsRecord(userId);
-    const current = parseStoredUserSettings(existing?.details);
+    const { existingLogId, current } = await this.loadUserSettingsState(
+      userId,
+      user,
+    );
     const code = String(randomInt(100000, 1000000));
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const firstName =
@@ -537,7 +689,7 @@ export class ProfileService {
       await this.persistStoredSettings(
         userId,
         { ...current, pendingContactVerification: pending },
-        existing?.log_id,
+        existingLogId,
       );
 
       const smsResult = await this.smsService?.sendOtpSms(phone, {
@@ -564,7 +716,7 @@ export class ProfileService {
     await this.persistStoredSettings(
       userId,
       { ...current, pendingContactVerification: pending },
-      existing?.log_id,
+      existingLogId,
     );
 
     const mailResult = await this.mailService.sendTwoFactorOtpEmail(
@@ -590,15 +742,17 @@ export class ProfileService {
   ): Promise<UserSettings> {
     const user = await this.prisma.user.findUnique({
       where: { user_id: userId },
-      select: { user_id: true },
+      select: this.settingsUserSelect,
     });
 
     if (!user) {
       throw new NotFoundException('User not found.');
     }
 
-    const existing = await this.findLatestSettingsRecord(userId);
-    const current = parseStoredUserSettings(existing?.details);
+    const { existingLogId, current } = await this.loadUserSettingsState(
+      userId,
+      user,
+    );
     const pending = current.pendingContactVerification;
 
     if (
@@ -615,6 +769,7 @@ export class ProfileService {
       throw new BadRequestException('Invalid verification code.');
     }
 
+    const verifiedAt = new Date();
     const nextRecord: StoredUserSettingsRecord = {
       ...current,
       emailVerified: dto.channel === 'EMAIL' ? true : current.emailVerified,
@@ -622,10 +777,13 @@ export class ProfileService {
       pendingContactVerification: null,
     };
 
-    const serialized = await this.persistStoredSettings(
+    const nextSettings = await this.persistStoredSettings(
       userId,
       nextRecord,
-      existing?.log_id,
+      existingLogId,
+      dto.channel === 'EMAIL'
+        ? { emailVerifiedAt: verifiedAt }
+        : { phoneVerifiedAt: verifiedAt },
     );
 
     await this.auditService.log(
@@ -634,12 +792,13 @@ export class ProfileService {
       `User (ID: ${userId}) verified their ${dto.channel === 'EMAIL' ? 'email address' : 'phone number'}`,
     );
 
-    return parseUserSettings(serialized);
+    return nextSettings;
   }
 
   async changePassword(userId: number, dto: ChangePasswordDto) {
     const user = await this.prisma.user.findUnique({
       where: { user_id: userId },
+      include: { scholar_profile: true },
     });
 
     if (!user) {
@@ -667,13 +826,15 @@ export class ProfileService {
     });
 
     const passwordChangedAt = new Date().toISOString();
-    const existing = await this.findLatestSettingsRecord(userId);
-    const current = parseStoredUserSettings(existing?.details);
+    const { existingLogId, current } = await this.loadUserSettingsState(
+      userId,
+      user,
+    );
 
     await this.persistStoredSettings(
       userId,
       { ...current, passwordChangedAt },
-      existing?.log_id,
+      existingLogId,
     );
 
     await this.auditService.log(

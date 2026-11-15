@@ -202,6 +202,30 @@ export class ForumService {
     return map;
   }
 
+  private async resolvePublicProfileFlags(
+    authors: Array<{ user_id: number; public_profile?: boolean | null }>,
+  ): Promise<Map<number, boolean>> {
+    const map = new Map<number, boolean>();
+    const missingIds: number[] = [];
+
+    for (const author of authors) {
+      if (typeof author.public_profile === 'boolean') {
+        map.set(author.user_id, author.public_profile);
+      } else {
+        missingIds.push(author.user_id);
+      }
+    }
+
+    if (missingIds.length > 0) {
+      const fallbackMap = await this.getPublicProfileMap(missingIds);
+      for (const [id, flag] of fallbackMap.entries()) {
+        map.set(id, flag);
+      }
+    }
+
+    return map;
+  }
+
   private formatAuthor(
     user: {
       user_id: number;
@@ -284,8 +308,8 @@ export class ForumService {
       },
     });
 
-    const publicProfileMap = await this.getPublicProfileMap([
-      post.author.user_id,
+    const publicProfileMap = await this.resolvePublicProfileFlags([
+      post.author,
     ]);
     const isPublicProfile = publicProfileMap.get(post.author.user_id) ?? true;
     const formattedAuthor = this.formatAuthor(post.author, isPublicProfile);
@@ -361,8 +385,8 @@ export class ForumService {
       this.getTaggableStaff(),
     ]);
 
-    const publicProfileMap = await this.getPublicProfileMap(
-      posts.map((p) => p.author.user_id),
+    const publicProfileMap = await this.resolvePublicProfileFlags(
+      posts.map((p) => p.author),
     );
     const formattedPosts = posts.map((p) => {
       const isPublicProfile = publicProfileMap.get(p.author.user_id) ?? true;
@@ -433,8 +457,8 @@ export class ForumService {
       this.getTaggableStaff(),
     ]);
 
-    const publicProfileMap = await this.getPublicProfileMap([
-      post.author.user_id,
+    const publicProfileMap = await this.resolvePublicProfileFlags([
+      post.author,
     ]);
     const isPublicProfile = publicProfileMap.get(post.author.user_id) ?? true;
 

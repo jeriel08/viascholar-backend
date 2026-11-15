@@ -37,6 +37,23 @@ export interface StoredUserSettingsRecord extends UserSettings {
   pendingContactVerification?: PendingContactVerification | null;
 }
 
+export interface UserSettingsColumnSource {
+  is_email_verified?: boolean | null;
+  email_verified_at?: Date | string | null;
+  two_factor_enabled?: boolean | null;
+  two_factor_method?: string | null;
+  two_factor_secret?: string | null;
+  email_notifs?: boolean | null;
+  sms_notifs?: boolean | null;
+  forum_digest?: boolean | null;
+  public_profile?: boolean | null;
+  password_changed_at?: Date | string | null;
+  scholar_profile?: {
+    is_phone_verified?: boolean | null;
+    phone_verified_at?: Date | string | null;
+  } | null;
+}
+
 export const USER_SETTINGS_AUDIT_ACTION = 'USER_SETTINGS_PREFERENCES';
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
@@ -155,11 +172,11 @@ export function parseStoredUserSettings(
 }
 
 /**
- * Safely parses public user settings from an AuditLog entry,
- * stripping internal 2FA secrets and pending verification codes.
+ * Extracts public UserSettings from a StoredUserSettingsRecord.
  */
-export function parseUserSettings(rawDetails?: string | null): UserSettings {
-  const stored = parseStoredUserSettings(rawDetails);
+export function stripInternalSettings(
+  stored: StoredUserSettingsRecord,
+): UserSettings {
   return {
     emailNotifs: stored.emailNotifs,
     smsNotifs: stored.smsNotifs,
@@ -171,4 +188,87 @@ export function parseUserSettings(rawDetails?: string | null): UserSettings {
     publicProfile: stored.publicProfile,
     passwordChangedAt: stored.passwordChangedAt,
   };
+}
+
+/**
+ * Combines persistent column values from User / ScholarProfile with any
+ * audit-log stored state (including ephemeral pending verification codes).
+ */
+export function mergeUserColumnsIntoSettings(
+  user?: UserSettingsColumnSource | null,
+  auditRecord?: StoredUserSettingsRecord | null,
+): StoredUserSettingsRecord {
+  const base = auditRecord ?? { ...DEFAULT_USER_SETTINGS };
+
+  const twoFactor =
+    typeof user?.two_factor_enabled === 'boolean'
+      ? user.two_factor_enabled
+      : base.twoFactor;
+
+  let twoFactorMethod: TwoFactorMethod | null = base.twoFactorMethod;
+  if (!twoFactor) {
+    twoFactorMethod = null;
+  } else if (user && user.two_factor_method !== undefined) {
+    twoFactorMethod = isTwoFactorMethod(user.two_factor_method)
+      ? user.two_factor_method
+      : DEFAULT_USER_SETTINGS.twoFactorMethod;
+  } else if (!twoFactorMethod) {
+    twoFactorMethod = DEFAULT_USER_SETTINGS.twoFactorMethod;
+  }
+
+  let passwordChangedAt = base.passwordChangedAt;
+  if (user && user.password_changed_at !== undefined) {
+    passwordChangedAt =
+      user.password_changed_at instanceof Date
+        ? user.password_changed_at.toISOString()
+        : (user.password_changed_at ?? null);
+  }
+
+  const twoFactorSecret =
+    user && user.two_factor_secret !== undefined
+      ? (user.two_factor_secret ?? undefined)
+      : base.twoFactorSecret;
+
+  return {
+    emailNotifs:
+      typeof user?.email_notifs === 'boolean'
+        ? user.email_notifs
+        : base.emailNotifs,
+    smsNotifs:
+      typeof user?.sms_notifs === 'boolean' ? user.sms_notifs : base.smsNotifs,
+    forumDigest:
+      typeof user?.forum_digest === 'boolean'
+        ? user.forum_digest
+        : base.forumDigest,
+    twoFactor,
+    twoFactorMethod,
+    emailVerified:
+      typeof user?.is_email_verified === 'boolean'
+        ? user.is_email_verified
+        : base.emailVerified,
+    phoneVerified:
+      typeof user?.scholar_profile?.is_phone_verified === 'boolean'
+        ? user.scholar_profile.is_phone_verified
+        : base.phoneVerified,
+    publicProfile:
+      typeof user?.public_profile === 'boolean'
+        ? user.public_profile
+        : base.publicProfile,
+    passwordChangedAt,
+    ...(twoFactorSecret !== undefined ? { twoFactorSecret } : {}),
+    ...(base.pendingTwoFactor !== undefined
+      ? { pendingTwoFactor: base.pendingTwoFactor }
+      : {}),
+    ...(base.pendingContactVerification !== undefined
+      ? { pendingContactVerification: base.pendingContactVerification }
+      : {}),
+  };
+}
+
+/**
+ * Safely parses public user settings from an AuditLog entry,
+ * stripping internal 2FA secrets and pending verification codes.
+ */
+export function parseUserSettings(rawDetails?: string | null): UserSettings {
+  return stripInternalSettings(parseStoredUserSettings(rawDetails));
 }

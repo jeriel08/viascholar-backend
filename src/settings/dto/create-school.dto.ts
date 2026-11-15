@@ -1,13 +1,23 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+} from 'class-validator';
 
 export class CreateSchoolDto {
   @ApiProperty({
-    example: 'University of Mindanao (UM)',
+    example: 'University of Mindanao',
     description: 'Official name of the academic institution',
   })
   @IsString()
   @IsNotEmpty()
+  @Matches(/^[^()]*$/, {
+    message: 'School name must not contain parentheses or abbreviations.',
+  })
   school_name: string;
 
   @ApiPropertyOptional({
@@ -52,7 +62,8 @@ export class CreateSchoolDto {
 
   @ApiPropertyOptional({
     example: 'NUMERIC_5_POINT',
-    description: 'Standard grading scale template (NUMERIC_5_POINT, NUMERIC_4_POINT, or PERCENTAGE_100)',
+    description:
+      'Standard grading scale template (NUMERIC_5_POINT, NUMERIC_4_POINT, or PERCENTAGE_100)',
   })
   @IsString()
   @IsOptional()
@@ -73,4 +84,3 @@ export class CreateSchoolDto {
   @IsOptional()
   is_active?: boolean;
 }
-

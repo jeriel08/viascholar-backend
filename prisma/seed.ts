@@ -58,6 +58,110 @@ async function main() {
     console.log('✅ Global Grade Retention Threshold updated to 90.00%.');
   }
 
+  // 2.5 Clean up legacy parenthetical abbreviations in existing seeded schools & profiles
+  const legacySchoolRenames: Array<{ oldName: string; newName: string }> = [
+    {
+      oldName: 'University of Southeastern Philippines (USEP)',
+      newName: 'University of Southeastern Philippines',
+    },
+    {
+      oldName: 'University of Mindanao (UM)',
+      newName: 'University of Mindanao',
+    },
+    {
+      oldName: 'Ateneo de Davao University (ADDU)',
+      newName: 'Ateneo de Davao University',
+    },
+    {
+      oldName: 'University of the Philippines (UP)',
+      newName: 'University of the Philippines',
+    },
+    {
+      oldName: 'Mapúa Malayan Colleges Mindanao (MMCM)',
+      newName: 'Mapúa Malayan Colleges Mindanao',
+    },
+    {
+      oldName: 'San Pedro College (SPC)',
+      newName: 'San Pedro College',
+    },
+    {
+      oldName: 'University of the Immaculate Conception (UIC)',
+      newName: 'University of the Immaculate Conception',
+    },
+  ];
+
+  for (const { oldName, newName } of legacySchoolRenames) {
+    const oldGrading = await prisma.schoolGradingSystem.findUnique({
+      where: { school_name: oldName },
+    });
+    if (oldGrading) {
+      const existingCleanGrading = await prisma.schoolGradingSystem.findUnique({
+        where: { school_name: newName },
+      });
+      if (!existingCleanGrading) {
+        await prisma.schoolGradingSystem.update({
+          where: { school_id: oldGrading.school_id },
+          data: { school_name: newName },
+        });
+        console.log(
+          `✅ Renamed School Grading System: ${oldName} -> ${newName}`,
+        );
+      } else {
+        await prisma.school.updateMany({
+          where: { grading_system_id: oldGrading.school_id },
+          data: { grading_system_id: existingCleanGrading.school_id },
+        });
+        const linkedScholarCount = await prisma.scholarProfile.count({
+          where: { school_id: oldGrading.school_id },
+        });
+        if (linkedScholarCount === 0) {
+          await prisma.schoolGradingSystem.delete({
+            where: { school_id: oldGrading.school_id },
+          });
+          console.log(
+            `✅ Merged duplicate School Grading System: ${oldName} -> ${newName}`,
+          );
+        }
+      }
+    }
+
+    const oldSchool = await prisma.school.findUnique({
+      where: { school_name: oldName },
+    });
+    if (oldSchool) {
+      const existingCleanSchool = await prisma.school.findUnique({
+        where: { school_name: newName },
+      });
+      if (!existingCleanSchool) {
+        await prisma.school.update({
+          where: { school_id: oldSchool.school_id },
+          data: { school_name: newName },
+        });
+        console.log(`✅ Renamed School Entity: ${oldName} -> ${newName}`);
+      } else {
+        const linkedScholarCount = await prisma.scholarProfile.count({
+          where: { school_id: oldSchool.school_id },
+        });
+        if (linkedScholarCount === 0) {
+          await prisma.school.delete({
+            where: { school_id: oldSchool.school_id },
+          });
+          console.log(`✅ Removed duplicate legacy School Entity: ${oldName}`);
+        }
+      }
+    }
+
+    const updatedProfiles = await prisma.scholarProfile.updateMany({
+      where: { school_name: oldName },
+      data: { school_name: newName },
+    });
+    if (updatedProfiles.count > 0) {
+      console.log(
+        `✅ Updated ${updatedProfiles.count} scholar profile school_name(s): ${oldName} -> ${newName}`,
+      );
+    }
+  }
+
   // 3. Seed Baseline School Grading Systems
   const baselineSchools = [
     {
@@ -73,7 +177,7 @@ async function main() {
         'Standard DepEd Senior High School / Junior High School grading scale (Form 138 / SF9).',
     },
     {
-      school_name: 'University of Southeastern Philippines (USEP)',
+      school_name: 'University of Southeastern Philippines',
       grading_scale: 'NUMERIC_5_POINT',
       highest_grade: 1.0,
       passing_grade: 3.0,
@@ -85,7 +189,7 @@ async function main() {
         'State university inverse 5-point grading system. 1.00 is highest/excellent, 3.00 passing, 5.00 failed.',
     },
     {
-      school_name: 'University of Mindanao (UM)',
+      school_name: 'University of Mindanao',
       grading_scale: 'NUMERIC_4_POINT',
       highest_grade: 4.0,
       passing_grade: 2.0,
@@ -102,7 +206,7 @@ async function main() {
         'Undergraduate Grading Scale (Effective 1st Semester SY 2020-2021 to Present). 4.00 highest, 2.00 passing, 1.00 failing.',
     },
     {
-      school_name: 'Ateneo de Davao University (ADDU)',
+      school_name: 'Ateneo de Davao University',
       grading_scale: 'NUMERIC_5_POINT',
       highest_grade: 1.0,
       passing_grade: 3.0,
@@ -114,7 +218,7 @@ async function main() {
         'Standard 5-point inverse numerical grading scale. 1.00 highest, 3.00 passing.',
     },
     {
-      school_name: 'University of the Philippines (UP)',
+      school_name: 'University of the Philippines',
       grading_scale: 'NUMERIC_5_POINT',
       highest_grade: 1.0,
       passing_grade: 3.0,
@@ -158,52 +262,55 @@ async function main() {
 
   const baselineInstitutions = [
     {
-      school_name: 'University of Southeastern Philippines (USEP)',
+      school_name: 'University of Southeastern Philippines',
       school_code: 'USEP',
       address: 'Iñigo St, Bo. Obrero, Davao City, 8000 Davao del Sur',
-      grading_scale_match: 'University of Southeastern Philippines (USEP)',
+      grading_scale_match: 'University of Southeastern Philippines',
       is_active: true,
     },
     {
-      school_name: 'University of Mindanao (UM)',
+      school_name: 'University of Mindanao',
       school_code: 'UM',
       address: 'Bolton & Matina Campus, Davao City, 8000 Davao del Sur',
-      grading_scale_match: 'University of Mindanao (UM)',
+      grading_scale_match: 'University of Mindanao',
       is_active: true,
     },
     {
-      school_name: 'Ateneo de Davao University (ADDU)',
+      school_name: 'Ateneo de Davao University',
       school_code: 'ADDU',
-      address: 'E. Jacinto St, Poblacion District, Davao City, 8000 Davao del Sur',
-      grading_scale_match: 'Ateneo de Davao University (ADDU)',
+      address:
+        'E. Jacinto St, Poblacion District, Davao City, 8000 Davao del Sur',
+      grading_scale_match: 'Ateneo de Davao University',
       is_active: true,
     },
     {
-      school_name: 'University of the Philippines (UP)',
+      school_name: 'University of the Philippines',
       school_code: 'UP',
       address: 'Mintal, Tugbok District, Davao City, 8000 Davao del Sur',
-      grading_scale_match: 'University of the Philippines (UP)',
+      grading_scale_match: 'University of the Philippines',
       is_active: true,
     },
     {
-      school_name: 'Mapúa Malayan Colleges Mindanao (MMCM)',
+      school_name: 'Mapúa Malayan Colleges Mindanao',
       school_code: 'MMCM',
-      address: 'Gen. Douglas MacArthur Hwy, Matina, Davao City, 8000 Davao del Sur',
-      grading_scale_match: 'University of Mindanao (UM)',
+      address:
+        'Gen. Douglas MacArthur Hwy, Matina, Davao City, 8000 Davao del Sur',
+      grading_scale_match: 'University of Mindanao',
       is_active: true,
     },
     {
-      school_name: 'San Pedro College (SPC)',
+      school_name: 'San Pedro College',
       school_code: 'SPC',
-      address: '12 C. de Guzman St, Poblacion District, Davao City, 8000 Davao del Sur',
+      address:
+        '12 C. de Guzman St, Poblacion District, Davao City, 8000 Davao del Sur',
       grading_scale_match: 'High School / Senior High (DepEd Standard)',
       is_active: true,
     },
     {
-      school_name: 'University of the Immaculate Conception (UIC)',
+      school_name: 'University of the Immaculate Conception',
       school_code: 'UIC',
       address: 'Father Selga St, Davao City, 8000 Davao del Sur',
-      grading_scale_match: 'University of Mindanao (UM)',
+      grading_scale_match: 'University of Mindanao',
       is_active: true,
     },
   ];
@@ -227,7 +334,9 @@ async function main() {
           is_active: inst.is_active,
         },
       });
-      console.log(`✅ Seeded School Entity: ${inst.school_name} (${inst.school_code})`);
+      console.log(
+        `✅ Seeded School Entity: ${inst.school_name} (${inst.school_code})`,
+      );
     } else if (!exists.grading_system_id && gradingSystem) {
       await prisma.school.update({
         where: { school_id: exists.school_id },

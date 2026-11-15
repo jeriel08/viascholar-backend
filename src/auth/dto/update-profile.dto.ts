@@ -1,5 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsString, IsInt, Min, Max, Matches } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsInt,
+  Min,
+  Max,
+  Matches,
+  MaxLength,
+} from 'class-validator';
 
 export class UpdateProfileDto {
   // Shared Profile Fields
@@ -11,6 +19,18 @@ export class UpdateProfileDto {
   })
   first_name?: string;
 
+  @ApiProperty({
+    description: 'The middle name of the user',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  @Matches(/^[a-zA-ZÀ-ÿñÑ\s.\-']*$/, {
+    message: 'Middle name contains invalid characters.',
+  })
+  middle_name?: string;
+
   @ApiProperty({ description: 'The last name of the user' })
   @IsString()
   @IsOptional()
@@ -18,6 +38,24 @@ export class UpdateProfileDto {
     message: 'Last name cannot contain numbers or special characters.',
   })
   last_name?: string;
+
+  @ApiProperty({
+    description: 'The name suffix of the user (e.g., Jr., III)',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  @MaxLength(30)
+  suffix?: string;
+
+  @ApiProperty({
+    description: 'The biological sex of the user',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  @MaxLength(30)
+  sex?: string;
 
   @ApiProperty({ description: 'The bio of the user', required: false })
   @IsString()

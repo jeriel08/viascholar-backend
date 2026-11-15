@@ -51,11 +51,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
     }
 
-    const { password_hash, ...result } = user;
+    const { password_hash: unusedPasswordHash, ...result } = user;
+    void unusedPasswordHash;
     const profile =
       ((result.scholar_profile ?? result.employee ?? {}) as {
         first_name?: string;
+        middle_name?: string | null;
         last_name?: string;
+        suffix?: string | null;
+        sex?: string | null;
         bio?: string;
         avatar_url?: string;
         banner_url?: string;
@@ -64,7 +68,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     return {
       ...result,
       first_name: profile.first_name || '',
+      middle_name: profile.middle_name ?? null,
       last_name: profile.last_name || '',
+      suffix: profile.suffix ?? null,
+      sex: profile.sex ?? null,
       bio: profile.bio ?? null,
       avatar_url: profile.avatar_url ?? null,
       banner_url: profile.banner_url ?? null,

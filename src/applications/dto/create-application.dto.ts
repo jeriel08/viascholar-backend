@@ -54,6 +54,9 @@ export class CreateApplicationDto {
   })
   @IsString()
   @IsNotEmpty()
+  @Matches(/^[^()]*$/, {
+    message: 'School name must not contain parentheses or abbreviations.',
+  })
   school_name: string;
 
   @ApiProperty({
@@ -91,11 +94,11 @@ export class CreateApplicationDto {
   @IsString()
   @IsOptional()
   @ValidateIf(
-    (o) =>
+    (o: CreateApplicationDto) =>
       typeof o.relative_employee === 'string' &&
       o.relative_employee.trim().length > 0,
   )
-  @Matches(/^[a-zA-ZÀ-ÿñÑ\s\.\-']+$/, {
+  @Matches(/^[a-zA-ZÀ-ÿñÑ\s.'-]+$/, {
     message:
       'Relative employee name can only contain letters, spaces, and periods (e.g. for middle initials).',
   })
