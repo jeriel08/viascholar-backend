@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   Optional,
@@ -51,6 +52,38 @@ export interface ContactVerificationSetupResponse {
   destination: string;
   expiresInMinutes: number;
   simulated?: boolean;
+}
+
+export interface PublicScholarRecentPost {
+  post_id: number;
+  title: string;
+  category: string | null;
+  views_count: number;
+  comments_count: number;
+  created_at: Date;
+}
+
+export interface PublicScholarProfile {
+  user_id: number;
+  is_public: boolean;
+  is_self: boolean;
+  first_name: string;
+  middle_name: string | null;
+  last_name: string;
+  suffix: string | null;
+  sex: string | null;
+  email: string;
+  bio: string | null;
+  avatar_url: string | null;
+  banner_url: string | null;
+  school_name: string | null;
+  course_of_study: string | null;
+  current_year_level: number | null;
+  scholarship_track: string | null;
+  member_since: Date;
+  forum_posts_count: number;
+  forum_comments_count: number;
+  recent_posts: PublicScholarRecentPost[];
 }
 
 @Injectable()
@@ -885,6 +918,138 @@ export class ProfileService {
 
     return {
       message: 'Your account has been deactivated.',
+    };
+  }
+
+  async getPublicScholarProfile(
+    requesterUserId: number,
+    targetUserId: number,
+  ): Promise<PublicScholarProfile> {
+    const targetUser = await this.prisma.user.findUnique({
+      where: { user_id: targetUserId },
+      select: {
+        user_id: true,
+        email: true,
+        role: true,
+        is_active: true,
+        public_profile: true,
+        created_at: true,
+        scholar_profile: {
+          select: {
+            first_name: true,
+            middle_name: true,
+            last_name: true,
+            suffix: true,
+            sex: true,
+            bio: true,
+            avatar_url: true,
+            banner_url: true,
+            school_name: true,
+            course_of_study: true,
+            current_year_level: true,
+            scholarship_track: true,
+          },
+        },
+      },
+    });
+
+    if (
+      !targetUser ||
+      !targetUser.is_active ||
+      targetUser.role !== Role.SCHOLAR ||
+      !targetUser.scholar_profile
+    ) {
+      throw new NotFoundException('Scholar profile not found.');
+    }
+
+    const { current } = await this.loadUserSettingsState(targetUserId, {
+      public_profile: targetUser.public_profile,
+    });
+    const isPublicProfile = current.publicProfile;
+    const isSelf = requesterUserId === targetUserId;
+
+    if (!isPublicProfile && !isSelf) {
+      throw new ForbiddenException(
+        'This scholar has chosen to keep their profile private.',
+      );
+    }
+
+    const hasForumPostModel =
+      typeof this.prisma.forumPost?.count === 'function' &&
+      typeof this.prisma.forumPost?.findMany === 'function';
+    const hasForumCommentModel =
+      typeof this.prisma.forumComment?.count === 'function';
+
+    const [forumPostsCount, forumCommentsCount, recentPosts] =
+      await Promise.all([
+        hasForumPostModel
+          ? this.prisma.forumPost.count({
+              where: { author_user_id: targetUserId },
+            })
+          : Promise.resolve(0),
+        hasForumCommentModel
+          ? this.prisma.forumComment.count({
+              where: { author_user_id: targetUserId },
+            })
+          : Promise.resolve(0),
+        hasForumPostModel
+          ? this.prisma.forumPost.findMany({
+              where: { author_user_id: targetUserId },
+              orderBy: { created_at: 'desc' },
+              take: 5,
+              select: {
+                post_id: true,
+                title: true,
+                category: true,
+                views_count: true,
+                created_at: true,
+                _count: {
+                  select: { comments: true },
+                },
+              },
+            })
+          : Promise.resolve(
+              [] as Array<{
+                post_id: number;
+                title: string;
+                category: string | null;
+                views_count: number;
+                created_at: Date;
+                _count: { comments: number };
+              }>,
+            ),
+      ]);
+
+    const profile = targetUser.scholar_profile;
+
+    return {
+      user_id: targetUser.user_id,
+      is_public: isPublicProfile,
+      is_self: isSelf,
+      first_name: profile.first_name,
+      middle_name: profile.middle_name ?? null,
+      last_name: profile.last_name,
+      suffix: profile.suffix ?? null,
+      sex: profile.sex ?? null,
+      email: targetUser.email,
+      bio: profile.bio ?? null,
+      avatar_url: profile.avatar_url ?? null,
+      banner_url: profile.banner_url ?? null,
+      school_name: profile.school_name ?? null,
+      course_of_study: profile.course_of_study ?? null,
+      current_year_level: profile.current_year_level ?? null,
+      scholarship_track: profile.scholarship_track ?? null,
+      member_since: targetUser.created_at,
+      forum_posts_count: forumPostsCount,
+      forum_comments_count: forumCommentsCount,
+      recent_posts: recentPosts.map((post) => ({
+        post_id: post.post_id,
+        title: post.title,
+        category: post.category,
+        views_count: post.views_count,
+        comments_count: post._count?.comments ?? 0,
+        created_at: post.created_at,
+      })),
     };
   }
 }

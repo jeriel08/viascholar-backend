@@ -37,6 +37,7 @@ const createProfileServiceMock = () => ({
   verifyContactVerification: vi.fn(),
   changePassword: vi.fn(),
   deactivateAccount: vi.fn(),
+  getPublicScholarProfile: vi.fn(),
 });
 
 describe('AuthController', () => {
@@ -390,6 +391,17 @@ describe('AuthController', () => {
     const result = await controller.deactivateAccount(req, dto);
 
     expect(profileService.deactivateAccount).toHaveBeenCalledWith(42, dto);
+    expect(result).toEqual(response);
+  });
+
+  it('delegates public scholar profile lookup to ProfileService', async () => {
+    const req = { user: { user_id: 42 } };
+    const response = { user_id: 10, is_public: true, first_name: 'Juan' };
+    profileService.getPublicScholarProfile.mockResolvedValue(response);
+
+    const result = await controller.getPublicScholarProfile(req, 10);
+
+    expect(profileService.getPublicScholarProfile).toHaveBeenCalledWith(42, 10);
     expect(result).toEqual(response);
   });
 });

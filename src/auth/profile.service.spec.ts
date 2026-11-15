@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { createHmac } from 'node:crypto';
@@ -1120,6 +1121,139 @@ describe('ProfileService', () => {
           phone_verified_at: expect.any(Date) as Date,
         },
       });
+    });
+  });
+
+  describe('getPublicScholarProfile', () => {
+    it('returns non-sensitive scholar details and forum activity when publicProfile is true', async () => {
+      const prismaAny = prisma as unknown as Record<string, unknown>;
+      prismaAny.forumPost = {
+        count: vi.fn().mockResolvedValue(4),
+        findMany: vi.fn().mockResolvedValue([
+          {
+            post_id: 11,
+            title: 'Enrollment Tips',
+            category: 'GENERAL',
+            views_count: 19,
+            created_at: new Date('2026-11-10T08:00:00Z'),
+            _count: { comments: 3 },
+          },
+        ]),
+      };
+      prismaAny.forumComment = {
+        count: vi.fn().mockResolvedValue(7),
+      };
+
+      prisma.user.findUnique.mockResolvedValue({
+        user_id: 10,
+        email: 'juan@viascholar.ph',
+        role: Role.SCHOLAR,
+        is_active: true,
+        public_profile: true,
+        created_at: new Date('2026-01-15T00:00:00Z'),
+        scholar_profile: {
+          first_name: 'Juan',
+          middle_name: 'Santos',
+          last_name: 'Dela Cruz',
+          suffix: 'Jr.',
+          sex: 'Male',
+          bio: 'Engineering scholar',
+          avatar_url: 'https://cdn.example/avatar.png',
+          banner_url: 'https://cdn.example/banner.png',
+          school_name: 'University of Mindanao',
+          course_of_study: 'BS Computer Engineering',
+          current_year_level: 3,
+          scholarship_track: 'Merit',
+        },
+      });
+      prisma.auditLog.findFirst.mockResolvedValue(null);
+
+      const profile = await service.getPublicScholarProfile(25, 10);
+
+      expect(profile).toMatchObject({
+        user_id: 10,
+        is_public: true,
+        is_self: false,
+        first_name: 'Juan',
+        middle_name: 'Santos',
+        last_name: 'Dela Cruz',
+        suffix: 'Jr.',
+        email: 'juan@viascholar.ph',
+        bio: 'Engineering scholar',
+        school_name: 'University of Mindanao',
+        course_of_study: 'BS Computer Engineering',
+        current_year_level: 3,
+        scholarship_track: 'Merit',
+        forum_posts_count: 4,
+        forum_comments_count: 7,
+        recent_posts: [
+          {
+            post_id: 11,
+            title: 'Enrollment Tips',
+            comments_count: 3,
+          },
+        ],
+      });
+
+      delete prismaAny.forumPost;
+      delete prismaAny.forumComment;
+    });
+
+    it('blocks other scholars with ForbiddenException when publicProfile is false', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        user_id: 10,
+        email: 'juan@viascholar.ph',
+        role: Role.SCHOLAR,
+        is_active: true,
+        public_profile: false,
+        created_at: new Date('2026-01-15T00:00:00Z'),
+        scholar_profile: {
+          first_name: 'Juan',
+          last_name: 'Dela Cruz',
+        },
+      });
+      prisma.auditLog.findFirst.mockResolvedValue(null);
+
+      await expect(service.getPublicScholarProfile(25, 10)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('allows the scholar themselves to preview their profile even when publicProfile is false', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        user_id: 10,
+        email: 'juan@viascholar.ph',
+        role: Role.SCHOLAR,
+        is_active: true,
+        public_profile: false,
+        created_at: new Date('2026-01-15T00:00:00Z'),
+        scholar_profile: {
+          first_name: 'Juan',
+          last_name: 'Dela Cruz',
+        },
+      });
+      prisma.auditLog.findFirst.mockResolvedValue(null);
+
+      const profile = await service.getPublicScholarProfile(10, 10);
+
+      expect(profile.is_public).toBe(false);
+      expect(profile.is_self).toBe(true);
+    });
+
+    it('throws NotFoundException for non-scholar, inactive, or missing targets', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        user_id: 2,
+        email: 'coord@viascholar.ph',
+        role: Role.COORDINATOR,
+        is_active: true,
+        public_profile: true,
+        created_at: new Date(),
+        scholar_profile: null,
+      });
+
+      await expect(service.getPublicScholarProfile(1, 2)).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });

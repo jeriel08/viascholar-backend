@@ -512,6 +512,57 @@ describe('ForumService', () => {
       delete prismaAny.auditLog;
       delete (prisma.forumComment as unknown as Record<string, unknown>).count;
     });
+
+    it('masks email and bio on comment authors when comment author has publicProfile false', async () => {
+      const findManyAudit = vi.fn().mockResolvedValue([
+        {
+          user_id: 9,
+          details: JSON.stringify({ publicProfile: false }),
+        },
+      ]);
+      const prismaAny = prisma as unknown as Record<string, unknown>;
+      prismaAny.auditLog = { findMany: findManyAudit };
+
+      prisma.forumPost.findUnique.mockResolvedValueOnce({
+        ...basePost,
+        comments: [
+          {
+            comment_id: 101,
+            post_id: 77,
+            author_user_id: 9,
+            content: 'Private commenter reply',
+            created_at: new Date('2026-11-14T11:00:00Z'),
+            author: {
+              user_id: 9,
+              email: 'private.scholar@viascholar.ph',
+              role: 'SCHOLAR',
+              scholar_profile: {
+                first_name: 'Ana',
+                last_name: 'Reyes',
+                avatar_url: null,
+                bio: 'Secret bio',
+              },
+              employee: null,
+            },
+          },
+        ],
+      });
+      prisma.forumPost.update.mockResolvedValueOnce({ views_count: 5 });
+
+      const detailResult = await service.getPostById(77);
+
+      expect(detailResult.comments[0].author).toEqual(
+        objectMatching({
+          user_id: 9,
+          name: 'Ana Reyes',
+          email: null,
+          bio: null,
+          public_profile: false,
+        }),
+      );
+
+      delete prismaAny.auditLog;
+    });
   });
 
   describe('updatePost', () => {

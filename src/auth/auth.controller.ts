@@ -4,6 +4,8 @@ import {
   Body,
   UseGuards,
   Get,
+  Param,
+  ParseIntPipe,
   Request,
   Patch,
   UseInterceptors,
@@ -239,6 +241,20 @@ export class AuthController {
     @Body() dto: UpdateProfileDto,
   ) {
     return this.profileService.updateProfile(req.user.user_id, dto);
+  }
+
+  @Get('scholars/:id/public-profile')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'))
+  @ApiOperation({
+    summary:
+      'Retrieve a scholar public profile when publicProfile privacy is enabled',
+  })
+  getPublicScholarProfile(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.profileService.getPublicScholarProfile(req.user.user_id, id);
   }
 
   @Get('me/settings')

@@ -459,6 +459,7 @@ export class ForumService {
 
     const publicProfileMap = await this.resolvePublicProfileFlags([
       post.author,
+      ...post.comments.map((c) => c.author),
     ]);
     const isPublicProfile = publicProfileMap.get(post.author.user_id) ?? true;
 
@@ -494,11 +495,7 @@ export class ForumService {
     );
 
     const formattedComments = post.comments.map((c) => {
-      const cProfile = c.author.scholar_profile || c.author.employee;
-      const cAuthorName =
-        `${cProfile?.first_name || ''} ${cProfile?.last_name || ''}`.trim() ||
-        'User';
-
+      const commentIsPublic = publicProfileMap.get(c.author.user_id) ?? true;
       return {
         comment_id: c.comment_id,
         post_id: c.post_id ?? post.post_id,
@@ -506,15 +503,7 @@ export class ForumService {
         content: c.content,
         created_at: c.created_at,
         updated_at: c.updated_at,
-        author: {
-          user_id: c.author.user_id,
-          name: cAuthorName,
-          first_name: cProfile?.first_name || '',
-          last_name: cProfile?.last_name || '',
-          email: c.author.email,
-          role: c.author.role,
-          avatar_url: cProfile?.avatar_url || null,
-        },
+        author: this.formatAuthor(c.author, commentIsPublic),
       };
     });
 
@@ -562,10 +551,12 @@ export class ForumService {
       },
     });
 
-    const cProfile = comment.author.scholar_profile || comment.author.employee;
-    const cAuthorName =
-      `${cProfile?.first_name || ''} ${cProfile?.last_name || ''}`.trim() ||
-      'User';
+    const publicProfileMap = await this.resolvePublicProfileFlags([
+      comment.author,
+    ]);
+    const isPublicProfile =
+      publicProfileMap.get(comment.author.user_id) ?? true;
+    const formattedAuthor = this.formatAuthor(comment.author, isPublicProfile);
 
     const commentPayload = {
       comment_id: comment.comment_id,
@@ -574,15 +565,7 @@ export class ForumService {
       content: comment.content,
       created_at: comment.created_at,
       updated_at: comment.updated_at,
-      author: {
-        user_id: comment.author.user_id,
-        name: cAuthorName,
-        first_name: cProfile?.first_name || '',
-        last_name: cProfile?.last_name || '',
-        email: comment.author.email,
-        role: comment.author.role,
-        avatar_url: cProfile?.avatar_url || null,
-      },
+      author: formattedAuthor,
     };
 
     // Real-time broadcast to viewers of the thread
@@ -606,7 +589,7 @@ export class ForumService {
 
       void this.notificationsService.notifyUser(post.author_user_id, {
         title: 'Forum Discussion Reply',
-        message: `${cProfile?.first_name || 'Someone'} replied to "${post.title}".`,
+        message: `${formattedAuthor.first_name || 'Someone'} replied to "${post.title}".`,
         category: 'forum',
         link: '/SchoForum',
       });
