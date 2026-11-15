@@ -33,6 +33,7 @@ const createCoordinatorBaselineServiceMock = () => ({
 
 const createActiveScholarsAnalyticsServiceMock = () => ({
   getCoordinatorActiveScholars: vi.fn(),
+  getCoordinatorScholarDetails: vi.fn(),
 });
 
 describe('AcademicBaselineService', () => {
@@ -287,6 +288,20 @@ describe('AcademicBaselineService', () => {
     expect(
       activeScholarsAnalyticsServiceMock.getCoordinatorActiveScholars,
     ).toHaveBeenCalledWith();
+    expect(result).toBe(expected);
+  });
+
+  it('delegates getCoordinatorScholarDetails to the analytics service', async () => {
+    const expected = { scholar_profile: { profile_id: 10 } };
+    activeScholarsAnalyticsServiceMock.getCoordinatorScholarDetails.mockResolvedValue(
+      expected,
+    );
+
+    const result = await service.getCoordinatorScholarDetails(10);
+
+    expect(
+      activeScholarsAnalyticsServiceMock.getCoordinatorScholarDetails,
+    ).toHaveBeenCalledWith(10);
     expect(result).toBe(expected);
   });
 });

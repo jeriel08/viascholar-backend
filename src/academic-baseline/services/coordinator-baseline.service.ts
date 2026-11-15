@@ -58,7 +58,10 @@ export class CoordinatorBaselineService {
   }
 
   // 2. Coordinator: Get full side-by-side audit bundle for a scholar
-  async getCoordinatorBaselineReview(scholarProfileId: number, forceRefresh = false) {
+  async getCoordinatorBaselineReview(
+    scholarProfileId: number,
+    forceRefresh = false,
+  ) {
     const cacheKey = `baseline:review:${scholarProfileId}`;
 
     return this.cacheService.wrap(

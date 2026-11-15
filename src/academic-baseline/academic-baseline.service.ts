@@ -139,4 +139,11 @@ export class AcademicBaselineService {
   async getCoordinatorActiveScholars() {
     return this.activeScholarsAnalyticsService.getCoordinatorActiveScholars();
   }
+
+  // 13. Coordinator / Grantor: Get full single-scholar details (prospectus, documents, disbursements)
+  async getCoordinatorScholarDetails(scholarProfileId: number) {
+    return this.activeScholarsAnalyticsService.getCoordinatorScholarDetails(
+      scholarProfileId,
+    );
+  }
 }

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Test, TestingModule } from '@nestjs/testing';
+import { NotFoundException } from '@nestjs/common';
 import { ActiveScholarsAnalyticsService } from './active-scholars-analytics.service.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 
@@ -11,6 +12,7 @@ const objectMatching = (shape: Record<string, unknown>) =>
 const createPrismaMock = () => ({
   scholarProfile: {
     findMany: vi.fn(),
+    findUnique: vi.fn(),
   },
 });
 
@@ -667,6 +669,153 @@ describe('ActiveScholarsAnalyticsService', () => {
       const [result] = await load({});
 
       expect(result.health).toBe('good');
+    });
+  });
+
+  describe('getCoordinatorScholarDetails', () => {
+    it('throws NotFoundException when scholar profile does not exist', async () => {
+      prisma.scholarProfile.findUnique.mockResolvedValue(null);
+
+      await expect(service.getCoordinatorScholarDetails(999)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('returns structured scholar profile, prospectus, documents, disbursements, and metrics', async () => {
+      prisma.scholarProfile.findUnique.mockResolvedValue({
+        ...makeScholar({
+          middle_name: 'Reyes',
+          suffix: null,
+          sex: 'Female',
+          phone_number: '09171234567',
+          is_phone_verified: true,
+          student_address: 'Davao City',
+          school_address: 'Matina, Davao City',
+          student_number: '551100',
+          scholarship_track: 'CHED-TDP',
+          bio: 'CS scholar',
+          avatar_url: null,
+          banner_url: null,
+          archived_at: null,
+          user_id: 7,
+        }),
+        user: {
+          user_id: 7,
+          email: 'maria@example.com',
+          role: 'SCHOLAR',
+          is_active: true,
+          is_email_verified: true,
+          public_profile: true,
+          created_at: new Date('2025-06-01T00:00:00.000Z'),
+        },
+        school_grading_system: {
+          school_id: 1,
+          school_name: 'University of Mindanao',
+          grading_scale: 'NUMERIC_4_POINT',
+          passing_grade: '2.0',
+          highest_grade: '4.0',
+          failing_grade: '1.0',
+          is_verified: true,
+        },
+        prospectus: {
+          prospectus_id: 60,
+          scholar_profile_id: 1,
+          curriculum_year: '2023-2024',
+          course_code: 'BSIT',
+          course_name: 'Bachelor of Science in Information Technology',
+          total_units: '6.0',
+          is_frozen: true,
+          frozen_at: new Date('2025-08-01T00:00:00.000Z'),
+          status: 'FROZEN',
+          document: null,
+          frozen_by_employee: {
+            employee_id: 3,
+            first_name: 'Elena',
+            last_name: 'Cruz',
+            title: 'Coordinator',
+          },
+          subjects: [
+            makeSubject({
+              subject_id: 101,
+              subject_code: 'IT 101',
+              descriptive_title: 'Intro to Computing',
+              units: '3.0',
+              grade: '1.50',
+              status: 'PASSED',
+            }),
+            makeSubject({
+              subject_id: 102,
+              subject_code: 'IT 102',
+              descriptive_title: 'Data Structures',
+              units: '3.0',
+              grade: null,
+              status: 'UNTAKEN',
+            }),
+          ],
+        },
+        documents: [makeDocument({ document_id: 1, status: 'VERIFIED' })],
+        disbursements: [
+          {
+            ...makeDisbursement({ amount: '15000', status: 'SETTLED' }),
+            or_document: null,
+            approved_by_employee: null,
+            settled_by_employee: null,
+            term_enrollment: null,
+          },
+        ],
+        grade_reports: [
+          {
+            ...makeGradeReport({ report_id: 9, gpa: '1.50' }),
+            grade_items: [{ item_id: 1, subject_code: 'IT 101', units: '3.0' }],
+            document: null,
+          },
+        ],
+        enrollments: [
+          {
+            enrollment_id: 4,
+            academic_year: '2025-2026',
+            semester: '1st Semester',
+            year_level: 3,
+            total_units: '18.0',
+            total_assessment: '22000.00',
+            status: 'APPROVED',
+            cor_document: null,
+            soa_document: null,
+          },
+        ],
+        contracts: [],
+      });
+
+      const result = await service.getCoordinatorScholarDetails(1);
+
+      expect(prisma.scholarProfile.findUnique).toHaveBeenCalledWith(
+        objectMatching({ where: { profile_id: 1 } }),
+      );
+      expect(result.scholar_profile).toEqual(
+        expect.objectContaining({
+          profile_id: 1,
+          first_name: 'Maria',
+          middle_name: 'Reyes',
+          last_name: 'Santos',
+          email: 'maria@example.com',
+          school_name: 'University of Mindanao',
+        }),
+      );
+      expect(result.metrics).toEqual({
+        gwa: 1.5,
+        health: 'good',
+        total_subjects: 2,
+        total_units: 6,
+        credited_units: 3,
+        enrolled_units: 0,
+        remaining_units: 3,
+        total_documents: 1,
+        verified_documents: 1,
+        pending_documents: 0,
+        total_disbursements: 1,
+        total_disbursed_amount: 15000,
+        settled_disbursed_amount: 15000,
+      });
     });
   });
 });

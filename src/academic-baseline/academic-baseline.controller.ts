@@ -227,6 +227,18 @@ export class AcademicBaselineController {
     return this.baselineService.getCoordinatorActiveScholars();
   }
 
+  @Get('coordinator/scholars/:scholarProfileId/details')
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @ApiOperation({
+    summary:
+      'Coordinator & Grantor retrieve full scholar details (prospectus, documents, disbursements)',
+  })
+  getScholarDetails(
+    @Param('scholarProfileId', ParseIntPipe) scholarProfileId: number,
+  ) {
+    return this.baselineService.getCoordinatorScholarDetails(scholarProfileId);
+  }
+
   @Get('coordinator/review/:scholarProfileId')
   @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({

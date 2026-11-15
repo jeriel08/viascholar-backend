@@ -43,6 +43,7 @@ describe('AcademicBaselineController', () => {
       submitForReview: vi.fn(),
       getCoordinatorPendingBaselines: vi.fn(),
       getCoordinatorActiveScholars: vi.fn(),
+      getCoordinatorScholarDetails: vi.fn(),
       getCoordinatorBaselineReview: vi.fn(),
       coordinatorUpdateSubjects: vi.fn(),
       freezeBaseline: vi.fn(),
@@ -298,6 +299,16 @@ describe('AcademicBaselineController', () => {
 
       expect(serviceMock.unfreezeBaseline).toHaveBeenCalledWith(2, 55);
     });
+
+    it('delegates getScholarDetails with scholar profile id', async () => {
+      const expected = { scholar_profile: { profile_id: 10 } };
+      serviceMock.getCoordinatorScholarDetails.mockResolvedValue(expected);
+
+      const result = await controller.getScholarDetails(10);
+
+      expect(serviceMock.getCoordinatorScholarDetails).toHaveBeenCalledWith(10);
+      expect(result).toBe(expected);
+    });
   });
 
   describe('authorization metadata', () => {
@@ -349,6 +360,7 @@ describe('AcademicBaselineController', () => {
       for (const name of [
         'getPendingBaselines',
         'getActiveScholars',
+        'getScholarDetails',
         'getCoordinatorReview',
         'coordinatorUpdateSubjects',
         'freezeBaseline',
