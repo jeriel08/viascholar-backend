@@ -864,7 +864,47 @@ describe('ScholarEnrollmentService', () => {
       expect(cloudinary.uploadDocument).not.toHaveBeenCalled();
     });
 
-    it('passes COR and SOA academic years to runAudit when COR already exists in draft', async () => {
+    it('rejects Assessment upload when Semester or School Year differs from existing draft COR', async () => {
+      (prisma as any).systemSetting = {
+        findFirst: vi.fn().mockResolvedValue({
+          ay_rollover_month: 7,
+          strict_active_term_policy: false,
+        }),
+      };
+      ocr.parseSoa.mockResolvedValue({
+        ...extractedSoa,
+        academic_year: '2023-2024',
+        semester: '2nd Semester',
+      });
+      prisma.termEnrollment.findMany.mockResolvedValue([
+        {
+          enrollment_id: 1,
+          academic_year: '2023-2024',
+          semester: '1st Semester',
+          year_level: 1,
+          cor_document_id: 77,
+          soa_document_id: null,
+        },
+      ]);
+      prisma.scholarDocument.findUnique.mockResolvedValue({
+        document_id: 77,
+        extracted_data: {
+          academic_year: '2023-2024',
+          semester: '1st Semester',
+          student_number: '2020-001',
+          student_name: 'Ana Cruz',
+        },
+      });
+
+      await expect(service.uploadAndParseSoa(3, makeFile())).rejects.toThrow(
+        new BadRequestException(
+          'Term mismatch: Your Certificate of Registration is for AY 2023-2024 (1st Semester), while your Statement of Account / Assessment is for AY 2023-2024 (2nd Semester). Both documents must belong to the same Academic Year and Semester.',
+        ),
+      );
+      expect(cloudinary.uploadDocument).not.toHaveBeenCalled();
+    });
+
+    it('rejects Assessment upload when School Year differs from existing draft COR', async () => {
       (prisma as any).systemSetting = {
         findFirst: vi.fn().mockResolvedValue({
           ay_rollover_month: 7,
@@ -883,6 +923,46 @@ describe('ScholarEnrollmentService', () => {
           semester: '1st Semester',
           year_level: 2,
           cor_document_id: 77,
+          soa_document_id: null,
+        },
+      ]);
+      prisma.scholarDocument.findUnique.mockResolvedValue({
+        document_id: 77,
+        extracted_data: {
+          academic_year: '2025-2026',
+          semester: '1st Semester',
+          student_number: '2020-001',
+          student_name: 'Ana Cruz',
+        },
+      });
+
+      await expect(service.uploadAndParseSoa(3, makeFile())).rejects.toThrow(
+        new BadRequestException(
+          'Term mismatch: Your Certificate of Registration is for AY 2025-2026 (1st Semester), while your Statement of Account / Assessment is for AY 2024-2025 (1st Semester). Both documents must belong to the same Academic Year and Semester.',
+        ),
+      );
+      expect(cloudinary.uploadDocument).not.toHaveBeenCalled();
+    });
+
+    it('allows matching COR and SOA academic year and semester in multi-year mode', async () => {
+      (prisma as any).systemSetting = {
+        findFirst: vi.fn().mockResolvedValue({
+          ay_rollover_month: 7,
+          strict_active_term_policy: false,
+        }),
+      };
+      ocr.parseSoa.mockResolvedValue({
+        ...extractedSoa,
+        academic_year: '2023-2024',
+        semester: '1st Semester',
+      });
+      prisma.termEnrollment.findMany.mockResolvedValue([
+        {
+          enrollment_id: 1,
+          academic_year: '2023-2024',
+          semester: '1st Semester',
+          year_level: 1,
+          cor_document_id: 77,
           enrolled_subjects: extractedCor.subjects,
         },
       ]);
@@ -900,7 +980,7 @@ describe('ScholarEnrollmentService', () => {
       prisma.scholarDocument.findUnique.mockResolvedValue({
         document_id: 77,
         extracted_data: {
-          academic_year: '2025-2026',
+          academic_year: '2023-2024',
           semester: '1st Semester',
           student_number: '2020-001',
           student_name: 'Ana Cruz',
@@ -917,8 +997,8 @@ describe('ScholarEnrollmentService', () => {
         10,
         extractedCor.subjects,
         objectMatching({
-          corAcademicYear: '2025-2026',
-          soaAcademicYear: '2024-2025',
+          corAcademicYear: '2023-2024',
+          soaAcademicYear: '2023-2024',
           corSemester: '1st Semester',
           soaSemester: '1st Semester',
         }),

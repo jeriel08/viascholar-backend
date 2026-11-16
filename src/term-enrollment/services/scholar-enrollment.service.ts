@@ -19,6 +19,11 @@ import {
   resolveActiveAcademicTerm,
   validateEnrollmentTermAgainstPolicy,
 } from '../../settings/settings.service.js';
+import {
+  academicYearsMatchForTerm,
+  normalizeAcademicYear,
+  normalizeSemester,
+} from '../../documents/utils/academic-term.util.js';
 import { Express } from 'express';
 
 @Injectable()
@@ -208,6 +213,42 @@ export class ScholarEnrollmentService {
     }
 
     return meta;
+  }
+
+  private assertCrossDocTermMatch(
+    corAcademicYear?: string | null,
+    corSemester?: string | null,
+    soaAcademicYear?: string | null,
+    soaSemester?: string | null,
+  ) {
+    const corAy = corAcademicYear?.trim();
+    const soaAy = soaAcademicYear?.trim();
+    const corSem = corSemester?.trim();
+    const soaSem = soaSemester?.trim();
+
+    if (
+      corAy &&
+      soaAy &&
+      !academicYearsMatchForTerm(corAy, soaAy, corSem || soaSem || '')
+    ) {
+      const normCorAy = normalizeAcademicYear(corAy) || corAy;
+      const normSoaAy = normalizeAcademicYear(soaAy) || soaAy;
+      throw new BadRequestException(
+        `Term mismatch: Your Certificate of Registration is for AY ${normCorAy}${corSem ? ` (${normalizeSemester(corSem)})` : ''}, while your Statement of Account / Assessment is for AY ${normSoaAy}${soaSem ? ` (${normalizeSemester(soaSem)})` : ''}. Both documents must belong to the same Academic Year and Semester.`,
+      );
+    }
+
+    if (corSem && soaSem) {
+      const normCorSem = normalizeSemester(corSem);
+      const normSoaSem = normalizeSemester(soaSem);
+      if (normCorSem.toLowerCase() !== normSoaSem.toLowerCase()) {
+        const displayAy =
+          normalizeAcademicYear(corAy || soaAy) || corAy || soaAy || '';
+        throw new BadRequestException(
+          `Term mismatch: Your Certificate of Registration is for ${displayAy ? `AY ${displayAy} ` : ''}(${normCorSem}), while your Statement of Account / Assessment is for ${displayAy ? `AY ${displayAy} ` : ''}(${normSoaSem}). Both documents must belong to the same Academic Year and Semester.`,
+        );
+      }
+    }
   }
 
   private async getScholarProfile(userId: number) {
@@ -677,15 +718,39 @@ export class ScholarEnrollmentService {
       throw new BadRequestException(policyCheck.reason);
     }
 
-    const uploadRes = await this.cloudinaryService.uploadDocument(
-      file,
-      'viascholar/enrollment/cor',
-    );
-
     const ay =
       extractedData.academic_year || resolvedTerm.effective_academic_year;
     const sem = extractedData.semester || resolvedTerm.effective_semester;
     const yr = extractedData.year_level || scholar.current_year_level || 1;
+
+    const allDrafts = await this.prisma.termEnrollment.findMany({
+      where: {
+        scholar_profile_id: scholar.profile_id,
+        status: 'DRAFT',
+      },
+      orderBy: { updated_at: 'desc' },
+    });
+    const draftList = Array.isArray(allDrafts) ? allDrafts : [];
+    const existingSoaDraft = draftList.find(
+      (d) => d.soa_document_id != null && d.soa_document_id !== d.cor_document_id,
+    );
+    const existingPeerSoaData = existingSoaDraft?.soa_document_id
+      ? await this.findDocExtractedData(existingSoaDraft.soa_document_id)
+      : null;
+
+    if (existingPeerSoaData) {
+      this.assertCrossDocTermMatch(
+        extractedData.academic_year,
+        extractedData.semester,
+        existingPeerSoaData.academic_year,
+        existingPeerSoaData.semester,
+      );
+    }
+
+    const uploadRes = await this.cloudinaryService.uploadDocument(
+      file,
+      'viascholar/enrollment/cor',
+    );
 
     // Clean up old draft COR document if re-uploading
     const existingDraft = await this.prisma.termEnrollment.findFirst({
@@ -711,14 +776,7 @@ export class ScholarEnrollmentService {
 
     // Check for any other active DRAFT rows with a different academic_year/semester
     // (e.g. an Assessment/SOA uploaded first that defaulted to a different term)
-    const allDrafts = await this.prisma.termEnrollment.findMany({
-      where: {
-        scholar_profile_id: scholar.profile_id,
-        status: 'DRAFT',
-      },
-      orderBy: { updated_at: 'desc' },
-    });
-    const mismatchedDrafts = (Array.isArray(allDrafts) ? allDrafts : []).filter(
+    const mismatchedDrafts = draftList.filter(
       (d) => d.academic_year !== ay || d.semester !== sem,
     );
     const carriedSoaDraft = !existingDraft?.soa_document_id
@@ -889,11 +947,6 @@ export class ScholarEnrollmentService {
       throw new BadRequestException(policyCheck.reason);
     }
 
-    const uploadRes = await this.cloudinaryService.uploadDocument(
-      file,
-      'viascholar/enrollment/soa',
-    );
-
     let ay =
       extractedData.academic_year || resolvedTerm.effective_academic_year;
     let sem = extractedData.semester || resolvedTerm.effective_semester;
@@ -910,10 +963,25 @@ export class ScholarEnrollmentService {
     const corDonorDraft = activeDrafts.find((d) => d.cor_document_id != null);
 
     if (corDonorDraft) {
+      const peerCor =
+        corDonorDraft.cor_document_id !== corDonorDraft.soa_document_id
+          ? await this.findDocExtractedData(corDonorDraft.cor_document_id)
+          : null;
+      this.assertCrossDocTermMatch(
+        peerCor?.academic_year || corDonorDraft.academic_year,
+        peerCor?.semester || corDonorDraft.semester,
+        extractedData.academic_year,
+        extractedData.semester,
+      );
       ay = corDonorDraft.academic_year;
       sem = corDonorDraft.semester;
       yr = corDonorDraft.year_level || yr;
     }
+
+    const uploadRes = await this.cloudinaryService.uploadDocument(
+      file,
+      'viascholar/enrollment/soa',
+    );
 
     // Clean up old draft SOA document if re-uploading
     const existingDraft = await this.prisma.termEnrollment.findFirst({
@@ -1562,6 +1630,18 @@ export class ScholarEnrollmentService {
       throw new BadRequestException(lock.message);
     }
     const auditMeta = await this.buildSubmitAuditMeta(dto);
+    if (
+      !dto.is_consolidated &&
+      (auditMeta as any).corAcademicYear &&
+      (auditMeta as any).soaAcademicYear
+    ) {
+      this.assertCrossDocTermMatch(
+        (auditMeta as any).corAcademicYear,
+        (auditMeta as any).corSemester,
+        (auditMeta as any).soaAcademicYear,
+        (auditMeta as any).soaSemester,
+      );
+    }
     const auditResult = await this.auditEngineService.runAudit(
       scholar.profile_id,
       dto.enrolled_subjects,
