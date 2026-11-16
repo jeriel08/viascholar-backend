@@ -40,8 +40,8 @@ export class SettingsController {
   }
 
   @Patch()
-  @Roles(Role.ADMIN, Role.GRANTOR)
-  @ApiOperation({ summary: 'Update global settings (Admin & Grantor)' })
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @ApiOperation({ summary: 'Update global settings (Admin, Grantor & Coordinator)' })
   updateSettings(@Request() req, @Body() dto: UpdateSettingsDto) {
     return this.settingsService.updateSettings(req.user.user_id, dto);
   }

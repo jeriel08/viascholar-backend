@@ -208,10 +208,11 @@ describe('SettingsController', () => {
     const rolesFor = (handler: (...args: any[]) => unknown) =>
       Reflect.getMetadata(ROLES_KEY, handler) as Role[] | undefined;
 
-    it('restricts updateSettings to admins and grantors and allows coordinators on updateAcademicTermSettings', () => {
+    it('allows admins, grantors, and coordinators on updateSettings and updateAcademicTermSettings', () => {
       expect(rolesFor(handlerFor('updateSettings'))).toEqual([
         Role.ADMIN,
         Role.GRANTOR,
+        Role.COORDINATOR,
       ]);
       expect(rolesFor(handlerFor('updateAcademicTermSettings'))).toEqual([
         Role.ADMIN,
