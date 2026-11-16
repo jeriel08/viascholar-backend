@@ -209,17 +209,19 @@ export class EnrollmentOcrService {
     const net_balance_due =
       this.sanitizeAmount(raw.net_balance_due) ?? totalAssessment;
 
-    const hasFeeBreakdown = [
-      tuition_fee,
-      lab_fees,
-      misc_fees,
-      other_fees,
-      net_balance_due,
-    ].some((amt) => amt != null && amt > 0);
+    const hasItemizedBreakdown =
+      raw.has_itemized_breakdown !== false &&
+      [tuition_fee, lab_fees, misc_fees, other_fees].some(
+        (amt) => amt != null && amt > 0,
+      );
+
+    const hasFeeBreakdown =
+      hasItemizedBreakdown || (net_balance_due != null && net_balance_due > 0);
 
     return {
       totalAssessment,
       hasFeeBreakdown,
+      hasItemizedBreakdown,
       tuition_fee,
       lab_fees,
       misc_fees,
@@ -362,6 +364,12 @@ export class EnrollmentOcrService {
     if (billing.totalAssessment <= 0 && !billing.hasFeeBreakdown) {
       throw new BadRequestException(
         'No tuition assessment balance or fee charges were detected in the uploaded file. Please upload an official Statement of Account (SOA), Tuition Fee Assessment, or Student Ledger.',
+      );
+    }
+
+    if (!billing.hasItemizedBreakdown) {
+      throw new BadRequestException(
+        'The uploaded Assessment / Statement of Account does not show an itemized fee breakdown (e.g., Tuition Fee, Miscellaneous Fees, Laboratory Fees, or Other Fees). Please upload your official Assessment Form or Statement of Account with itemized charges rather than a summary screenshot.',
       );
     }
 

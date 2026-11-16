@@ -232,6 +232,70 @@ export class AnalyticsService {
   );
 }
 
+  private isUnverifiedDocStatus(status?: string | null): boolean {
+    if (!status) return false;
+    return [
+      'PENDING',
+      'PASSED_PRECHECK',
+      'NEEDS_REUPLOAD',
+      'REJECTED',
+    ].includes(status.toUpperCase());
+  }
+
+  /**
+   * Analytics must strictly ignore scholar drafts, rejected/unsubmitted
+   * enrollments, or enrollments backed only by unverified (e.g. PASSED_PRECHECK)
+   * assessment/COR documents.
+   */
+  private isOfficialEnrollmentForAnalytics(enrollment: {
+    status?: string | null;
+    cor_document?: { status?: string | null } | null;
+    soa_document?: { status?: string | null } | null;
+  }): boolean {
+    const status = (enrollment.status || '').toUpperCase().trim();
+    if (
+      ['DRAFT', 'REJECTED', 'CHANGES_REQUESTED', 'PENDING_REVIEW'].includes(
+        status,
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      enrollment.soa_document?.status &&
+      this.isUnverifiedDocStatus(enrollment.soa_document.status) &&
+      !['APPROVED', 'COMPLETED'].includes(status)
+    ) {
+      return false;
+    }
+
+    if (
+      enrollment.cor_document?.status &&
+      this.isUnverifiedDocStatus(enrollment.cor_document.status) &&
+      !['APPROVED', 'COMPLETED'].includes(status)
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private isAssessmentVerifiedForAnalytics(enrollment: {
+    status?: string | null;
+    soa_document?: { status?: string | null } | null;
+  }): boolean {
+    if (!this.isOfficialEnrollmentForAnalytics(enrollment)) {
+      return false;
+    }
+    if (
+      enrollment.soa_document?.status &&
+      this.isUnverifiedDocStatus(enrollment.soa_document.status)
+    ) {
+      return false;
+    }
+    return true;
+  }
+
   /**
    * Main descriptive analytics endpoint for Grantor & Coordinator dashboards.
    * Computes Financial Aspect (Disbursed vs Undisbursed %, Semester Imbursement Summary)
@@ -268,12 +332,17 @@ export class AnalyticsService {
                     select: {
                       document_type: true,
                       label: true,
+                      status: true,
                     },
                   },
                 },
                 orderBy: { submitted_at: 'desc' },
               },
               enrollments: {
+                include: {
+                  cor_document: { select: { status: true } },
+                  soa_document: { select: { status: true } },
+                },
                 orderBy: { created_at: 'desc' },
               },
               disbursements: {
@@ -291,11 +360,23 @@ export class AnalyticsService {
             orderBy: { profile_id: 'desc' },
           }),
           this.prisma.termEnrollment.findMany({
+            where: {
+              status: {
+                notIn: [
+                  'DRAFT',
+                  'REJECTED',
+                  'CHANGES_REQUESTED',
+                  'PENDING_REVIEW',
+                ],
+              },
+            },
             select: {
               academic_year: true,
               semester: true,
               total_assessment: true,
               status: true,
+              cor_document: { select: { status: true } },
+              soa_document: { select: { status: true } },
             },
           }),
           this.prisma.disbursement.findMany({
@@ -340,7 +421,9 @@ export class AnalyticsService {
         };
 
         for (const e of allEnrollments) {
-          registerTerm(e.academic_year, e.semester);
+          if (this.isOfficialEnrollmentForAnalytics(e)) {
+            registerTerm(e.academic_year, e.semester);
+          }
         }
         for (const d of allDisbursements) {
           registerTerm(d.academic_year, d.semester);
@@ -523,16 +606,14 @@ export class AnalyticsService {
           const yearLevel = scholar.current_year_level || 1;
           const isGraduating = yearLevel >= 4;
 
-          // Term Enrollments matching filter
-          const matchingEnrollments = scholar.enrollments.filter((e) =>
-            isMatchTerm(e.academic_year, e.semester),
+          // Term Enrollments matching filter (strictly excluding drafts, pending prechecks, and rejected rows)
+          const matchingEnrollments = scholar.enrollments.filter(
+            (e) =>
+              this.isOfficialEnrollmentForAnalytics(e) &&
+              isMatchTerm(e.academic_year, e.semester),
           );
           const activeEnrollment = matchingEnrollments[0] || null;
-          const hasEnrolled = Boolean(
-            activeEnrollment &&
-              activeEnrollment.status !== 'REJECTED' &&
-              activeEnrollment.status !== 'DRAFT',
-          );
+          const hasEnrolled = Boolean(activeEnrollment);
 
           // Disbursements matching filter
           const matchingDisbursements = scholar.disbursements.filter((d) =>
@@ -557,14 +638,19 @@ export class AnalyticsService {
                 ? 'PENDING'
                 : 'NOT_APPLIED';
 
-          // Assessment and amounts
-          const assessmentAmount = activeEnrollment
-            ? Number(activeEnrollment.total_assessment || 0)
-            : releasedDisbursement
-              ? Number(releasedDisbursement.amount || 0)
-              : pendingDisbursement
-                ? Number(pendingDisbursement.amount || 0)
-                : 0;
+          // Assessment and amounts (never count precheck/unverified SOA drafts)
+          const hasVerifiedAssessment = Boolean(
+            activeEnrollment &&
+              this.isAssessmentVerifiedForAnalytics(activeEnrollment),
+          );
+          const assessmentAmount =
+            hasVerifiedAssessment && activeEnrollment
+              ? Number(activeEnrollment.total_assessment || 0)
+              : releasedDisbursement
+                ? Number(releasedDisbursement.amount || 0)
+                : pendingDisbursement
+                  ? Number(pendingDisbursement.amount || 0)
+                  : 0;
 
           const disbursedAmount = releasedDisbursement
             ? Number(releasedDisbursement.amount || 0)
@@ -580,9 +666,11 @@ export class AnalyticsService {
           totalDisbursedAmount += disbursedAmount;
           totalPendingAmount += scholarPendingAmount;
 
-          // Grade Reports matching filter (strictly excluding application-phase Form 9 / Form 138)
+          // Grade Reports matching filter (strictly excluding application-phase Form 9 / Form 138 and unverified/precheck docs)
           const validScholarReports = scholar.grade_reports.filter(
-            (g) => !this.isForm9OrApplicationGrade(g),
+            (g) =>
+              !this.isForm9OrApplicationGrade(g) &&
+              !this.isUnverifiedDocStatus(g.document?.status),
           );
           const matchingGrades = validScholarReports.filter((g) =>
             isMatchTerm(g.academic_year, g.semester),

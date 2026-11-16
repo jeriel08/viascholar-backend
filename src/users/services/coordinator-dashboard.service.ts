@@ -102,8 +102,9 @@ export class CoordinatorDashboardService {
             orderBy: { profile_id: 'desc' },
           }),
 
-          // 3. Term Enrollments Queue
+          // 3. Term Enrollments Queue (exclude drafts)
           this.prisma.termEnrollment.findMany({
+            where: { status: { not: 'DRAFT' } },
             orderBy: { created_at: 'desc' },
             take: 6,
             include: {

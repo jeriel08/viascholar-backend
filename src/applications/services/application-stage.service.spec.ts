@@ -105,7 +105,7 @@ describe('ApplicationStageService', () => {
       status: 'UNDER_REVIEW',
     });
     prisma.scholarDocument.findMany.mockResolvedValue([
-      { document_id: 1, status: 'STUDENT_CONFIRMED' },
+      { document_id: 1, status: 'VERIFIED' },
     ]);
     prisma.scholarProfile.findUnique.mockResolvedValue({
       profile_id: 11,
@@ -239,7 +239,48 @@ describe('ApplicationStageService', () => {
       );
     });
 
-    it('allows moving to the interview stage once documents are confirmed', async () => {
+    it('blocks moving to interview when documents are only student-confirmed and not verified by staff', async () => {
+      prisma.scholarDocument.findMany.mockResolvedValue([
+        { document_id: 1, status: 'STUDENT_CONFIRMED' },
+      ]);
+
+      await expect(
+        service.updateStage(
+          2,
+          42,
+          makeStageDto({ stage: 'Interview Scheduled' }),
+          'COORDINATOR',
+        ),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'Cannot pass applicant to interview: Uploaded academic document(s) (Form 9 / TOR) must be verified first.',
+        ),
+      );
+    });
+
+    it('blocks grantor approval when documents are not verified yet', async () => {
+      prisma.application.findUnique.mockResolvedValue(
+        makeApplication({ interview_at: new Date('2020-01-01T00:00:00.000Z') }),
+      );
+      prisma.scholarDocument.findMany.mockResolvedValue([
+        { document_id: 1, status: 'STUDENT_CONFIRMED' },
+      ]);
+
+      await expect(
+        service.updateStage(
+          2,
+          42,
+          makeStageDto({ status: ApplicationStatus.APPROVED, stage: 'Approved' }),
+          'GRANTOR',
+        ),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'Cannot endorse or approve applicant: Uploaded academic document(s) (Form 9 / TOR) must be verified first.',
+        ),
+      );
+    });
+
+    it('allows moving to the interview stage once documents are verified', async () => {
       await service.updateStage(
         2,
         42,

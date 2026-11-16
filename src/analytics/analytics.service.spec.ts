@@ -546,6 +546,73 @@ describe('AnalyticsService', () => {
     expect(result.globalThresholdPercent).toBe(90);
   });
 
+  it('ignores draft, pending, and precheck-only enrollments in filter options and assessment totals', async () => {
+    prisma.termEnrollment.findMany.mockResolvedValue([
+      {
+        academic_year: '2025-2026',
+        semester: '1st Semester',
+        total_assessment: '50000',
+        status: 'APPROVED',
+        cor_document: { status: 'VERIFIED' },
+        soa_document: { status: 'VERIFIED' },
+      },
+      {
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+        total_assessment: '25000',
+        status: 'DRAFT',
+        cor_document: null,
+        soa_document: { status: 'PASSED_PRECHECK' },
+      },
+    ]);
+    prisma.disbursement.findMany.mockResolvedValue([]);
+    prisma.scholarProfile.findMany.mockResolvedValue([
+      makeScholar({
+        profile_id: 1,
+        enrollments: [
+          makeEnrollment({
+            academic_year: '2025-2026',
+            semester: '1st Semester',
+            total_assessment: '50000',
+            status: 'APPROVED',
+            cor_document: { status: 'VERIFIED' },
+            soa_document: { status: 'VERIFIED' },
+          }),
+        ],
+        disbursements: [],
+      }),
+      makeScholar({
+        profile_id: 2,
+        enrollments: [
+          makeEnrollment({
+            academic_year: '2025-2026',
+            semester: '1st Semester',
+            total_assessment: '18500',
+            status: 'DRAFT',
+            cor_document: null,
+            soa_document: { status: 'PASSED_PRECHECK' },
+          }),
+          makeEnrollment({
+            academic_year: '2025-2026',
+            semester: '1st Semester',
+            total_assessment: '12000',
+            status: 'PENDING_REVIEW',
+            cor_document: { status: 'PASSED_PRECHECK' },
+            soa_document: { status: 'PASSED_PRECHECK' },
+          }),
+        ],
+        disbursements: [],
+      }),
+    ]);
+
+    const result = await loadAnalytics();
+
+    expect(result.filterOptions.availableAcademicYears).toEqual(['2025-2026']);
+    expect(result.financialAspect.totalSemesterAssessment).toBe(50000);
+    expect(result.scholars[1].enrollmentStatus).toBe('NOT_ENROLLED');
+    expect(result.scholars[1].assessmentAmount).toBe(0);
+  });
+
   it('marks enrollment invalid for draft or rejected enrollment records', async () => {
     prisma.scholarProfile.findMany.mockResolvedValue([
       makeScholar({

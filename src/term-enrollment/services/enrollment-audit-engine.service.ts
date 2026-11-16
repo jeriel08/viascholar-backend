@@ -6,6 +6,11 @@ import {
   SubjectAuditDetail,
 } from '../dto/enrollment-response.dto.js';
 import { EnrolledSubjectItemDto } from '../dto/submit-enrollment.dto.js';
+import {
+  academicYearsMatchForTerm,
+  normalizeAcademicYear,
+  normalizeSemester,
+} from '../../documents/utils/academic-term.util.js';
 
 @Injectable()
 export class EnrollmentAuditEngineService {
@@ -170,6 +175,10 @@ export class EnrollmentAuditEngineService {
       corStudentName?: string;
       soaStudentId?: string;
       soaStudentName?: string;
+      corAcademicYear?: string;
+      soaAcademicYear?: string;
+      corSemester?: string;
+      soaSemester?: string;
       academicYear?: string;
       semester?: string;
     },
@@ -302,7 +311,11 @@ export class EnrollmentAuditEngineService {
       meta?.corStudentId ||
       meta?.soaStudentId ||
       meta?.corStudentName ||
-      meta?.soaStudentName
+      meta?.soaStudentName ||
+      meta?.corAcademicYear ||
+      meta?.soaAcademicYear ||
+      meta?.corSemester ||
+      meta?.soaSemester
     ) {
       const scholar = await this.prisma.scholarProfile.findUnique({
         where: { profile_id: scholarProfileId },
@@ -330,10 +343,6 @@ export class EnrollmentAuditEngineService {
         score -= 30;
       }
 
-      const profileName =
-        `${scholar?.first_name || ''} ${scholar?.last_name || ''}`
-          .trim()
-          .toLowerCase();
       const corName = (meta.corStudentName || '').trim().toLowerCase();
       const soaName = (meta.soaStudentName || '').trim().toLowerCase();
 
@@ -349,10 +358,52 @@ export class EnrollmentAuditEngineService {
         score -= 30;
       }
 
+      const corAyRaw = meta.corAcademicYear?.trim();
+      const soaAyRaw = meta.soaAcademicYear?.trim();
+      const normCorAy = corAyRaw ? normalizeAcademicYear(corAyRaw) || corAyRaw : '';
+      const normSoaAy = soaAyRaw ? normalizeAcademicYear(soaAyRaw) || soaAyRaw : '';
+
+      let academicYearMatch = true;
+      if (
+        normCorAy &&
+        normSoaAy &&
+        !academicYearsMatchForTerm(
+          normCorAy,
+          normSoaAy,
+          meta.corSemester || meta.soaSemester || meta.semester || '',
+        )
+      ) {
+        academicYearMatch = false;
+        mismatches.push(
+          `COR (${normCorAy}) and Assessment (${normSoaAy}) School Year mismatch`,
+        );
+        score -= 40;
+      }
+
+      const corSemRaw = meta.corSemester?.trim();
+      const soaSemRaw = meta.soaSemester?.trim();
+      const normCorSem = corSemRaw ? normalizeSemester(corSemRaw) : '';
+      const normSoaSem = soaSemRaw ? normalizeSemester(soaSemRaw) : '';
+
+      let semesterMatch = true;
+      if (
+        normCorSem &&
+        normSoaSem &&
+        normCorSem.toLowerCase() !== normSoaSem.toLowerCase()
+      ) {
+        semesterMatch = false;
+        mismatches.push(
+          `COR (${normCorSem}) and Assessment (${normSoaSem}) Semester mismatch`,
+        );
+        score -= 20;
+      }
+
       crossDocReconciliation = {
         is_match: mismatches.length === 0,
         student_id_match: idMatch,
         student_name_match: nameMatch,
+        ...(corAyRaw || soaAyRaw ? { academic_year_match: academicYearMatch } : {}),
+        ...(corSemRaw || soaSemRaw ? { semester_match: semesterMatch } : {}),
         confidence_score: Math.max(0, score),
         mismatches,
       };

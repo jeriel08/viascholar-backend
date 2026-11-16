@@ -1,4 +1,4 @@
-﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -139,7 +139,7 @@ describe('ApplicationInterviewsService', () => {
       user: { user_id: 7, email: 'juan@example.com' },
     });
     prisma.scholarDocument.findMany.mockResolvedValue([
-      { document_id: 1, status: 'STUDENT_CONFIRMED' },
+      { document_id: 1, status: 'VERIFIED' },
     ]);
     prisma.application.update.mockResolvedValue({
       application_id: 42,
@@ -221,6 +221,20 @@ describe('ApplicationInterviewsService', () => {
       ).rejects.toThrow(
         new BadRequestException(
           'Cannot schedule interview because submitted document(s) have not been confirmed by the applicant yet.',
+        ),
+      );
+    });
+
+    it('requires the documents to be verified by staff before scheduling interview', async () => {
+      prisma.scholarDocument.findMany.mockResolvedValue([
+        { document_id: 1, status: 'STUDENT_CONFIRMED' },
+      ]);
+
+      await expect(
+        service.scheduleInterview(2, 42, scheduleDto),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'Cannot schedule interview: Uploaded academic document(s) (Form 9 / TOR) must be verified first.',
         ),
       );
     });

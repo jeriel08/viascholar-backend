@@ -126,6 +126,11 @@ export const ENROLLMENT_SOA_DATA_SCHEMA = {
       description:
         'True if this document contains tuition fees, fee breakdown, or assessment of tuition balance due.',
     },
+    has_itemized_breakdown: {
+      type: 'boolean',
+      description:
+        'True ONLY if the document displays an itemized breakdown of fees (e.g., Tuition Fee, Miscellaneous Fees, Laboratory Fees, Other Fees, or itemized charge lines). Set to FALSE if it is only a portal summary screenshot showing a total balance without itemized fee details.',
+    },
     student_name: {
       type: 'string',
       description:

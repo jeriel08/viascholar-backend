@@ -864,10 +864,11 @@ CRITICAL DOCUMENT TYPE CLASSIFICATION:
    - 'CONSOLIDATED_ENROLLMENT': Contains both an enrolled class schedule and a financial tuition fee assessment on the same document.
    - 'OTHER': Unrelated document (ID card, grade card, receipt, etc.).
 2. Set is_assessment_form to true ONLY if the document explicitly contains tuition fees, assessment breakdown, or balance due.
-3. Set is_class_schedule to true if the document is primarily a class schedule.
-4. If the document is purely a class schedule with no tuition fees or balance due, classify it as 'CERTIFICATE_OF_REGISTRATION' and set is_assessment_form to false.
-5. FAST WRONG DOCUMENT CLASSIFICATION: If the document is NOT a Statement of Account, Tuition Fee Assessment, or Student Ledger (e.g. it is an ID card, grade report, receipt, or unrelated document), immediately classify detected_document_type as 'OTHER' or 'CERTIFICATE_OF_REGISTRATION' and return total_assessment as 0. Do NOT spend extra time searching or hallucinating fees if none are present.
-6. ACADEMIC YEAR & SUMMER TERM EXTRACTION:
+3. Set has_itemized_breakdown to true ONLY if the document explicitly lists itemized fee categories or line items (e.g., Tuition Fee, Miscellaneous Fees, Laboratory Fees, Other Fees). Set has_itemized_breakdown to false if the image/file is just a student portal summary screenshot showing only a single total balance without fee breakdowns.
+4. Set is_class_schedule to true if the document is primarily a class schedule.
+5. If the document is purely a class schedule with no tuition fees or balance due, classify it as 'CERTIFICATE_OF_REGISTRATION' and set is_assessment_form to false.
+6. FAST WRONG DOCUMENT CLASSIFICATION: If the document is NOT a Statement of Account, Tuition Fee Assessment, or Student Ledger (e.g. it is an ID card, grade report, receipt, or unrelated document), immediately classify detected_document_type as 'OTHER' or 'CERTIFICATE_OF_REGISTRATION' and return total_assessment as 0. Do NOT spend extra time searching or hallucinating fees if none are present.
+7. ACADEMIC YEAR & SUMMER TERM EXTRACTION:
    - Check the term header (e.g., 'Summer 2024', 'Second Semester 2023-24', 'First Semester 2024-25', 'Summer 2026').
    - When the term is 'Summer 2024' (or any single-year Summer/Midyear term), extract academic_year as '2024' and semester as 'Summer'.
    - When the term has a 2-digit ending year (e.g. '2023-24' or '2024-25'), expand academic_year to '2023-2024' or '2024-2025'.

@@ -146,6 +146,49 @@ export class ScholarEnrollmentService {
     return Number.isNaN(parsed.getTime()) ? null : parsed;
   }
 
+  private async findDocExtractedData(
+    documentId?: number | null,
+  ): Promise<Record<string, any> | null> {
+    if (
+      !documentId ||
+      typeof (this.prisma as any).scholarDocument?.findUnique !== 'function'
+    ) {
+      return null;
+    }
+    const doc = await this.prisma.scholarDocument.findUnique({
+      where: { document_id: documentId },
+    });
+    const raw = (doc as any)?.extracted_data;
+    return raw && typeof raw === 'object' ? (raw as Record<string, any>) : null;
+  }
+
+  private buildCrossDocMeta(
+    corData: Record<string, any> | null | undefined,
+    soaData: Record<string, any> | null | undefined,
+    baseMeta: { academicYear: string; semester: string },
+  ) {
+    const meta: Record<string, any> = {
+      academicYear: baseMeta.academicYear,
+      semester: baseMeta.semester,
+    };
+
+    if (corData) {
+      if (corData.student_number) meta.corStudentId = String(corData.student_number);
+      if (corData.student_name) meta.corStudentName = String(corData.student_name);
+      if (corData.academic_year) meta.corAcademicYear = String(corData.academic_year);
+      if (corData.semester) meta.corSemester = String(corData.semester);
+    }
+
+    if (soaData) {
+      if (soaData.student_number) meta.soaStudentId = String(soaData.student_number);
+      if (soaData.student_name) meta.soaStudentName = String(soaData.student_name);
+      if (soaData.academic_year) meta.soaAcademicYear = String(soaData.academic_year);
+      if (soaData.semester) meta.soaSemester = String(soaData.semester);
+    }
+
+    return meta;
+  }
+
   private async getScholarProfile(userId: number) {
     const scholar = await this.prisma.scholarProfile.findUnique({
       where: { user_id: userId },
@@ -684,15 +727,49 @@ export class ScholarEnrollmentService {
       },
     });
 
+    const peerSoaId =
+      carriedSoaDraft?.soa_document_id &&
+      carriedSoaDraft.soa_document_id !== existingDraft?.cor_document_id
+        ? carriedSoaDraft.soa_document_id
+        : existingDraft?.soa_document_id &&
+            existingDraft.soa_document_id !== existingDraft.cor_document_id
+          ? existingDraft.soa_document_id
+          : null;
+    const peerSoaData = peerSoaId
+      ? await this.findDocExtractedData(peerSoaId)
+      : null;
+
+    const corAuditMeta: Record<string, any> = {
+      corStudentId: extractedData.student_number,
+      corStudentName: extractedData.student_name,
+      academicYear: ay,
+      semester: sem,
+    };
+    if (peerSoaData) {
+      if (extractedData.academic_year) {
+        corAuditMeta.corAcademicYear = extractedData.academic_year;
+      }
+      if (extractedData.semester) {
+        corAuditMeta.corSemester = extractedData.semester;
+      }
+      if (peerSoaData.student_number) {
+        corAuditMeta.soaStudentId = String(peerSoaData.student_number);
+      }
+      if (peerSoaData.student_name) {
+        corAuditMeta.soaStudentName = String(peerSoaData.student_name);
+      }
+      if (peerSoaData.academic_year) {
+        corAuditMeta.soaAcademicYear = String(peerSoaData.academic_year);
+      }
+      if (peerSoaData.semester) {
+        corAuditMeta.soaSemester = String(peerSoaData.semester);
+      }
+    }
+
     const auditResult = await this.auditEngineService.runAudit(
       scholar.profile_id,
       extractedData.subjects || [],
-      {
-        corStudentId: extractedData.student_number,
-        corStudentName: extractedData.student_name,
-        academicYear: ay,
-        semester: sem,
-      },
+      corAuditMeta,
     );
 
     const carriedSoaFields = carriedSoaDraft
@@ -786,11 +863,7 @@ export class ScholarEnrollmentService {
     const activeDrafts = Array.isArray(allDrafts) ? allDrafts : [];
     const corDonorDraft = activeDrafts.find((d) => d.cor_document_id != null);
 
-    if (
-      corDonorDraft &&
-      (!extractedData.academic_year ||
-        (ay === '2026-2027' && corDonorDraft.academic_year !== '2026-2027'))
-    ) {
+    if (corDonorDraft) {
       ay = corDonorDraft.academic_year;
       sem = corDonorDraft.semester;
       yr = corDonorDraft.year_level || yr;
@@ -888,15 +961,51 @@ export class ScholarEnrollmentService {
       (carriedCorDraft?.enrolled_subjects as any) ||
       [];
 
+    const peerCorId =
+      carriedCorDraft?.cor_document_id ??
+      (existingDraft?.cor_document_id &&
+      existingDraft.cor_document_id !== existingDraft.soa_document_id
+        ? existingDraft.cor_document_id
+        : null) ??
+      (existingEnrollment?.cor_document_id &&
+      existingEnrollment.cor_document_id !== existingEnrollment.soa_document_id
+        ? existingEnrollment.cor_document_id
+        : null);
+    const peerCorData = peerCorId
+      ? await this.findDocExtractedData(peerCorId)
+      : null;
+
+    const soaAuditMeta: Record<string, any> = {
+      soaStudentId: extractedData.student_number,
+      soaStudentName: extractedData.student_name,
+      academicYear: ay,
+      semester: sem,
+    };
+    if (peerCorData) {
+      if (extractedData.academic_year) {
+        soaAuditMeta.soaAcademicYear = extractedData.academic_year;
+      }
+      if (extractedData.semester) {
+        soaAuditMeta.soaSemester = extractedData.semester;
+      }
+      if (peerCorData.student_number) {
+        soaAuditMeta.corStudentId = String(peerCorData.student_number);
+      }
+      if (peerCorData.student_name) {
+        soaAuditMeta.corStudentName = String(peerCorData.student_name);
+      }
+      if (peerCorData.academic_year) {
+        soaAuditMeta.corAcademicYear = String(peerCorData.academic_year);
+      }
+      if (peerCorData.semester) {
+        soaAuditMeta.corSemester = String(peerCorData.semester);
+      }
+    }
+
     const auditResult = await this.auditEngineService.runAudit(
       scholar.profile_id,
       subjectsToAudit,
-      {
-        soaStudentId: extractedData.student_number,
-        soaStudentName: extractedData.student_name,
-        academicYear: ay,
-        semester: sem,
-      },
+      soaAuditMeta,
     );
 
     const carriedCorFields = carriedCorDraft
@@ -1170,6 +1279,29 @@ export class ScholarEnrollmentService {
     return upserted;
   }
 
+  private async buildSubmitAuditMeta(dto: SubmitEnrollmentDto) {
+    const base = { academicYear: dto.academic_year, semester: dto.semester };
+    if (
+      dto.is_consolidated ||
+      !dto.cor_document_id ||
+      !dto.soa_document_id ||
+      dto.cor_document_id === dto.soa_document_id
+    ) {
+      return base;
+    }
+
+    const [corData, soaData] = await Promise.all([
+      this.findDocExtractedData(dto.cor_document_id),
+      this.findDocExtractedData(dto.soa_document_id),
+    ]);
+
+    if (!corData && !soaData) {
+      return base;
+    }
+
+    return this.buildCrossDocMeta(corData, soaData, base);
+  }
+
   // 5. Save or update draft enrollment without submitting
   async saveDraft(userId: number, dto: SubmitEnrollmentDto) {
     const scholar = await this.getScholarProfile(userId);
@@ -1177,10 +1309,11 @@ export class ScholarEnrollmentService {
     if (lock.is_locked) {
       throw new BadRequestException(lock.message);
     }
+    const auditMeta = await this.buildSubmitAuditMeta(dto);
     const auditResult = await this.auditEngineService.runAudit(
       scholar.profile_id,
       dto.enrolled_subjects,
-      { academicYear: dto.academic_year, semester: dto.semester },
+      auditMeta,
     );
     const draft = await this.upsertEnrollment(
       scholar.profile_id,
@@ -1356,13 +1489,11 @@ export class ScholarEnrollmentService {
   // 7. Pre-audit calculation before final submission
   async runPreAudit(userId: number, dto: SubmitEnrollmentDto) {
     const scholar = await this.getScholarProfile(userId);
+    const auditMeta = await this.buildSubmitAuditMeta(dto);
     return this.auditEngineService.runAudit(
       scholar.profile_id,
       dto.enrolled_subjects,
-      {
-        academicYear: dto.academic_year,
-        semester: dto.semester,
-      },
+      auditMeta,
     );
   }
 
@@ -1373,10 +1504,11 @@ export class ScholarEnrollmentService {
     if (lock.is_locked) {
       throw new BadRequestException(lock.message);
     }
+    const auditMeta = await this.buildSubmitAuditMeta(dto);
     const auditResult = await this.auditEngineService.runAudit(
       scholar.profile_id,
       dto.enrolled_subjects,
-      { academicYear: dto.academic_year, semester: dto.semester },
+      auditMeta,
     );
     const enrollment = await this.upsertEnrollment(
       scholar.profile_id,

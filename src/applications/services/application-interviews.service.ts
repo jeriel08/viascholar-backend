@@ -71,12 +71,16 @@ export class ApplicationInterviewsService {
         'Cannot schedule interview because the applicant has not submitted any documents.',
       );
     }
-    const hasConfirmed = docs.some(
-      (d) => d.status === 'STUDENT_CONFIRMED' || d.status === 'VERIFIED',
-    );
-    if (!hasConfirmed) {
+    const hasVerified = docs.some((d) => d.status === 'VERIFIED');
+    if (!hasVerified) {
+      const hasConfirmed = docs.some((d) => d.status === 'STUDENT_CONFIRMED');
+      if (!hasConfirmed) {
+        throw new BadRequestException(
+          'Cannot schedule interview because submitted document(s) have not been confirmed by the applicant yet.',
+        );
+      }
       throw new BadRequestException(
-        'Cannot schedule interview because submitted document(s) have not been confirmed by the applicant yet.',
+        'Cannot schedule interview: Uploaded academic document(s) (Form 9 / TOR) must be verified first.',
       );
     }
 

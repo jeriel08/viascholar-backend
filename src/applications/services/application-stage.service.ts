@@ -73,24 +73,42 @@ export class ApplicationStageService {
       throw new NotFoundException(`Application ID ${applicationId} not found.`);
     }
 
-    // Check if moving to Interview without confirmed submitted documents
     const isMovingToInterview = dto.stage.toLowerCase().includes('interview');
-    if (isMovingToInterview) {
+    const isCoordinatorAccepting =
+      callerRole === 'COORDINATOR' &&
+      (dto.stage.toLowerCase().includes('accept') ||
+        dto.stage.toLowerCase().includes('grantor') ||
+        dto.stage.toLowerCase().includes('recommend') ||
+        dto.stage.toLowerCase().includes('passed'));
+    const isGrantorApproving = dto.status === 'APPROVED';
+
+    // Require verified academic document(s) before moving to Interview, Endorsing, or Approving
+    if (isMovingToInterview || isCoordinatorAccepting || isGrantorApproving) {
       const docs = await this.prisma.scholarDocument.findMany({
         where: { scholar_profile_id: application.scholar_profile_id },
         select: { document_id: true, status: true },
       });
       if (docs.length === 0) {
         throw new BadRequestException(
-          'Cannot pass applicant to interview because no documents have been submitted.',
+          isMovingToInterview
+            ? 'Cannot pass applicant to interview because no documents have been submitted.'
+            : 'Cannot endorse or approve applicant because no documents have been submitted.',
         );
       }
-      const hasConfirmed = docs.some(
-        (d) => d.status === 'STUDENT_CONFIRMED' || d.status === 'VERIFIED',
-      );
-      if (!hasConfirmed) {
+      const hasVerified = docs.some((d) => d.status === 'VERIFIED');
+      if (!hasVerified) {
+        const hasConfirmed = docs.some((d) => d.status === 'STUDENT_CONFIRMED');
+        if (!hasConfirmed) {
+          throw new BadRequestException(
+            isMovingToInterview
+              ? 'Cannot pass applicant to interview: Submitted document(s) have not been confirmed by the applicant yet.'
+              : 'Cannot endorse or approve applicant: Submitted document(s) have not been confirmed by the applicant yet.',
+          );
+        }
         throw new BadRequestException(
-          'Cannot pass applicant to interview: Submitted document(s) have not been confirmed by the applicant yet.',
+          isMovingToInterview
+            ? 'Cannot pass applicant to interview: Uploaded academic document(s) (Form 9 / TOR) must be verified first.'
+            : 'Cannot endorse or approve applicant: Uploaded academic document(s) (Form 9 / TOR) must be verified first.',
         );
       }
     }
@@ -100,15 +118,6 @@ export class ApplicationStageService {
       application.interview_at &&
       new Date(application.interview_at) <= new Date(),
     );
-
-    const isCoordinatorAccepting =
-      callerRole === 'COORDINATOR' &&
-      (dto.stage.toLowerCase().includes('accept') ||
-        dto.stage.toLowerCase().includes('grantor') ||
-        dto.stage.toLowerCase().includes('recommend') ||
-        dto.stage.toLowerCase().includes('passed'));
-
-    const isGrantorApproving = dto.status === 'APPROVED';
 
     if (
       (isCoordinatorAccepting || isGrantorApproving) &&

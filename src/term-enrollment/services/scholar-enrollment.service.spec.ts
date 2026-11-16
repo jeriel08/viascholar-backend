@@ -840,6 +840,61 @@ describe('ScholarEnrollmentService', () => {
       expect(upsertArgs.create.assessment_date).toBeNull();
     });
 
+    it('passes COR and SOA academic years to runAudit when COR already exists in draft', async () => {
+      ocr.parseSoa.mockResolvedValue({
+        ...extractedSoa,
+        academic_year: '2024-2025',
+        semester: '1st Semester',
+      });
+      prisma.termEnrollment.findMany.mockResolvedValue([
+        {
+          enrollment_id: 1,
+          academic_year: '2025-2026',
+          semester: '1st Semester',
+          year_level: 2,
+          cor_document_id: 77,
+          enrolled_subjects: extractedCor.subjects,
+        },
+      ]);
+      prisma.termEnrollment.findFirst
+        .mockResolvedValueOnce({
+          enrollment_id: 1,
+          cor_document_id: 77,
+          soa_document_id: null,
+        })
+        .mockResolvedValueOnce({
+          enrollment_id: 1,
+          cor_document_id: 77,
+          enrolled_subjects: extractedCor.subjects,
+        });
+      prisma.scholarDocument.findUnique.mockResolvedValue({
+        document_id: 77,
+        extracted_data: {
+          academic_year: '2025-2026',
+          semester: '1st Semester',
+          student_number: '2020-001',
+          student_name: 'Ana Cruz',
+        },
+      });
+      prisma.termEnrollment.upsert.mockResolvedValue({
+        enrollment_id: 1,
+        status: 'DRAFT',
+      });
+
+      await service.uploadAndParseSoa(3, makeFile());
+
+      expect(auditEngine.runAudit).toHaveBeenCalledWith(
+        10,
+        extractedCor.subjects,
+        objectMatching({
+          corAcademicYear: '2025-2026',
+          soaAcademicYear: '2024-2025',
+          corSemester: '1st Semester',
+          soaSemester: '1st Semester',
+        }),
+      );
+    });
+
     it('rejects wrong SOA documents before uploading to Cloudinary', async () => {
       ocr.parseSoa.mockRejectedValue(
         new BadRequestException('Wrong SOA document uploaded.'),

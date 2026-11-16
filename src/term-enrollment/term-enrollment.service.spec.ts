@@ -473,6 +473,21 @@ describe('TermEnrollment Services', () => {
       expect(result.net_balance_due).toBe(0);
     });
 
+    it('rejects a portal screenshot with only a total balance and no itemized fee breakdown', async () => {
+      mockLlamaExtract.extractEnrollmentSoaData.mockResolvedValue({
+        detected_document_type: 'STATEMENT_OF_ACCOUNT',
+        is_assessment_form: true,
+        has_itemized_breakdown: false,
+        total_assessment: 15000,
+      });
+
+      await expect(ocrService.parseSoa(ocrInput)).rejects.toThrow(
+        new BadRequestException(
+          'The uploaded Assessment / Statement of Account does not show an itemized fee breakdown (e.g., Tuition Fee, Miscellaneous Fees, Laboratory Fees, or Other Fees). Please upload your official Assessment Form or Statement of Account with itemized charges rather than a summary screenshot.',
+        ),
+      );
+    });
+
     it('rejects non-numeric fee strings like N/A and wraps extractor errors as BadRequestException', async () => {
       mockLlamaExtract.extractEnrollmentSoaData.mockResolvedValueOnce({
         total_assessment: 'N/A',
@@ -1096,6 +1111,46 @@ describe('TermEnrollment Services', () => {
 
       expect(audit.subjects_audit[0].status).toBe('ON_TRACK');
       expect(audit.subjects_audit[0].curriculum_subject_id).toBe(101);
+    });
+
+    it('flags COR and Assessment School Year mismatch in cross-doc reconciliation', async () => {
+      mockPrisma.scholarProspectus.findUnique.mockResolvedValue({
+        prospectus_id: 1,
+        scholar_profile_id: 10,
+        subjects: [
+          {
+            subject_id: 101,
+            subject_code: 'IT 101',
+            descriptive_title: 'Intro',
+            status: 'UNTAKEN',
+            prerequisites: [],
+          },
+        ],
+      });
+      mockPrisma.scholarProfile.findUnique.mockResolvedValue({
+        profile_id: 10,
+        student_number: '2020-001',
+        first_name: 'Ana',
+        last_name: 'Cruz',
+      });
+
+      const audit = await auditEngine.runAudit(
+        10,
+        [enrolled('IT 101', 15, 'Intro')],
+        {
+          corAcademicYear: '2025-2026',
+          soaAcademicYear: '2024-2025',
+          corSemester: '1st Semester',
+          soaSemester: '1st Semester',
+        },
+      );
+
+      expect(audit.all_cleared).toBe(false);
+      expect(audit.cross_doc_reconciliation?.is_match).toBe(false);
+      expect(audit.cross_doc_reconciliation?.academic_year_match).toBe(false);
+      expect(audit.flags).toContain(
+        'RECONCILIATION_FLAG:COR (2025-2026) and Assessment (2024-2025) School Year mismatch',
+      );
     });
 
     it('flags underload only when the credit load is positive and below 12 units', async () => {
