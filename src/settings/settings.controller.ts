@@ -18,6 +18,7 @@ import { SettingsService } from './settings.service.js';
 import { Roles } from '../auth/decorators/roles.decorator.js';
 import { Role } from '../generated/prisma/enums.js';
 import { UpdateSettingsDto } from './dto/update-settings.dto.js';
+import { UpdateAcademicTermDto } from './dto/update-academic-term.dto.js';
 import { CreateSchoolGradingDto } from './dto/create-school-grading.dto.js';
 import { UpdateSchoolGradingDto } from './dto/update-school-grading.dto.js';
 import { CreateAcademicProgramDto } from './dto/create-program.dto.js';
@@ -43,6 +44,31 @@ export class SettingsController {
   @ApiOperation({ summary: 'Update global settings (Admin & Grantor)' })
   updateSettings(@Request() req, @Body() dto: UpdateSettingsDto) {
     return this.settingsService.updateSettings(req.user.user_id, dto);
+  }
+
+  @Get('academic-term')
+  @ApiOperation({
+    summary:
+      'Get resolved active academic year, semester, rollover schedule, and strict term policy toggle',
+  })
+  getAcademicTermStatus() {
+    return this.settingsService.getAcademicTermStatus();
+  }
+
+  @Patch('academic-term')
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @ApiOperation({
+    summary:
+      'Update academic year rollover month, strict term policy toggle, and optional manual term override',
+  })
+  updateAcademicTermSettings(
+    @Request() req,
+    @Body() dto: UpdateAcademicTermDto,
+  ) {
+    return this.settingsService.updateAcademicTermSettings(
+      req.user.user_id,
+      dto,
+    );
   }
 
   @Get('schools')

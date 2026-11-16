@@ -645,7 +645,13 @@ describe('ScholarEnrollmentService', () => {
       );
     });
 
-    it('merges an existing SOA draft with a mismatched academic year when uploading COR', async () => {
+    it('merges an existing SOA draft with a mismatched academic year when uploading COR in multi-year mode', async () => {
+      (prisma as any).systemSetting = {
+        findFirst: vi.fn().mockResolvedValue({
+          ay_rollover_month: 7,
+          strict_active_term_policy: false,
+        }),
+      };
       ocr.parseCor.mockResolvedValue({
         ...extractedCor,
         academic_year: '2024',
@@ -840,7 +846,31 @@ describe('ScholarEnrollmentService', () => {
       expect(upsertArgs.create.assessment_date).toBeNull();
     });
 
+    it('blocks outdated AY documents when strict_active_term_policy is ON', async () => {
+      (prisma as any).systemSetting = {
+        findFirst: vi.fn().mockResolvedValue({
+          ay_rollover_month: 7,
+          strict_active_term_policy: true,
+        }),
+      };
+      ocr.parseCor.mockResolvedValue({
+        ...extractedCor,
+        academic_year: '2024-2025',
+      });
+
+      await expect(service.uploadAndParseCor(3, makeFile())).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(cloudinary.uploadDocument).not.toHaveBeenCalled();
+    });
+
     it('passes COR and SOA academic years to runAudit when COR already exists in draft', async () => {
+      (prisma as any).systemSetting = {
+        findFirst: vi.fn().mockResolvedValue({
+          ay_rollover_month: 7,
+          strict_active_term_policy: false,
+        }),
+      };
       ocr.parseSoa.mockResolvedValue({
         ...extractedSoa,
         academic_year: '2024-2025',

@@ -1,4 +1,4 @@
-﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { SettingsController } from './settings.controller.js';
@@ -22,6 +22,8 @@ describe('SettingsController', () => {
     serviceMock = {
       getSettings: vi.fn(),
       updateSettings: vi.fn(),
+      getAcademicTermStatus: vi.fn(),
+      updateAcademicTermSettings: vi.fn(),
       getSchoolGradings: vi.fn(),
       createSchoolGrading: vi.fn(),
       verifySchoolGrading: vi.fn(),
@@ -206,10 +208,15 @@ describe('SettingsController', () => {
     const rolesFor = (handler: (...args: any[]) => unknown) =>
       Reflect.getMetadata(ROLES_KEY, handler) as Role[] | undefined;
 
-    it('restricts updateSettings to admins and grantors', () => {
+    it('restricts updateSettings to admins and grantors and allows coordinators on updateAcademicTermSettings', () => {
       expect(rolesFor(handlerFor('updateSettings'))).toEqual([
         Role.ADMIN,
         Role.GRANTOR,
+      ]);
+      expect(rolesFor(handlerFor('updateAcademicTermSettings'))).toEqual([
+        Role.ADMIN,
+        Role.GRANTOR,
+        Role.COORDINATOR,
       ]);
     });
 

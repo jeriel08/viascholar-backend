@@ -1,8 +1,12 @@
-﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { SettingsService } from './settings.service.js';
+import {
+  SettingsService,
+  resolveActiveAcademicTerm,
+  validateEnrollmentTermAgainstPolicy,
+} from './settings.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { EventsGateway } from '../events/events.gateway.js';
@@ -249,6 +253,115 @@ describe('SettingsService', () => {
         withNew,
       );
       expect(result).toBe(withNew);
+    });
+  });
+
+  describe('academic term calendar resolution & strict policy', () => {
+    it('keeps Jan-May 2027 inside AY 2026-2027 and automatically rolls over on July 2027', () => {
+      const nov2026 = resolveActiveAcademicTerm(
+        { ay_rollover_month: 7, strict_active_term_policy: true },
+        new Date(2026, 10, 16),
+      );
+      expect(nov2026.effective_academic_year).toBe('2026-2027');
+      expect(nov2026.effective_semester).toBe('1st Semester');
+
+      const jan2027 = resolveActiveAcademicTerm(
+        { ay_rollover_month: 7, strict_active_term_policy: true },
+        new Date(2027, 0, 15),
+      );
+      expect(jan2027.effective_academic_year).toBe('2026-2027');
+      expect(jan2027.effective_semester).toBe('2nd Semester');
+
+      const may2027 = resolveActiveAcademicTerm(
+        { ay_rollover_month: 7, strict_active_term_policy: true },
+        new Date(2027, 4, 20),
+      );
+      expect(may2027.effective_academic_year).toBe('2026-2027');
+      expect(may2027.in_transition_window).toBe(true);
+      expect(may2027.valid_academic_years).toEqual(['2026-2027', '2027-2028']);
+
+      const jul2027 = resolveActiveAcademicTerm(
+        { ay_rollover_month: 7, strict_active_term_policy: true },
+        new Date(2027, 6, 1),
+      );
+      expect(jul2027.effective_academic_year).toBe('2027-2028');
+      expect(jul2027.effective_semester).toBe('1st Semester');
+    });
+
+    it('honors an active manual override and falls back automatically when expired', () => {
+      const activeOverride = resolveActiveAcademicTerm(
+        {
+          ay_rollover_month: 7,
+          manual_academic_year: '2025-2026',
+          manual_semester: 'Summer',
+          manual_override_expires_at: new Date('2026-12-01T00:00:00.000Z'),
+        },
+        new Date('2026-11-16T00:00:00.000Z'),
+      );
+      expect(activeOverride.is_manual_override_active).toBe(true);
+      expect(activeOverride.effective_academic_year).toBe('2025-2026');
+      expect(activeOverride.effective_semester).toBe('Summer');
+
+      const expiredOverride = resolveActiveAcademicTerm(
+        {
+          ay_rollover_month: 7,
+          manual_academic_year: '2025-2026',
+          manual_semester: 'Summer',
+          manual_override_expires_at: new Date('2026-10-01T00:00:00.000Z'),
+        },
+        new Date('2026-11-16T00:00:00.000Z'),
+      );
+      expect(expiredOverride.is_manual_override_active).toBe(false);
+      expect(expiredOverride.is_manual_override_expired).toBe(true);
+      expect(expiredOverride.effective_academic_year).toBe('2026-2027');
+    });
+
+    it('blocks outdated AY documents when strict mode is ON and allows them when OFF', () => {
+      const strictTerm = resolveActiveAcademicTerm(
+        { ay_rollover_month: 7, strict_active_term_policy: true },
+        new Date(2026, 10, 16),
+      );
+      expect(
+        validateEnrollmentTermAgainstPolicy('2024-2025', '1st Semester', strictTerm),
+      ).toEqual(
+        objectMatching({
+          allowed: false,
+        }),
+      );
+      expect(
+        validateEnrollmentTermAgainstPolicy('2026-2027', '1st Semester', strictTerm),
+      ).toEqual({ allowed: true });
+
+      const simulationTerm = resolveActiveAcademicTerm(
+        { ay_rollover_month: 7, strict_active_term_policy: false },
+        new Date(2026, 10, 16),
+      );
+      expect(
+        validateEnrollmentTermAgainstPolicy('2024-2025', '1st Semester', simulationTerm),
+      ).toEqual({ allowed: true });
+    });
+
+    it('updates academic term settings and emits real-time events', async () => {
+      prisma.systemSetting.update.mockResolvedValue({
+        ...makeSettings(),
+        ay_rollover_month: 8,
+        strict_active_term_policy: false,
+        manual_academic_year: null,
+        manual_semester: null,
+        manual_override_expires_at: null,
+      });
+
+      const resolved = await service.updateAcademicTermSettings(7, {
+        ay_rollover_month: 8,
+        strict_active_term_policy: false,
+      });
+
+      expect(resolved.ay_rollover_month).toBe(8);
+      expect(resolved.strict_active_term_policy).toBe(false);
+      expect(events.emitToAll).toHaveBeenCalledWith(
+        'settings:academic_term_updated',
+        objectMatching({ ay_rollover_month: 8, strict_active_term_policy: false }),
+      );
     });
   });
 

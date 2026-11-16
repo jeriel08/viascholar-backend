@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import {
   CrossDocReconciliationResult,
@@ -11,12 +11,19 @@ import {
   normalizeAcademicYear,
   normalizeSemester,
 } from '../../documents/utils/academic-term.util.js';
+import {
+  SettingsService,
+  validateEnrollmentTermAgainstPolicy,
+} from '../../settings/settings.service.js';
 
 @Injectable()
 export class EnrollmentAuditEngineService {
   private readonly logger = new Logger(EnrollmentAuditEngineService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly settingsService?: SettingsService,
+  ) {}
 
   normalizeSubjectCode(code: string): string {
     if (!code) return '';
@@ -410,6 +417,21 @@ export class EnrollmentAuditEngineService {
 
       if (mismatches.length > 0) {
         flags.push(...mismatches.map((m) => `RECONCILIATION_FLAG:${m}`));
+      }
+    }
+
+    // 5. Active Academic Year Policy Check (when strict mode is enabled)
+    if (meta?.academicYear && this.settingsService) {
+      const resolvedTerm = await this.settingsService.getAcademicTermStatus();
+      const termCheck = validateEnrollmentTermAgainstPolicy(
+        meta.academicYear,
+        meta.semester,
+        resolvedTerm,
+      );
+      if (!termCheck.allowed) {
+        flags.push(
+          `OUTDATED_ACADEMIC_YEAR:Submitted AY ${normalizeAcademicYear(meta.academicYear) || meta.academicYear} does not match active AY ${resolvedTerm.effective_academic_year}`,
+        );
       }
     }
 

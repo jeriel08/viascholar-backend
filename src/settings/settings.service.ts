@@ -10,12 +10,179 @@ import { AuditService } from '../audit/audit.service.js';
 import { EventsGateway } from '../events/events.gateway.js';
 import { CreateSchoolGradingDto } from './dto/create-school-grading.dto.js';
 import { UpdateSettingsDto } from './dto/update-settings.dto.js';
+import { UpdateAcademicTermDto } from './dto/update-academic-term.dto.js';
 import { UpdateSchoolGradingDto } from './dto/update-school-grading.dto.js';
 import { CreateAcademicProgramDto } from './dto/create-program.dto.js';
 import { UpdateAcademicProgramDto } from './dto/update-program.dto.js';
 import { CreateSchoolDto } from './dto/create-school.dto.js';
 import { UpdateSchoolDto } from './dto/update-school.dto.js';
 import { AppCacheService } from '../common/cache/app-cache.service.js';
+import {
+  academicYearsMatchForTerm,
+  normalizeAcademicYear,
+  normalizeSemester,
+} from '../documents/utils/academic-term.util.js';
+
+export interface ResolvedAcademicTermStatus {
+  ay_rollover_month: number;
+  strict_active_term_policy: boolean;
+  manual_academic_year: string | null;
+  manual_semester: string | null;
+  manual_override_expires_at: string | null;
+  is_manual_override_active: boolean;
+  is_manual_override_expired: boolean;
+  effective_academic_year: string;
+  effective_semester: string;
+  auto_academic_year: string;
+  auto_semester: string;
+  valid_academic_years: string[];
+  in_transition_window: boolean;
+  updated_at?: string;
+}
+
+export function resolveActiveAcademicTerm(
+  settings?: {
+    ay_rollover_month?: number | null;
+    strict_active_term_policy?: boolean | null;
+    manual_academic_year?: string | null;
+    manual_semester?: string | null;
+    manual_override_expires_at?: Date | string | null;
+    updated_at?: Date | string | null;
+  } | null,
+  now: Date = new Date(),
+): ResolvedAcademicTermStatus {
+  const rawRollover = Number(settings?.ay_rollover_month ?? 7);
+  const rolloverMonth =
+    Number.isFinite(rawRollover) && rawRollover >= 1 && rawRollover <= 12
+      ? Math.floor(rawRollover)
+      : 7;
+  const strictPolicy = settings?.strict_active_term_policy ?? true;
+
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+
+  const autoStartYear = month >= rolloverMonth ? year : year - 1;
+  const autoAcademicYear = `${autoStartYear}-${autoStartYear + 1}`;
+
+  let autoSemester = '2nd Semester';
+  if (month >= rolloverMonth) {
+    autoSemester = '1st Semester';
+  } else if (
+    (rolloverMonth > 6 && month >= 6) ||
+    (rolloverMonth <= 6 && month === rolloverMonth - 1)
+  ) {
+    autoSemester = 'Summer';
+  }
+
+  const manualAyRaw = settings?.manual_academic_year?.trim() || null;
+  const manualAy = manualAyRaw
+    ? normalizeAcademicYear(manualAyRaw) || manualAyRaw
+    : null;
+  const manualSem = settings?.manual_semester?.trim()
+    ? normalizeSemester(settings.manual_semester)
+    : null;
+
+  const expiryDate = settings?.manual_override_expires_at
+    ? new Date(settings.manual_override_expires_at)
+    : null;
+  const hasValidExpiry = Boolean(
+    expiryDate && !Number.isNaN(expiryDate.getTime()),
+  );
+  const todayUtcMs = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const expiryUtcMs =
+    hasValidExpiry && expiryDate
+      ? Date.UTC(
+          expiryDate.getUTCFullYear(),
+          expiryDate.getUTCMonth(),
+          expiryDate.getUTCDate(),
+        )
+      : null;
+
+  const isManualOverrideExpired = Boolean(
+    manualAy && expiryUtcMs !== null && todayUtcMs > expiryUtcMs,
+  );
+  const isManualOverrideActive = Boolean(manualAy && !isManualOverrideExpired);
+
+  const effectiveAcademicYear = isManualOverrideActive
+    ? (manualAy as string)
+    : autoAcademicYear;
+  const effectiveSemester =
+    isManualOverrideActive && manualSem ? manualSem : autoSemester;
+
+  // Transition window: 1-2 months before rollover (e.g. May-Jun for July rollover)
+  // allows early next-AY registration at early-calendar universities without falsely allowing past AYs.
+  const monthsBeforeRollover = month < rolloverMonth ? rolloverMonth - month : 99;
+  const inTransitionWindow =
+    !isManualOverrideActive && monthsBeforeRollover >= 1 && monthsBeforeRollover <= 2;
+
+  const validYears = [effectiveAcademicYear];
+  if (inTransitionWindow) {
+    validYears.push(`${autoStartYear + 1}-${autoStartYear + 2}`);
+  }
+
+  return {
+    ay_rollover_month: rolloverMonth,
+    strict_active_term_policy: strictPolicy,
+    manual_academic_year: manualAy,
+    manual_semester: manualSem,
+    manual_override_expires_at:
+      hasValidExpiry && expiryDate
+        ? expiryDate.toISOString().slice(0, 10)
+        : null,
+    is_manual_override_active: isManualOverrideActive,
+    is_manual_override_expired: isManualOverrideExpired,
+    effective_academic_year: effectiveAcademicYear,
+    effective_semester: effectiveSemester,
+    auto_academic_year: autoAcademicYear,
+    auto_semester: autoSemester,
+    valid_academic_years: validYears,
+    in_transition_window: inTransitionWindow,
+    ...(settings?.updated_at
+      ? {
+          updated_at:
+            settings.updated_at instanceof Date
+              ? settings.updated_at.toISOString()
+              : String(settings.updated_at),
+        }
+      : {}),
+  };
+}
+
+export function validateEnrollmentTermAgainstPolicy(
+  docAcademicYear: string | null | undefined,
+  docSemester: string | null | undefined,
+  resolved: ResolvedAcademicTermStatus,
+): { allowed: true } | { allowed: false; reason: string } {
+  if (!resolved.strict_active_term_policy) {
+    return { allowed: true };
+  }
+
+  const rawAy = docAcademicYear?.trim();
+  if (!rawAy) {
+    return { allowed: true };
+  }
+
+  const normDocAy = normalizeAcademicYear(rawAy) || rawAy;
+  const normDocSem = docSemester ? normalizeSemester(docSemester) : '';
+
+  const matchesValidWindow = resolved.valid_academic_years.some((validAy) => {
+    if (normDocAy === validAy) return true;
+    return academicYearsMatchForTerm(
+      normDocAy,
+      validAy,
+      normDocSem || resolved.effective_semester,
+    );
+  });
+
+  if (matchesValidWindow) {
+    return { allowed: true };
+  }
+
+  return {
+    allowed: false,
+    reason: `Outdated or off-cycle enrollment document: This document is for AY ${normDocAy}, while the current active academic year is AY ${resolved.effective_academic_year} (${resolved.effective_semester}). Please upload your current-term document or ask a Coordinator/Grantor if multi-year testing mode should be enabled.`,
+  };
+}
 
 @Injectable()
 export class SettingsService implements OnModuleInit {
@@ -81,6 +248,78 @@ export class SettingsService implements OnModuleInit {
     this.eventsGateway.emitToAll('settings:updated', updated);
 
     return updated;
+  }
+
+  // 2b. Resolve automatic active academic term & policy status
+  async getAcademicTermStatus(
+    forceRefresh = false,
+    now: Date = new Date(),
+  ): Promise<ResolvedAcademicTermStatus> {
+    const settings = await this.getSettings(forceRefresh);
+    return resolveActiveAcademicTerm(settings, now);
+  }
+
+  // 2c. Update academic term calendar & strict policy (Admin, Grantor, or Coordinator)
+  async updateAcademicTermSettings(userId: number, dto: UpdateAcademicTermDto) {
+    if (dto.manual_academic_year) {
+      const parts = dto.manual_academic_year.split('-').map(Number);
+      if (parts.length !== 2 || parts[1] !== parts[0] + 1) {
+        throw new BadRequestException(
+          'manual_academic_year end year must immediately follow start year (e.g. 2026-2027).',
+        );
+      }
+    }
+
+    const settings = await this.getSettings(true);
+    const updateData: Record<string, any> = {
+      updated_by_user_id: userId,
+    };
+
+    if (dto.ay_rollover_month !== undefined) {
+      updateData.ay_rollover_month = dto.ay_rollover_month;
+    }
+    if (dto.strict_active_term_policy !== undefined) {
+      updateData.strict_active_term_policy = dto.strict_active_term_policy;
+    }
+    if (dto.manual_academic_year !== undefined) {
+      updateData.manual_academic_year = dto.manual_academic_year?.trim() || null;
+      if (!updateData.manual_academic_year) {
+        updateData.manual_semester = null;
+        updateData.manual_override_expires_at = null;
+      }
+    }
+    if (dto.manual_semester !== undefined && updateData.manual_academic_year !== null) {
+      updateData.manual_semester = dto.manual_semester?.trim() || null;
+    }
+    if (
+      dto.manual_override_expires_at !== undefined &&
+      updateData.manual_academic_year !== null
+    ) {
+      updateData.manual_override_expires_at = dto.manual_override_expires_at?.trim()
+        ? new Date(dto.manual_override_expires_at.trim())
+        : null;
+    }
+
+    const updated = await this.prisma.systemSetting.update({
+      where: { setting_id: settings.setting_id },
+      data: updateData,
+    });
+
+    const resolved = resolveActiveAcademicTerm(updated);
+
+    await this.auditService.log(
+      userId,
+      'ACADEMIC_TERM_SETTINGS_UPDATED',
+      `Updated academic term policy: Active=${resolved.effective_academic_year} (${resolved.effective_semester}), Rollover Month=${resolved.ay_rollover_month}, Strict Policy=${resolved.strict_active_term_policy ? 'ON' : 'OFF'}`,
+    );
+
+    await this.cacheService.del('settings:global');
+    await this.cacheService.delPattern('dashboard:');
+
+    this.eventsGateway.emitToStaff('settings:updated', updated);
+    this.eventsGateway.emitToAll('settings:academic_term_updated', resolved);
+
+    return resolved;
   }
 
   // 3. Create School Grading Scale (Staff creates verified, Scholar creates unverified pending coordinator review)

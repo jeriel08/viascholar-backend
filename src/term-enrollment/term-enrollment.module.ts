@@ -3,6 +3,7 @@ import { CloudinaryModule } from '../cloudinary/cloudinary.module.js';
 import { AuditModule } from '../audit/audit.module.js';
 import { EventsModule } from '../events/events.module.js';
 import { DocumentsModule } from '../documents/documents.module.js';
+import { SettingsModule } from '../settings/settings.module.js';
 import { TermEnrollmentController } from './term-enrollment.controller.js';
 import { ScholarEnrollmentService } from './services/scholar-enrollment.service.js';
 import { EnrollmentOcrService } from './services/enrollment-ocr.service.js';
@@ -10,7 +11,13 @@ import { EnrollmentAuditEngineService } from './services/enrollment-audit-engine
 import { CoordinatorEnrollmentService } from './services/coordinator-enrollment.service.js';
 
 @Module({
-  imports: [CloudinaryModule, AuditModule, EventsModule, DocumentsModule],
+  imports: [
+    CloudinaryModule,
+    AuditModule,
+    EventsModule,
+    DocumentsModule,
+    SettingsModule,
+  ],
   controllers: [TermEnrollmentController],
   providers: [
     ScholarEnrollmentService,

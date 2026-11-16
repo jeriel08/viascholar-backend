@@ -475,10 +475,15 @@ model AuditLog {
 }
 
 model SystemSetting {
-  setting_id          Int      @id @default(autoincrement())
-  grade_threshold     Decimal  @default(90.00) @db.Decimal(5, 2)
-  updated_at          DateTime @updatedAt
-  updated_by_user_id  Int?
+  setting_id                 Int       @id @default(autoincrement())
+  grade_threshold            Decimal   @default(90.00) @db.Decimal(5, 2)
+  ay_rollover_month          Int       @default(7)
+  strict_active_term_policy  Boolean   @default(true)
+  manual_academic_year       String?   @db.VarChar(15)
+  manual_semester            String?   @db.VarChar(30)
+  manual_override_expires_at DateTime? @db.Date
+  updated_at                 DateTime  @updatedAt
+  updated_by_user_id         Int?
 
   updated_by_user User? @relation("SettingsUpdatedBy", fields: [updated_by_user_id], references: [user_id])
 

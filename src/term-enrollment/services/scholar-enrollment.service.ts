@@ -13,6 +13,12 @@ import { EnrollmentOcrService } from './enrollment-ocr.service.js';
 import { EnrollmentAuditEngineService } from './enrollment-audit-engine.service.js';
 import { SubmitEnrollmentDto } from '../dto/submit-enrollment.dto.js';
 import { AppCacheService } from '../../common/cache/app-cache.service.js';
+import {
+  type ResolvedAcademicTermStatus,
+  SettingsService,
+  resolveActiveAcademicTerm,
+  validateEnrollmentTermAgainstPolicy,
+} from '../../settings/settings.service.js';
 import { Express } from 'express';
 
 @Injectable()
@@ -27,7 +33,22 @@ export class ScholarEnrollmentService {
     private readonly enrollmentOcrService: EnrollmentOcrService,
     private readonly auditEngineService: EnrollmentAuditEngineService,
     @Optional() private readonly cacheService?: AppCacheService,
+    @Optional() private readonly settingsService?: SettingsService,
   ) {}
+
+  private async getResolvedAcademicTerm(): Promise<ResolvedAcademicTermStatus> {
+    if (
+      this.settingsService &&
+      typeof this.settingsService.getAcademicTermStatus === 'function'
+    ) {
+      return this.settingsService.getAcademicTermStatus();
+    }
+    if (typeof (this.prisma as any).systemSetting?.findFirst === 'function') {
+      const settings = await (this.prisma as any).systemSetting.findFirst();
+      return resolveActiveAcademicTerm(settings);
+    }
+    return resolveActiveAcademicTerm(null);
+  }
 
   private async syncEnrolledSubjectsToProspectus(
     scholar: any,
@@ -555,13 +576,16 @@ export class ScholarEnrollmentService {
       return null;
     }
 
+    const resolvedTerm = await this.getResolvedAcademicTerm();
+    const fallbackAy = resolvedTerm.effective_academic_year;
+
     const targetDraft =
       (preferredAy &&
         preferredSem &&
         drafts.find(
           (d) => d.academic_year === preferredAy && d.semester === preferredSem,
         )) ||
-      drafts.find((d) => d.academic_year && d.academic_year !== '2026-2027') ||
+      drafts.find((d) => d.academic_year && d.academic_year !== fallbackAy) ||
       drafts.find((d) => d.cor_document_id != null) ||
       drafts[0];
 
@@ -600,9 +624,9 @@ export class ScholarEnrollmentService {
       }
     }
 
-    if (targetDraft.academic_year === '2026-2027') {
+    if (targetDraft.academic_year === fallbackAy) {
       const termDonor = otherDrafts.find(
-        (d) => d.academic_year && d.academic_year !== '2026-2027',
+        (d) => d.academic_year && d.academic_year !== fallbackAy,
       );
       if (termDonor) {
         updateData.academic_year = termDonor.academic_year;
@@ -643,13 +667,24 @@ export class ScholarEnrollmentService {
       mimeType: file.mimetype,
     });
 
+    const resolvedTerm = await this.getResolvedAcademicTerm();
+    const policyCheck = validateEnrollmentTermAgainstPolicy(
+      extractedData.academic_year,
+      extractedData.semester,
+      resolvedTerm,
+    );
+    if (!policyCheck.allowed) {
+      throw new BadRequestException(policyCheck.reason);
+    }
+
     const uploadRes = await this.cloudinaryService.uploadDocument(
       file,
       'viascholar/enrollment/cor',
     );
 
-    const ay = extractedData.academic_year || '2026-2027';
-    const sem = extractedData.semester || '1st Semester';
+    const ay =
+      extractedData.academic_year || resolvedTerm.effective_academic_year;
+    const sem = extractedData.semester || resolvedTerm.effective_semester;
     const yr = extractedData.year_level || scholar.current_year_level || 1;
 
     // Clean up old draft COR document if re-uploading
@@ -844,13 +879,24 @@ export class ScholarEnrollmentService {
       mimeType: file.mimetype,
     });
 
+    const resolvedTerm = await this.getResolvedAcademicTerm();
+    const policyCheck = validateEnrollmentTermAgainstPolicy(
+      extractedData.academic_year,
+      extractedData.semester,
+      resolvedTerm,
+    );
+    if (!policyCheck.allowed) {
+      throw new BadRequestException(policyCheck.reason);
+    }
+
     const uploadRes = await this.cloudinaryService.uploadDocument(
       file,
       'viascholar/enrollment/soa',
     );
 
-    let ay = extractedData.academic_year || '2026-2027';
-    let sem = extractedData.semester || '1st Semester';
+    let ay =
+      extractedData.academic_year || resolvedTerm.effective_academic_year;
+    let sem = extractedData.semester || resolvedTerm.effective_semester;
     let yr = scholar.current_year_level || 1;
 
     const allDrafts = await this.prisma.termEnrollment.findMany({
@@ -1081,13 +1127,24 @@ export class ScholarEnrollmentService {
       mimeType: file.mimetype,
     });
 
+    const resolvedTerm = await this.getResolvedAcademicTerm();
+    const policyCheck = validateEnrollmentTermAgainstPolicy(
+      extractedData.academic_year,
+      extractedData.semester,
+      resolvedTerm,
+    );
+    if (!policyCheck.allowed) {
+      throw new BadRequestException(policyCheck.reason);
+    }
+
     const uploadRes = await this.cloudinaryService.uploadDocument(
       file,
       'viascholar/enrollment/consolidated',
     );
 
-    const ay = extractedData.academic_year || '2026-2027';
-    const sem = extractedData.semester || '1st Semester';
+    const ay =
+      extractedData.academic_year || resolvedTerm.effective_academic_year;
+    const sem = extractedData.semester || resolvedTerm.effective_semester;
     const yr = extractedData.year_level || scholar.current_year_level || 1;
 
     // Clean up old draft consolidated document if re-uploading
