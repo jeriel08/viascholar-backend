@@ -9,6 +9,7 @@ import { ScholarBaselineService } from './services/scholar-baseline.service.js';
 import { BaselineDocumentIngestionService } from './services/baseline-document-ingestion.service.js';
 import { CoordinatorBaselineService } from './services/coordinator-baseline.service.js';
 import { ActiveScholarsAnalyticsService } from './services/active-scholars-analytics.service.js';
+import { AcademicChangeRequestService } from './services/academic-change-request.service.js';
 
 @Module({
   imports: [CloudinaryModule, SettingsModule, DocumentsModule],
@@ -20,6 +21,7 @@ import { ActiveScholarsAnalyticsService } from './services/active-scholars-analy
     BaselineDocumentIngestionService,
     CoordinatorBaselineService,
     ActiveScholarsAnalyticsService,
+    AcademicChangeRequestService,
   ],
   exports: [
     AcademicBaselineService,
@@ -28,6 +30,7 @@ import { ActiveScholarsAnalyticsService } from './services/active-scholars-analy
     BaselineDocumentIngestionService,
     CoordinatorBaselineService,
     ActiveScholarsAnalyticsService,
+    AcademicChangeRequestService,
   ],
 })
 export class AcademicBaselineModule {}

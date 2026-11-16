@@ -4,6 +4,7 @@ import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AcademicBaselineController } from './academic-baseline.controller.js';
 import { AcademicBaselineService } from './academic-baseline.service.js';
+import { AcademicChangeRequestService } from './services/academic-change-request.service.js';
 import { ROLES_KEY } from '../auth/decorators/roles.decorator.js';
 import { Role } from '../generated/prisma/enums.js';
 import { BatchUpdateSubjectsDto } from './dto/batch-update-subjects.dto.js';
@@ -26,6 +27,7 @@ const makeRequest = (userId = 42, role = 'SCHOLAR') => ({
 describe('AcademicBaselineController', () => {
   let controller: AcademicBaselineController;
   let serviceMock: Record<string, ReturnType<typeof vi.fn>>;
+  let changeRequestMock: Record<string, ReturnType<typeof vi.fn>>;
 
   const req = makeRequest();
   const subjectsDto = { subjects: [] } as unknown as BatchUpdateSubjectsDto;
@@ -49,6 +51,13 @@ describe('AcademicBaselineController', () => {
       freezeBaseline: vi.fn(),
       unfreezeBaseline: vi.fn(),
     };
+    changeRequestMock = {
+      getMyRequests: vi.fn(),
+      createRequest: vi.fn(),
+      cancelMyRequest: vi.fn(),
+      listRequestsForStaff: vi.fn(),
+      reviewRequest: vi.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AcademicBaselineController],
@@ -56,6 +65,10 @@ describe('AcademicBaselineController', () => {
         {
           provide: AcademicBaselineService,
           useValue: serviceMock,
+        },
+        {
+          provide: AcademicChangeRequestService,
+          useValue: changeRequestMock,
         },
       ],
     }).compile();
@@ -365,6 +378,7 @@ describe('AcademicBaselineController', () => {
         'coordinatorUpdateSubjects',
         'freezeBaseline',
         'unfreezeBaseline',
+        'listAcademicChangeRequests',
       ]) {
         expect(rolesFor(handlerFor(name))).toEqual([
           Role.ADMIN,
@@ -372,6 +386,13 @@ describe('AcademicBaselineController', () => {
           Role.COORDINATOR,
         ]);
       }
+    });
+
+    it('restricts academic change review decisions to grantors and admins', () => {
+      expect(rolesFor(handlerFor('reviewAcademicChangeRequest'))).toEqual([
+        Role.GRANTOR,
+        Role.ADMIN,
+      ]);
     });
   });
 });

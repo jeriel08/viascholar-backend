@@ -23,6 +23,8 @@ import {
   buildContractChangeRequestToStaffHtml,
 } from './templates/contract.templates.js';
 import {
+  buildAcademicChangeDecisionHtml,
+  buildAcademicChangeRequestToStaffHtml,
   buildDocumentActionRequiredHtml,
   buildGradeReportStatusUpdatedHtml,
 } from './templates/document.templates.js';
@@ -62,12 +64,14 @@ export class MailService {
     }
   }
 
-  // Retrieve active staff (Admin, Grantor, Coordinator) emails
-  async getStaffEmails(): Promise<string[]> {
+  // Retrieve active staff emails filtered by specific roles
+  async getEmailsByRoles(
+    roles: ('ADMIN' | 'GRANTOR' | 'COORDINATOR')[],
+  ): Promise<string[]> {
     try {
       const staff = await this.prisma.user.findMany({
         where: {
-          role: { in: ['ADMIN', 'GRANTOR', 'COORDINATOR'] },
+          role: { in: roles },
           is_active: true,
         },
         select: { email: true },
@@ -75,9 +79,14 @@ export class MailService {
       return staff.map((u) => u.email).filter(Boolean);
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Failed to fetch staff emails: ${msg}`);
+      this.logger.error(`Failed to fetch emails for roles ${roles.join(',')}: ${msg}`);
       return [];
     }
+  }
+
+  // Retrieve active staff (Admin, Grantor, Coordinator) emails
+  async getStaffEmails(): Promise<string[]> {
+    return this.getEmailsByRoles(['ADMIN', 'GRANTOR', 'COORDINATOR']);
   }
 
   private async filterEnabledRecipients(
@@ -154,7 +163,7 @@ export class MailService {
     to: string | string[],
     subject: string,
     html: string,
-    options?: { bypassPreferences?: boolean },
+    options?: { bypassPreferences?: boolean; cc?: string[] },
   ): Promise<void> {
     const rawRecipients = Array.isArray(to) ? to : [to];
     if (rawRecipients.length === 0) return;
@@ -162,6 +171,13 @@ export class MailService {
     const recipients = options?.bypassPreferences
       ? rawRecipients
       : await this.filterEnabledRecipients(rawRecipients);
+    const rawCc = options?.cc?.filter(Boolean) ?? [];
+    const ccRecipients =
+      rawCc.length === 0
+        ? []
+        : options?.bypassPreferences
+          ? rawCc
+          : await this.filterEnabledRecipients(rawCc);
     if (recipients.length === 0) return;
 
     if (this.resend) {
@@ -169,6 +185,7 @@ export class MailService {
         const { error } = await this.resend.emails.send({
           from: this.fromEmail,
           to: recipients,
+          ...(ccRecipients.length > 0 ? { cc: ccRecipients } : {}),
           subject,
           html,
         });
@@ -179,7 +196,7 @@ export class MailService {
           );
         } else {
           this.logger.log(
-            `Email [${subject}] delivered to ${recipients.join(', ')}`,
+            `Email [${subject}] delivered to ${recipients.join(', ')}${ccRecipients.length ? ` (CC: ${ccRecipients.join(', ')})` : ''}`,
           );
         }
       } catch (err: unknown) {
@@ -192,7 +209,7 @@ export class MailService {
       }
     } else {
       this.logger.log(
-        `[SIMULATED EMAIL] From: ${this.fromEmail} | To: ${recipients.join(', ')} | Subject: ${subject}`,
+        `[SIMULATED EMAIL] From: ${this.fromEmail} | To: ${recipients.join(', ')}${ccRecipients.length ? ` | CC: ${ccRecipients.join(', ')}` : ''} | Subject: ${subject}`,
       );
     }
   }
@@ -551,5 +568,50 @@ export class MailService {
       { bypassPreferences: true },
     );
     return { simulated: !this.resend };
+  }
+
+  // 16. Program Shift / School Transfer Request (To Grantor, CC Coordinator)
+  async sendAcademicChangeRequestedEmail(data: {
+    studentName: string;
+    changeLabel: string;
+    currentSummary: string;
+    requestedSummary: string;
+    reason: string;
+    effectiveTerm?: string | null;
+  }) {
+    const grantorEmails = await this.getEmailsByRoles(['GRANTOR']);
+    const coordinatorEmails = await this.getEmailsByRoles(['COORDINATOR']);
+    const to = grantorEmails.length > 0 ? grantorEmails : coordinatorEmails;
+    const cc = grantorEmails.length > 0 ? coordinatorEmails : [];
+    if (to.length === 0) return;
+
+    const html = buildAcademicChangeRequestToStaffHtml(data, this.frontendUrl);
+    await this.sendEmail(
+      to,
+      `[${data.changeLabel} Request] ${data.studentName}`,
+      html,
+      { cc },
+    );
+  }
+
+  // 17. Program Shift / School Transfer Decision (To Scholar, CC Coordinator)
+  async sendAcademicChangeDecisionEmail(
+    studentEmail: string,
+    data: {
+      studentName: string;
+      changeLabel: string;
+      requestedSummary: string;
+      decision: 'APPROVED' | 'DENIED';
+      decisionNotes?: string | null;
+    },
+  ) {
+    const coordinatorEmails = await this.getEmailsByRoles(['COORDINATOR']);
+    const html = buildAcademicChangeDecisionHtml(data, this.frontendUrl);
+    await this.sendEmail(
+      studentEmail,
+      `[${data.changeLabel} ${data.decision === 'APPROVED' ? 'Confirmed' : 'Declined'}] ${data.requestedSummary}`,
+      html,
+      { cc: coordinatorEmails },
+    );
   }
 }

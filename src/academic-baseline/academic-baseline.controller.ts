@@ -10,12 +10,13 @@ import {
   Put,
   Query,
   Request,
+  UploadedFile,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { AnyFilesInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
 import {
   ApiBearerAuth,
@@ -28,6 +29,11 @@ import { RolesGuard } from '../auth/decorators/roles.guard.js';
 import { Roles } from '../auth/decorators/roles.decorator.js';
 import { Role } from '../generated/prisma/enums.js';
 import { AcademicBaselineService } from './academic-baseline.service.js';
+import { AcademicChangeRequestService } from './services/academic-change-request.service.js';
+import {
+  CreateAcademicChangeRequestDto,
+  ReviewAcademicChangeRequestDto,
+} from './dto/academic-change-request.dto.js';
 import { SelectSchoolDto } from './dto/select-school.dto.js';
 import { BatchUpdateSubjectsDto } from './dto/batch-update-subjects.dto.js';
 import { FreezeBaselineDto } from './dto/freeze-baseline.dto.js';
@@ -45,7 +51,10 @@ interface AuthenticatedRequest {
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Controller('academic-baseline')
 export class AcademicBaselineController {
-  constructor(private readonly baselineService: AcademicBaselineService) {}
+  constructor(
+    private readonly baselineService: AcademicBaselineService,
+    private readonly changeRequestService: AcademicChangeRequestService,
+  ) {}
 
   private validateUploadedFiles(files: Express.Multer.File[]) {
     if (!files || files.length === 0) {
@@ -304,6 +313,79 @@ export class AcademicBaselineController {
     return this.baselineService.unfreezeBaseline(
       req.user.user_id,
       prospectusId,
+    );
+  }
+
+  // ==========================================
+  // PROGRAM SHIFT & SCHOOL TRANSFER REQUESTS
+  // ==========================================
+
+  @Get('change-requests/me')
+  @Roles(Role.SCHOLAR, Role.APPLICANT)
+  @ApiOperation({
+    summary: 'Scholar retrieves their program shift / school transfer requests',
+  })
+  getMyAcademicChangeRequests(@Request() req: AuthenticatedRequest) {
+    return this.changeRequestService.getMyRequests(req.user.user_id);
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Post('change-requests')
+  @Roles(Role.SCHOLAR, Role.APPLICANT)
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data', 'application/json')
+  @ApiOperation({
+    summary:
+      'Scholar requests a program shift or school transfer (To Grantor, CC Coordinator)',
+  })
+  createAcademicChangeRequest(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: CreateAcademicChangeRequestDto,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    if (file) {
+      this.validateUploadedFiles([file]);
+    }
+    return this.changeRequestService.createRequest(req.user.user_id, dto, file);
+  }
+
+  @Post('change-requests/:requestId/cancel')
+  @Roles(Role.SCHOLAR, Role.APPLICANT)
+  @ApiOperation({
+    summary: 'Scholar cancels their pending program shift / school transfer request',
+  })
+  cancelAcademicChangeRequest(
+    @Request() req: AuthenticatedRequest,
+    @Param('requestId', ParseIntPipe) requestId: number,
+  ) {
+    return this.changeRequestService.cancelMyRequest(req.user.user_id, requestId);
+  }
+
+  @Get('change-requests')
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @ApiOperation({
+    summary:
+      'Grantor (decision maker) & Coordinator (CC visibility) list scholar program shift / school transfer requests',
+  })
+  listAcademicChangeRequests(@Query('status') status?: string) {
+    return this.changeRequestService.listRequestsForStaff(status);
+  }
+
+  @Post('change-requests/:requestId/review')
+  @Roles(Role.GRANTOR, Role.ADMIN)
+  @ApiOperation({
+    summary:
+      'Grantor confirms (approves) or declines a scholar program shift / school transfer request',
+  })
+  reviewAcademicChangeRequest(
+    @Request() req: AuthenticatedRequest,
+    @Param('requestId', ParseIntPipe) requestId: number,
+    @Body() dto: ReviewAcademicChangeRequestDto,
+  ) {
+    return this.changeRequestService.reviewRequest(
+      req.user.user_id,
+      requestId,
+      dto,
     );
   }
 }

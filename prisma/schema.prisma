@@ -102,9 +102,10 @@ model User {
   systemSettings SystemSetting[] @relation("SettingsUpdatedBy")
   notifications             Notification[]
 
-  archived_schools          School[]         @relation("SchoolArchivedBy")
-  archived_programs         AcademicProgram[] @relation("ProgramArchivedBy")
-  archived_scholar_profiles ScholarProfile[] @relation("ScholarArchivedBy")
+  archived_schools          School[]                @relation("SchoolArchivedBy")
+  archived_programs         AcademicProgram[]       @relation("ProgramArchivedBy")
+  archived_scholar_profiles ScholarProfile[]        @relation("ScholarArchivedBy")
+  reviewed_academic_changes AcademicChangeRequest[] @relation("AcademicChangeReviewedBy")
 
   @@map("users")
 }
@@ -179,9 +180,10 @@ model ScholarProfile {
   contracts     Contract[]
   disbursements Disbursement[]
   documents     ScholarDocument[]
-  meetings      Meeting[]
-  prospectus    ScholarProspectus?
-  enrollments   TermEnrollment[]
+  meetings                 Meeting[]
+  prospectus               ScholarProspectus?
+  enrollments              TermEnrollment[]
+  academic_change_requests AcademicChangeRequest[]
 
   @@index([archived_at])
   @@map("scholar_profiles")
@@ -337,8 +339,9 @@ model ScholarDocument {
   credited_subjects    ProspectusSubject[]
   cor_enrollments                 TermEnrollment[]     @relation("EnrollmentCorDocument")
   soa_enrollments                 TermEnrollment[]     @relation("EnrollmentSoaDocument")
-  official_receipt_disbursements  Disbursement[]       @relation("DisbursementOfficialReceipt")
-  appeal_grade_reports            GradeReport[]        @relation("AppealSupportingDocument")
+  official_receipt_disbursements  Disbursement[]          @relation("DisbursementOfficialReceipt")
+  appeal_grade_reports            GradeReport[]           @relation("AppealSupportingDocument")
+  academic_change_requests        AcademicChangeRequest[] @relation("AcademicChangeSupportingDocument")
 
   @@map("scholar_documents")
 }
@@ -553,10 +556,43 @@ model AcademicProgram {
   created_at   DateTime @default(now())
   updated_at   DateTime @updatedAt
 
-  archived_by User? @relation("ProgramArchivedBy", fields: [archived_by_user_id], references: [user_id], onDelete: SetNull)
+  archived_by              User?                   @relation("ProgramArchivedBy", fields: [archived_by_user_id], references: [user_id], onDelete: SetNull)
+  academic_change_requests AcademicChangeRequest[]
 
   @@index([archived_at])
   @@map("academic_programs")
+}
+
+model AcademicChangeRequest {
+  request_id                Int       @id @default(autoincrement())
+  scholar_profile_id        Int
+  change_type               String    @db.VarChar(30) // "PROGRAM_SHIFT" | "SCHOOL_TRANSFER" | "BOTH"
+  current_course_of_study   String?   @db.VarChar(150)
+  current_school_id         Int?
+  current_school_name       String?   @db.VarChar(150)
+  requested_program_id      Int?
+  requested_course_of_study String?   @db.VarChar(150)
+  requested_school_id       Int?
+  requested_school_name     String?   @db.VarChar(150)
+  effective_academic_year   String?   @db.VarChar(15)
+  effective_semester        String?   @db.VarChar(30)
+  reason                    String    @db.Text
+  supporting_document_id    Int?
+  status                    String    @default("PENDING_GRANTOR") @db.VarChar(30) // "PENDING_GRANTOR" | "APPROVED" | "DENIED" | "CANCELLED"
+  reviewed_by_user_id       Int?
+  reviewed_at               DateTime?
+  decision_notes            String?   @db.Text
+  created_at                DateTime  @default(now())
+  updated_at                DateTime  @updatedAt
+
+  scholar_profile     ScholarProfile   @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
+  requested_program   AcademicProgram? @relation(fields: [requested_program_id], references: [program_id], onDelete: SetNull)
+  supporting_document ScholarDocument? @relation("AcademicChangeSupportingDocument", fields: [supporting_document_id], references: [document_id], onDelete: SetNull)
+  reviewed_by         User?            @relation("AcademicChangeReviewedBy", fields: [reviewed_by_user_id], references: [user_id], onDelete: SetNull)
+
+  @@index([scholar_profile_id, status])
+  @@index([status, created_at])
+  @@map("academic_change_requests")
 }
 
 model ScholarProspectus {
