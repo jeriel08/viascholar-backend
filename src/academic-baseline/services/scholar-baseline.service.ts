@@ -71,6 +71,41 @@ export class ScholarBaselineService {
           throw new NotFoundException('Scholar profile not found.');
         }
 
+        // Normalize legacy pre-fix shifted accounts that were placed into onboarding statuses
+        if (
+          ['PENDING_SCHOOL_SELECTION', 'PENDING_PROSPECTUS', 'PENDING_HISTORICAL_CCG'].includes(
+            scholar.academic_baseline_status,
+          ) &&
+          typeof (this.prisma as any).academicChangeRequest?.findFirst === 'function'
+        ) {
+          const latestApprovedShift = await (this.prisma as any).academicChangeRequest.findFirst({
+            where: { scholar_profile_id: scholar.profile_id, status: 'APPROVED' },
+            orderBy: { reviewed_at: 'desc' },
+          });
+          if (latestApprovedShift) {
+            await this.prisma.scholarProfile.update({
+              where: { profile_id: scholar.profile_id },
+              data: { academic_baseline_status: 'PENDING_SHIFT_PROSPECTUS' },
+            });
+            scholar.academic_baseline_status = 'PENDING_SHIFT_PROSPECTUS';
+
+            const staleProspectus = scholar.prospectus;
+            if (
+              staleProspectus &&
+              latestApprovedShift.reviewed_at &&
+              new Date(staleProspectus.updated_at).getTime() <=
+                new Date(latestApprovedShift.reviewed_at).getTime()
+            ) {
+              if (typeof (this.prisma as any).scholarProspectus?.deleteMany === 'function') {
+                await (this.prisma as any).scholarProspectus.deleteMany({
+                  where: { scholar_profile_id: scholar.profile_id },
+                });
+              }
+              scholar.prospectus = null;
+            }
+          }
+        }
+
         const subjects = scholar.prospectus?.subjects || [];
 
         if (

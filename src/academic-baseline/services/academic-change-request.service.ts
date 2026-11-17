@@ -224,7 +224,50 @@ export class AcademicChangeRequestService {
 
   async evaluateEligibilityForScholar(
     scholarProfileId: number,
+    scholarContext?: {
+      academic_baseline_status?: string | null;
+      prospectus?: { is_frozen?: boolean | null } | null;
+    },
   ): Promise<AcademicChangeEligibility> {
+    if (typeof (this.prisma as any).academicChangeRequest?.findFirst === 'function') {
+      const pendingRequest = await (this.prisma as any).academicChangeRequest.findFirst({
+        where: {
+          scholar_profile_id: scholarProfileId,
+          status: 'PENDING_GRANTOR',
+        },
+        select: { request_id: true },
+      });
+      if (pendingRequest) {
+        return {
+          allowed: false,
+          reason:
+            'You already have a pending program shift or school transfer request awaiting Grantor confirmation.',
+          ongoing_term: null,
+        };
+      }
+    }
+
+    const blockedStatuses = new Set([
+      'PENDING_SHIFT_PROSPECTUS',
+      'PENDING_COORDINATOR_REVIEW',
+      'PENDING_SCHOOL_SELECTION',
+      'PENDING_PROSPECTUS',
+      'PENDING_HISTORICAL_CCG',
+      'DISCONTINUED',
+    ]);
+    const status = scholarContext?.academic_baseline_status || '';
+    const hasUnfrozenProspectus = Boolean(
+      scholarContext?.prospectus && scholarContext.prospectus.is_frozen === false,
+    );
+    if (blockedStatuses.has(status) || hasUnfrozenProspectus) {
+      return {
+        allowed: false,
+        reason:
+          'You must complete uploading and verifying your current curriculum prospectus before requesting a program shift or school transfer.',
+        ongoing_term: null,
+      };
+    }
+
     if (typeof (this.prisma as any).termEnrollment?.findMany !== 'function') {
       return { allowed: true, reason: null, ongoing_term: null };
     }
@@ -332,12 +375,16 @@ export class AcademicChangeRequestService {
   async getEligibility(userId: number): Promise<AcademicChangeEligibility> {
     const scholar = await this.prisma.scholarProfile.findUnique({
       where: { user_id: userId },
-      select: { profile_id: true },
+      select: {
+        profile_id: true,
+        academic_baseline_status: true,
+        prospectus: { select: { is_frozen: true } },
+      },
     });
     if (!scholar) {
       throw new NotFoundException('Scholar profile not found.');
     }
-    return this.evaluateEligibilityForScholar(scholar.profile_id);
+    return this.evaluateEligibilityForScholar(scholar.profile_id, scholar);
   }
 
   async getMyRequests(userId: number) {
@@ -366,13 +413,17 @@ export class AcademicChangeRequestService {
       include: {
         user: { select: { email: true } },
         school_grading_system: { select: { school_name: true } },
+        prospectus: { select: { is_frozen: true } },
       },
     });
     if (!scholar) {
       throw new NotFoundException('Scholar profile not found.');
     }
 
-    const eligibility = await this.evaluateEligibilityForScholar(scholar.profile_id);
+    const eligibility = await this.evaluateEligibilityForScholar(
+      scholar.profile_id,
+      scholar,
+    );
     if (!eligibility.allowed) {
       throw new ForbiddenException(
         eligibility.reason ||
@@ -643,10 +694,7 @@ export class AcademicChangeRequestService {
         )
       : existing.scholar_profile.school_id;
 
-    const nextBaselineStatus =
-      includesSchool && !targetGradingSchoolId
-        ? 'PENDING_SCHOOL_SELECTION'
-        : 'PENDING_PROSPECTUS';
+    const nextBaselineStatus = 'PENDING_SHIFT_PROSPECTUS';
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const savedRequest = await tx.academicChangeRequest.update({
@@ -676,22 +724,18 @@ export class AcademicChangeRequestService {
         },
       });
 
+      // Remove the previous program's prospectus & untaken/old checklist so the
+      // scholar uploads a clean prospectus for the newly confirmed program/school.
       if (existing.scholar_profile.prospectus) {
-        await tx.scholarProspectus.update({
-          where: { prospectus_id: existing.scholar_profile.prospectus.prospectus_id },
-          data: {
-            is_frozen: false,
-            status: 'DRAFT',
-            ...(includesProgram && existing.requested_course_of_study
-              ? {
-                  course_name: existing.requested_course_of_study,
-                  ...(existing.requested_program?.program_code
-                    ? { course_code: existing.requested_program.program_code }
-                    : {}),
-                }
-              : {}),
-          },
-        });
+        if (typeof (tx as any).scholarProspectus?.deleteMany === 'function') {
+          await (tx as any).scholarProspectus.deleteMany({
+            where: { scholar_profile_id: existing.scholar_profile_id },
+          });
+        } else if (typeof (tx as any).scholarProspectus?.delete === 'function') {
+          await (tx as any).scholarProspectus.delete({
+            where: { prospectus_id: existing.scholar_profile.prospectus.prospectus_id },
+          });
+        }
       }
 
       return savedRequest;

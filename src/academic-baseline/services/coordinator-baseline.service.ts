@@ -29,6 +29,7 @@ export class CoordinatorBaselineService {
         academic_baseline_status: {
           in: [
             'PENDING_COORDINATOR_REVIEW',
+            'PENDING_SHIFT_PROSPECTUS',
             'PENDING_PROSPECTUS',
             'PENDING_HISTORICAL_CCG',
             'BASELINE_FROZEN',

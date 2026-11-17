@@ -146,7 +146,10 @@ export class BaselineDocumentIngestionService {
       },
     });
 
-    const nextStatus = 'PENDING_HISTORICAL_CCG';
+    const nextStatus =
+      scholar.academic_baseline_status === 'PENDING_SHIFT_PROSPECTUS'
+        ? 'PENDING_SHIFT_PROSPECTUS'
+        : 'PENDING_HISTORICAL_CCG';
 
     await this.prisma.scholarProfile.update({
       where: { profile_id: scholar.profile_id },
@@ -334,9 +337,14 @@ export class BaselineDocumentIngestionService {
       },
     });
 
+    const nextHistoricalStatus =
+      scholar.academic_baseline_status === 'PENDING_SHIFT_PROSPECTUS'
+        ? 'PENDING_SHIFT_PROSPECTUS'
+        : 'PENDING_HISTORICAL_CCG';
+
     await this.prisma.scholarProfile.update({
       where: { profile_id: scholar.profile_id },
-      data: { academic_baseline_status: 'PENDING_HISTORICAL_CCG' },
+      data: { academic_baseline_status: nextHistoricalStatus },
     });
 
     await this.auditService.log(
@@ -367,7 +375,7 @@ export class BaselineDocumentIngestionService {
       matched_credited: matchedCredited,
       unmapped_items: unmappedItems,
       prospectus: refreshedProspectus,
-      academic_baseline_status: 'PENDING_HISTORICAL_CCG',
+      academic_baseline_status: nextHistoricalStatus,
     };
   }
 }

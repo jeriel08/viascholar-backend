@@ -271,6 +271,46 @@ export class ScholarEnrollmentService {
     scholarProfileId: number,
     scholar?: any,
   ) {
+    let profileSnapshot = scholar;
+    if (
+      !profileSnapshot &&
+      typeof (this.prisma as any).scholarProfile?.findUnique === 'function'
+    ) {
+      profileSnapshot = await (this.prisma as any).scholarProfile.findUnique({
+        where: { profile_id: scholarProfileId },
+        include: { prospectus: { select: { is_frozen: true, updated_at: true } } },
+      });
+    }
+
+    const baselineStatus = profileSnapshot?.academic_baseline_status;
+    let isShiftInProgress = baselineStatus === 'PENDING_SHIFT_PROSPECTUS';
+    if (
+      !isShiftInProgress &&
+      baselineStatus === 'PENDING_COORDINATOR_REVIEW' &&
+      typeof (this.prisma as any).academicChangeRequest?.findFirst === 'function'
+    ) {
+      const approvedShift = await (this.prisma as any).academicChangeRequest.findFirst({
+        where: {
+          scholar_profile_id: scholarProfileId,
+          status: 'APPROVED',
+        },
+        orderBy: { reviewed_at: 'desc' },
+      });
+      if (approvedShift && !profileSnapshot?.prospectus?.is_frozen) {
+        isShiftInProgress = true;
+      }
+    }
+
+    if (isShiftInProgress) {
+      return {
+        is_locked: true as const,
+        reason: 'ACADEMIC_SHIFT_IN_PROGRESS',
+        course_of_study: profileSnapshot?.course_of_study ?? undefined,
+        message:
+          'Start-of-term enrollment is paused while your program shift / school transfer prospectus is being uploaded and verified by the Coordinator.',
+      };
+    }
+
     const latestFlaggedReport = await this.prisma.gradeReport.findFirst({
       where: {
         scholar_profile_id: scholarProfileId,

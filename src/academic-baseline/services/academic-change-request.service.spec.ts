@@ -8,8 +8,14 @@ describe('AcademicChangeRequestService', () => {
   let prisma: Record<string, any>;
   let auditService: { log: ReturnType<typeof vi.fn> };
   let cloudinaryService: { uploadBuffer: ReturnType<typeof vi.fn> };
-  let eventsGateway: { emitToStaff: ReturnType<typeof vi.fn>; emitToUser: ReturnType<typeof vi.fn> };
-  let cacheService: { del: ReturnType<typeof vi.fn>; delPattern: ReturnType<typeof vi.fn> };
+  let eventsGateway: {
+    emitToStaff: ReturnType<typeof vi.fn>;
+    emitToUser: ReturnType<typeof vi.fn>;
+  };
+  let cacheService: {
+    del: ReturnType<typeof vi.fn>;
+    delPattern: ReturnType<typeof vi.fn>;
+  };
   let mailService: {
     sendAcademicChangeRequestedEmail: ReturnType<typeof vi.fn>;
     sendAcademicChangeDecisionEmail: ReturnType<typeof vi.fn>;
@@ -48,6 +54,7 @@ describe('AcademicChangeRequestService', () => {
       },
       scholarProspectus: {
         update: vi.fn(),
+        deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
       academicChangeRequest: {
         findFirst: vi.fn(),
@@ -61,7 +68,9 @@ describe('AcademicChangeRequestService', () => {
 
     auditService = { log: vi.fn().mockResolvedValue(undefined) };
     cloudinaryService = {
-      uploadBuffer: vi.fn().mockResolvedValue({ secure_url: 'https://cdn.example.com/shift.pdf' }),
+      uploadBuffer: vi
+        .fn()
+        .mockResolvedValue({ secure_url: 'https://cdn.example.com/shift.pdf' }),
     };
     eventsGateway = { emitToStaff: vi.fn(), emitToUser: vi.fn() };
     cacheService = {
@@ -161,7 +170,10 @@ describe('AcademicChangeRequestService', () => {
       user: { email: 'maria@example.com' },
       school_grading_system: { school_name: 'University of Mindanao' },
     });
-    prisma.academicChangeRequest.findFirst.mockResolvedValue({ request_id: 1, status: 'PENDING_GRANTOR' });
+    prisma.academicChangeRequest.findFirst.mockResolvedValue({
+      request_id: 1,
+      status: 'PENDING_GRANTOR',
+    });
 
     await expect(
       service.createRequest(42, {
@@ -169,7 +181,7 @@ describe('AcademicChangeRequestService', () => {
         requested_course_of_study: 'BS Information Technology',
         reason: 'Switching focus area.',
       }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ForbiddenException);
 
     prisma.academicChangeRequest.findFirst.mockResolvedValue(null);
     await expect(
@@ -188,10 +200,12 @@ describe('AcademicChangeRequestService', () => {
       scholar_profile: { user_id: 777, profile_id: 10 },
     });
 
-    await expect(service.cancelMyRequest(42, 99)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.cancelMyRequest(42, 99)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
   });
 
-  it('approving a program shift updates ScholarProfile, unlocks frozen prospectus, and notifies Scholar & CC Coordinators', async () => {
+  it('approving a program shift updates ScholarProfile, clears old prospectus, sets PENDING_SHIFT_PROSPECTUS, and notifies Scholar & CC Coordinators', async () => {
     prisma.academicChangeRequest.findUnique.mockResolvedValue({
       request_id: 99,
       scholar_profile_id: 10,
@@ -228,17 +242,11 @@ describe('AcademicChangeRequestService', () => {
       where: { profile_id: 10 },
       data: {
         course_of_study: 'BS Information Technology',
-        academic_baseline_status: 'PENDING_PROSPECTUS',
+        academic_baseline_status: 'PENDING_SHIFT_PROSPECTUS',
       },
     });
-    expect(prisma.scholarProspectus.update).toHaveBeenCalledWith({
-      where: { prospectus_id: 55 },
-      data: {
-        is_frozen: false,
-        status: 'DRAFT',
-        course_name: 'BS Information Technology',
-        course_code: 'BSIT',
-      },
+    expect(prisma.scholarProspectus.deleteMany).toHaveBeenCalledWith({
+      where: { scholar_profile_id: 10 },
     });
     expect(notificationsService.notifyUser).toHaveBeenCalledWith(
       42,
@@ -337,5 +345,27 @@ describe('AcademicChangeRequestService', () => {
 
     const eligibility = await service.getEligibility(42);
     expect(eligibility.allowed).toBe(true);
+  });
+
+  it('blocks shift requests while the scholar is already in the shifting or unverified baseline stage', async () => {
+    prisma.scholarProfile.findUnique.mockResolvedValue({
+      profile_id: 10,
+      user_id: 42,
+      academic_baseline_status: 'PENDING_SHIFT_PROSPECTUS',
+      prospectus: null,
+    });
+
+    const shiftEligibility = await service.getEligibility(42);
+    expect(shiftEligibility.allowed).toBe(false);
+
+    prisma.scholarProfile.findUnique.mockResolvedValue({
+      profile_id: 10,
+      user_id: 42,
+      academic_baseline_status: 'PENDING_COORDINATOR_REVIEW',
+      prospectus: { is_frozen: false },
+    });
+
+    const reviewEligibility = await service.getEligibility(42);
+    expect(reviewEligibility.allowed).toBe(false);
   });
 });

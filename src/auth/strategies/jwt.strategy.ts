@@ -51,6 +51,31 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
     }
 
+    // Recover any pre-fix shifted scholar profile that was left in onboarding statuses
+    if (
+      user.scholar_profile &&
+      ['PENDING_SCHOOL_SELECTION', 'PENDING_PROSPECTUS', 'PENDING_HISTORICAL_CCG'].includes(
+        user.scholar_profile.academic_baseline_status,
+      ) &&
+      typeof (this.prisma as any).academicChangeRequest?.findFirst === 'function'
+    ) {
+      const approvedShift = await (this.prisma as any).academicChangeRequest.findFirst({
+        where: {
+          scholar_profile_id: user.scholar_profile.profile_id,
+          status: 'APPROVED',
+        },
+        select: { request_id: true, reviewed_at: true },
+        orderBy: { reviewed_at: 'desc' },
+      });
+      if (approvedShift) {
+        await this.prisma.scholarProfile.update({
+          where: { profile_id: user.scholar_profile.profile_id },
+          data: { academic_baseline_status: 'PENDING_SHIFT_PROSPECTUS' },
+        });
+        user.scholar_profile.academic_baseline_status = 'PENDING_SHIFT_PROSPECTUS';
+      }
+    }
+
     const { password_hash: unusedPasswordHash, ...result } = user;
     void unusedPasswordHash;
     const profile =

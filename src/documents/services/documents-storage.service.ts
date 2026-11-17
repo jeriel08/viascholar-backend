@@ -76,6 +76,31 @@ export class DocumentsStorageService {
     }
 
     if (this.isCollegeGradeDocument(effectiveDocType) || effectiveDocType === 'CCG') {
+      const baselineStatus = (scholar as any).academic_baseline_status;
+      let isShiftInProgress = baselineStatus === 'PENDING_SHIFT_PROSPECTUS';
+      if (
+        !isShiftInProgress &&
+        baselineStatus === 'PENDING_COORDINATOR_REVIEW' &&
+        typeof (this.prisma as any).academicChangeRequest?.findFirst === 'function'
+      ) {
+        const approvedShift = await (this.prisma as any).academicChangeRequest.findFirst({
+          where: {
+            scholar_profile_id: scholar.profile_id,
+            status: 'APPROVED',
+          },
+          orderBy: { reviewed_at: 'desc' },
+        });
+        if (approvedShift) {
+          isShiftInProgress = true;
+        }
+      }
+
+      if (isShiftInProgress) {
+        throw new BadRequestException(
+          'Grade submission is paused while your program shift / school transfer prospectus is being uploaded and verified by the Coordinator.',
+        );
+      }
+
       const unresolvedReport = await this.prisma.gradeReport.findFirst({
         where: {
           scholar_profile_id: scholar.profile_id,
