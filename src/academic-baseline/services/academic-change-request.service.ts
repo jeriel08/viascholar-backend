@@ -14,10 +14,25 @@ import { AppCacheService } from '../../common/cache/app-cache.service.js';
 import { MailService } from '../../mail/mail.service.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
 import {
+  normalizeAcademicYear,
+  normalizeSemester,
+} from '../../documents/utils/academic-term.util.js';
+import {
   type AcademicChangeType,
   CreateAcademicChangeRequestDto,
   ReviewAcademicChangeRequestDto,
 } from '../dto/academic-change-request.dto.js';
+
+export interface AcademicChangeEligibility {
+  allowed: boolean;
+  reason: string | null;
+  ongoing_term: {
+    enrollment_id: number;
+    academic_year: string;
+    semester: string;
+    status: string;
+  } | null;
+}
 
 const CHANGE_TYPE_LABELS: Record<AcademicChangeType, string> = {
   PROGRAM_SHIFT: 'Program Shift',
@@ -207,6 +222,124 @@ export class AcademicChangeRequestService {
     return null;
   }
 
+  async evaluateEligibilityForScholar(
+    scholarProfileId: number,
+  ): Promise<AcademicChangeEligibility> {
+    if (typeof (this.prisma as any).termEnrollment?.findMany !== 'function') {
+      return { allowed: true, reason: null, ongoing_term: null };
+    }
+
+    const enrollments =
+      (await (this.prisma as any).termEnrollment.findMany({
+        where: {
+          scholar_profile_id: scholarProfileId,
+          status: { notIn: ['COMPLETED', 'REJECTED', 'CANCELLED'] },
+        },
+        orderBy: { created_at: 'desc' },
+      })) || [];
+
+    const activeEnrollments = enrollments.filter(
+      (enr: any) =>
+        enr.status !== 'DRAFT' ||
+        enr.cor_document_id != null ||
+        enr.soa_document_id != null,
+    );
+
+    if (activeEnrollments.length === 0) {
+      return { allowed: true, reason: null, ongoing_term: null };
+    }
+
+    const gradeReports =
+      typeof (this.prisma as any).gradeReport?.findMany === 'function'
+        ? (await (this.prisma as any).gradeReport.findMany({
+            where: {
+              scholar_profile_id: scholarProfileId,
+              status: { not: 'REJECTED' },
+            },
+            select: {
+              report_id: true,
+              term_enrollment_id: true,
+              academic_year: true,
+              semester: true,
+            },
+          })) || []
+        : [];
+
+    const confirmedGradeDocs =
+      typeof (this.prisma as any).scholarDocument?.findMany === 'function'
+        ? (await (this.prisma as any).scholarDocument.findMany({
+            where: {
+              scholar_profile_id: scholarProfileId,
+              document_type: { in: ['CCG', 'GRADE_SLIP', 'GRADE_REPORT'] },
+              status: { in: ['STUDENT_CONFIRMED', 'VERIFIED'] },
+            },
+            select: {
+              document_id: true,
+              uploaded_at: true,
+              confirmed_data: true,
+              extracted_data: true,
+            },
+          })) || []
+        : [];
+
+    for (const enr of activeEnrollments) {
+      const enrAy = normalizeAcademicYear(enr.academic_year) || enr.academic_year;
+      const enrSem = normalizeSemester(enr.semester) || enr.semester;
+
+      const hasReport = gradeReports.some((rep: any) => {
+        if (rep.term_enrollment_id && rep.term_enrollment_id === enr.enrollment_id) {
+          return true;
+        }
+        const repAy = normalizeAcademicYear(rep.academic_year) || rep.academic_year;
+        const repSem = normalizeSemester(rep.semester) || rep.semester;
+        return repAy === enrAy && repSem === enrSem;
+      });
+
+      const hasGradeDoc = confirmedGradeDocs.some((doc: any) => {
+        const meta = (doc.confirmed_data || doc.extracted_data || {}) as Record<string, any>;
+        if (meta.academic_year || meta.semester) {
+          const docAy = meta.academic_year
+            ? normalizeAcademicYear(String(meta.academic_year)) || String(meta.academic_year).trim()
+            : enrAy;
+          const docSem = meta.semester
+            ? normalizeSemester(String(meta.semester)) || String(meta.semester).trim()
+            : enrSem;
+          return docAy === enrAy && docSem === enrSem;
+        }
+        if (doc.uploaded_at && enr.created_at) {
+          return new Date(doc.uploaded_at).getTime() >= new Date(enr.created_at).getTime();
+        }
+        return true;
+      });
+
+      if (!hasReport && !hasGradeDoc) {
+        return {
+          allowed: false,
+          reason: `You cannot request a program shift or school transfer while you have an ongoing enrollment (${enr.academic_year} · ${enr.semester}) without submitted grades. Please submit your grades first.`,
+          ongoing_term: {
+            enrollment_id: enr.enrollment_id,
+            academic_year: enr.academic_year,
+            semester: enr.semester,
+            status: enr.status,
+          },
+        };
+      }
+    }
+
+    return { allowed: true, reason: null, ongoing_term: null };
+  }
+
+  async getEligibility(userId: number): Promise<AcademicChangeEligibility> {
+    const scholar = await this.prisma.scholarProfile.findUnique({
+      where: { user_id: userId },
+      select: { profile_id: true },
+    });
+    if (!scholar) {
+      throw new NotFoundException('Scholar profile not found.');
+    }
+    return this.evaluateEligibilityForScholar(scholar.profile_id);
+  }
+
   async getMyRequests(userId: number) {
     const scholar = await this.prisma.scholarProfile.findUnique({
       where: { user_id: userId },
@@ -237,6 +370,14 @@ export class AcademicChangeRequestService {
     });
     if (!scholar) {
       throw new NotFoundException('Scholar profile not found.');
+    }
+
+    const eligibility = await this.evaluateEligibilityForScholar(scholar.profile_id);
+    if (!eligibility.allowed) {
+      throw new ForbiddenException(
+        eligibility.reason ||
+          'You cannot request a program shift or school transfer while you have an ongoing semester without submitted grades.',
+      );
     }
 
     const existingPending = await this.prisma.academicChangeRequest.findFirst({

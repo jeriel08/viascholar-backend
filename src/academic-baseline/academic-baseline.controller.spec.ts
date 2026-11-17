@@ -52,6 +52,7 @@ describe('AcademicBaselineController', () => {
       unfreezeBaseline: vi.fn(),
     };
     changeRequestMock = {
+      getEligibility: vi.fn(),
       getMyRequests: vi.fn(),
       createRequest: vi.fn(),
       cancelMyRequest: vi.fn(),
@@ -352,6 +353,10 @@ describe('AcademicBaselineController', () => {
         'updateMyProspectusSubjects',
         'uploadHistoricalCcg',
         'submitForReview',
+        'getAcademicChangeEligibility',
+        'getMyAcademicChangeRequests',
+        'createAcademicChangeRequest',
+        'cancelAcademicChangeRequest',
       ]) {
         expect(rolesFor(handlerFor(name))).toEqual([
           Role.SCHOLAR,

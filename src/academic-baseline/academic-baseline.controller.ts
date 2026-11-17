@@ -320,6 +320,16 @@ export class AcademicBaselineController {
   // PROGRAM SHIFT & SCHOOL TRANSFER REQUESTS
   // ==========================================
 
+  @Get('change-requests/eligibility')
+  @Roles(Role.SCHOLAR, Role.APPLICANT)
+  @ApiOperation({
+    summary:
+      'Check whether the scholar is eligible to submit a program shift or school transfer request',
+  })
+  getAcademicChangeEligibility(@Request() req: AuthenticatedRequest) {
+    return this.changeRequestService.getEligibility(req.user.user_id);
+  }
+
   @Get('change-requests/me')
   @Roles(Role.SCHOLAR, Role.APPLICANT)
   @ApiOperation({

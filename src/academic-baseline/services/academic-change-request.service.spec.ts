@@ -38,6 +38,13 @@ describe('AcademicChangeRequestService', () => {
       },
       scholarDocument: {
         create: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      termEnrollment: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      gradeReport: {
+        findMany: vi.fn().mockResolvedValue([]),
       },
       scholarProspectus: {
         update: vi.fn(),
@@ -245,5 +252,90 @@ describe('AcademicChangeRequestService', () => {
       expect.objectContaining({ decision: 'APPROVED' }),
     );
     expect(cacheService.del).toHaveBeenCalledWith('baseline:scholar:42');
+  });
+
+  it('blocks program shift requests when the scholar has an ongoing semester without submitted grades', async () => {
+    prisma.scholarProfile.findUnique.mockResolvedValue({
+      profile_id: 10,
+      user_id: 42,
+      first_name: 'Maria',
+      last_name: 'Clara',
+      course_of_study: 'BS Computer Science',
+      school_name: 'University of Mindanao',
+      school_id: 3,
+      user: { email: 'maria@example.com' },
+      school_grading_system: { school_name: 'University of Mindanao' },
+    });
+    prisma.termEnrollment.findMany.mockResolvedValue([
+      {
+        enrollment_id: 21,
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+        status: 'APPROVED',
+        created_at: new Date('2026-08-01T00:00:00Z'),
+      },
+    ]);
+    prisma.gradeReport.findMany.mockResolvedValue([]);
+    prisma.scholarDocument.findMany.mockResolvedValue([]);
+
+    const eligibility = await service.getEligibility(42);
+    expect(eligibility.allowed).toBe(false);
+    expect(eligibility.ongoing_term?.enrollment_id).toBe(21);
+
+    await expect(
+      service.createRequest(42, {
+        change_type: 'PROGRAM_SHIFT',
+        requested_course_of_study: 'BS Information Technology',
+        reason: 'Wanting to shift before grades are submitted.',
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('allows program shift requests once grades are submitted for the ongoing enrollment', async () => {
+    prisma.scholarProfile.findUnique.mockResolvedValue({
+      profile_id: 10,
+      user_id: 42,
+    });
+    prisma.termEnrollment.findMany.mockResolvedValue([
+      {
+        enrollment_id: 21,
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+        status: 'APPROVED',
+        created_at: new Date('2026-08-01T00:00:00Z'),
+      },
+    ]);
+    prisma.gradeReport.findMany.mockResolvedValue([
+      {
+        report_id: 7,
+        term_enrollment_id: 21,
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+      },
+    ]);
+
+    const eligibility = await service.getEligibility(42);
+    expect(eligibility.allowed).toBe(true);
+    expect(eligibility.ongoing_term).toBeNull();
+  });
+
+  it('ignores empty enrollment drafts without uploaded documents when checking eligibility', async () => {
+    prisma.scholarProfile.findUnique.mockResolvedValue({
+      profile_id: 10,
+      user_id: 42,
+    });
+    prisma.termEnrollment.findMany.mockResolvedValue([
+      {
+        enrollment_id: 30,
+        academic_year: '2026-2027',
+        semester: '2nd Semester',
+        status: 'DRAFT',
+        cor_document_id: null,
+        soa_document_id: null,
+      },
+    ]);
+
+    const eligibility = await service.getEligibility(42);
+    expect(eligibility.allowed).toBe(true);
   });
 });
