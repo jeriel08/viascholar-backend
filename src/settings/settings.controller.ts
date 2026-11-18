@@ -39,6 +39,15 @@ export class SettingsController {
     return this.settingsService.getSettings();
   }
 
+  @Get('staff-contacts')
+  @ApiOperation({
+    summary:
+      'Get primary Grantor and Coordinator contact emails for inquiries',
+  })
+  getStaffContacts() {
+    return this.settingsService.getStaffContacts();
+  }
+
   @Patch()
   @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({ summary: 'Update global settings (Admin, Grantor & Coordinator)' })

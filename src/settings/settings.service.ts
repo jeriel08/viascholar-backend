@@ -1245,4 +1245,30 @@ export class SettingsService implements OnModuleInit {
       school: archived,
     };
   }
+
+  /**
+   * Returns active Grantor and Coordinator email contacts for applicant/scholar inquiries.
+   */
+  async getStaffContacts() {
+    const [grantorUser, coordinatorUser] =
+      typeof (this.prisma as any).user?.findFirst === 'function'
+        ? await Promise.all([
+            this.prisma.user.findFirst({
+              where: { role: 'GRANTOR', is_active: true },
+              orderBy: { user_id: 'asc' },
+              select: { email: true },
+            }),
+            this.prisma.user.findFirst({
+              where: { role: 'COORDINATOR', is_active: true },
+              orderBy: { user_id: 'asc' },
+              select: { email: true },
+            }),
+          ])
+        : [null, null];
+
+    return {
+      grantor_email: grantorUser?.email || 'grantor@viascholar.com',
+      coordinator_email: coordinatorUser?.email || 'coordinator@viascholar.com',
+    };
+  }
 }
