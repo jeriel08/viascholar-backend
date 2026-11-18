@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsArray,
+  IsBoolean,
   IsNumber,
   IsOptional,
   IsString,
@@ -45,4 +46,13 @@ export class VerifyDocumentDto {
   @IsString()
   @IsOptional()
   notes?: string;
+
+  @ApiPropertyOptional({
+    example: false,
+    description:
+      'Allows Coordinator/Grantor/Admin to verify a bypassed or unconfirmed document directly from Scholar Details.',
+  })
+  @IsBoolean()
+  @IsOptional()
+  bypass_student_confirmation?: boolean;
 }

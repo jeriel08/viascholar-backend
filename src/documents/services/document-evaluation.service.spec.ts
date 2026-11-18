@@ -560,5 +560,129 @@ describe('DocumentEvaluationService', () => {
         objectMatching({ title: 'Scholarship Archived: 2nd Chance Exhausted' }),
       );
     });
+
+    it('throws BadRequestException when document is already VERIFIED', async () => {
+      prisma.scholarDocument.findUnique.mockResolvedValue(
+        makeDoc({ status: 'VERIFIED' }),
+      );
+
+      await expect(
+        service.verifyAndEvaluate(
+          7,
+          55,
+          makeDto({ bypass_student_confirmation: true }),
+        ),
+      ).rejects.toThrow(new BadRequestException('Document is already verified.'));
+    });
+
+    it('retroactively verifies a bypassed PASSED_PRECHECK Form 9 for an active scholar without creating a GradeReport', async () => {
+      prisma.scholarDocument.findUnique.mockResolvedValue(
+        makeDoc({
+          document_type: 'FORM_138',
+          label: 'Form 9 Report Card',
+          status: 'PASSED_PRECHECK',
+          confirmed_data: null,
+          scholar_profile: {
+            profile_id: 11,
+            user_id: 7,
+            first_name: 'Maria',
+            school_id: null,
+            school_name: null,
+            academic_baseline_status: 'ON_PROBATION',
+            user: { role: 'SCHOLAR' },
+          },
+        }),
+      );
+      gradeCalc.isForm138.mockReturnValue(true);
+
+      const result = await service.verifyAndEvaluate(
+        7,
+        55,
+        makeDto({ bypass_student_confirmation: true }),
+      );
+
+      expect(result.report).toBeNull();
+      expect(prisma.gradeReport.create).not.toHaveBeenCalled();
+      expect(prisma.scholarProfile.update).not.toHaveBeenCalled();
+      expect(prisma.scholarDocument.update).toHaveBeenCalledWith({
+        where: { document_id: 55 },
+        data: objectMatching({
+          status: 'VERIFIED',
+          reviewed_by_employee_id: 201,
+          rejection_reason: null,
+        }),
+      });
+      expect(events.emitToStaff).toHaveBeenCalledWith(
+        'document:verified',
+        objectMatching({ documentId: 55, scholarProfileId: 11 }),
+      );
+    });
+  });
+
+  describe('staffVerifyDocument', () => {
+    it('throws NotFoundException when employee is missing', async () => {
+      prisma.employee.findUnique.mockResolvedValue(null);
+
+      await expect(service.staffVerifyDocument(7, 55)).rejects.toThrow(
+        new NotFoundException('Employee profile not found for current user.'),
+      );
+    });
+
+    it('throws BadRequestException when document is already verified', async () => {
+      prisma.scholarDocument.findUnique.mockResolvedValue(
+        makeDoc({ status: 'VERIFIED' }),
+      );
+
+      await expect(service.staffVerifyDocument(7, 55)).rejects.toThrow(
+        new BadRequestException('Document is already verified.'),
+      );
+    });
+
+    it('marks an unverified document as VERIFIED, audits, invalidates caches, and notifies scholar', async () => {
+      prisma.scholarDocument.findUnique.mockResolvedValue(
+        makeDoc({
+          document_type: 'PROSPECTUS',
+          label: 'Curriculum Prospectus',
+          status: 'PASSED_PRECHECK',
+          scholar_profile: {
+            profile_id: 11,
+            user_id: 7,
+            first_name: 'Maria',
+            user: { role: 'SCHOLAR' },
+          },
+        }),
+      );
+      prisma.scholarDocument.update.mockResolvedValue({
+        document_id: 55,
+        status: 'VERIFIED',
+      });
+
+      const result = await service.staffVerifyDocument(
+        7,
+        55,
+        'Verified bypassed file',
+      );
+
+      expect(result.document.status).toBe('VERIFIED');
+      expect(prisma.scholarDocument.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { document_id: 55 },
+          data: objectMatching({
+            status: 'VERIFIED',
+            reviewed_by_employee_id: 201,
+            rejection_reason: null,
+          }),
+        }),
+      );
+      expect(audit.log).toHaveBeenCalled();
+      expect(events.emitToStaff).toHaveBeenCalledWith(
+        'document:verified',
+        objectMatching({ documentId: 55, scholarProfileId: 11 }),
+      );
+      expect(notifications.notifyUser).toHaveBeenCalledWith(
+        7,
+        objectMatching({ title: 'Document Verified', link: '/schoProfile' }),
+      );
+    });
   });
 });

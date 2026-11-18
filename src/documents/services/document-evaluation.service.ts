@@ -14,7 +14,7 @@ import { ProspectusTransitionService } from './prospectus-transition.service.js'
 import { DocumentConfirmationService } from './document-confirmation.service.js';
 import { ConfirmDocumentDto } from '../dto/confirm-document.dto.js';
 import { VerifyDocumentDto } from '../dto/verify-document.dto.js';
-import { SchoolGradingSystem } from '../../generated/prisma/client.js';
+import { Prisma, SchoolGradingSystem } from '../../generated/prisma/client.js';
 import { Role } from '../../generated/prisma/enums.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
 import {
@@ -99,11 +99,24 @@ export class DocumentEvaluationService {
       throw new NotFoundException(`Document ID ${documentId} not found.`);
     }
 
-    if (doc.status !== 'STUDENT_CONFIRMED') {
+    if (doc.status === 'VERIFIED') {
+      throw new BadRequestException('Document is already verified.');
+    }
+
+    if (
+      doc.status !== 'STUDENT_CONFIRMED' &&
+      !dto.bypass_student_confirmation
+    ) {
       throw new BadRequestException(
         `Cannot verify document: Student must confirm first (status: ${doc.status}).`,
       );
     }
+
+    const isForm138 = this.gradeCalculatorService.isForm138(
+      doc.document_type || '',
+      doc.label || '',
+    );
+    const isScholar = doc.scholar_profile?.user?.role === Role.SCHOLAR;
 
     const confirmed = doc.confirmed_data as ConfirmedGradeData | null;
     const extracted = (doc.extracted_data ?? {}) as ExtractedDocData;
@@ -121,6 +134,78 @@ export class DocumentEvaluationService {
               units: i.units != null ? Number(i.units) : 1,
               grade: Number(i.grade),
             }));
+
+    // Retroactive verification of a bypassed Form 9 / Form 138 for an already-promoted Scholar:
+    // Mark VERIFIED without creating a new college GradeReport that could skew active GWA or probation checks.
+    if (dto.bypass_student_confirmation && isScholar && isForm138) {
+      const verifiedAt = new Date();
+      const confirmedPayload =
+        doc.confirmed_data ??
+        (gradeItems.length > 0 || dto.academic_year || dto.general_average != null
+          ? {
+              academic_year:
+                dto.academic_year ??
+                (typeof extracted.academic_year === 'string'
+                  ? extracted.academic_year
+                  : undefined),
+              general_average:
+                dto.general_average != null
+                  ? Number(dto.general_average)
+                  : extracted.general_average != null &&
+                      !isNaN(Number(extracted.general_average))
+                    ? Number(extracted.general_average)
+                    : undefined,
+              grade_items: gradeItems,
+            }
+          : undefined);
+
+      const updatedDoc = await this.prisma.scholarDocument.update({
+        where: { document_id: documentId },
+        data: {
+          status: 'VERIFIED',
+          verified_at: verifiedAt,
+          reviewed_by_employee_id: employee.employee_id,
+          rejection_reason: null,
+          ...(confirmedPayload
+            ? { confirmed_data: confirmedPayload as Prisma.InputJsonValue }
+            : {}),
+        },
+      });
+
+      await this.auditService.log(
+        coordinatorUserId,
+        'DOCUMENT_VERIFIED',
+        `Staff retroactively verified bypassed admission document #${documentId} (${doc.document_type}) for scholar #${doc.scholar_profile_id}.${dto.notes ? ` Notes: ${dto.notes}` : ''}`,
+      );
+
+      const verifyPayload = {
+        documentId,
+        scholarProfileId: doc.scholar_profile_id,
+        verifiedAt: verifiedAt.toISOString(),
+      };
+      this.eventsGateway.emitToStaff('document:verified', verifyPayload);
+      if (doc.scholar_profile?.user_id) {
+        this.eventsGateway.emitToUser(
+          doc.scholar_profile.user_id,
+          'document:verified',
+          verifyPayload,
+        );
+      }
+
+      if (this.cacheService) {
+        await this.cacheService.delPattern('dashboard:');
+        await this.cacheService.delPattern('baseline:');
+      }
+
+      return {
+        document: updatedDoc,
+        report: null,
+        isEligible: true,
+        evaluationFlag: 'CLEARED',
+        second_chance_exhausted: false,
+        application: null,
+      };
+    }
 
     if (gradeItems.length === 0) {
       throw new BadRequestException(
@@ -142,10 +227,6 @@ export class DocumentEvaluationService {
         extracted.academic_year ??
         '');
     const academicYear = typeof rawAY === 'string' ? rawAY : '';
-    const isForm138 = this.gradeCalculatorService.isForm138(
-      doc.document_type || '',
-      doc.label || '',
-    );
 
     const schoolConfig = await this.resolveSchoolConfig(
       doc,
@@ -472,6 +553,9 @@ export class DocumentEvaluationService {
 
     if (this.cacheService) {
       await this.cacheService.delPattern('dashboard:');
+      if (dto.bypass_student_confirmation) {
+        await this.cacheService.delPattern('baseline:');
+      }
     }
 
     return {
@@ -480,6 +564,96 @@ export class DocumentEvaluationService {
       evaluationFlag: evalFlag,
       second_chance_exhausted: isSecondChanceExhausted,
       application: updatedApplication,
+    };
+  }
+
+  /**
+   * Staff (Coordinator / Grantor / Admin) directly marks a bypassed or non-grade
+   * document as VERIFIED from the Scholar Full Details view.
+   */
+  async staffVerifyDocument(
+    staffUserId: number,
+    documentId: number,
+    notes?: string,
+  ) {
+    const employee = await this.prisma.employee.findUnique({
+      where: { user_id: staffUserId },
+    });
+    if (!employee) {
+      throw new NotFoundException(
+        'Employee profile not found for current user.',
+      );
+    }
+
+    const doc = await this.prisma.scholarDocument.findUnique({
+      where: { document_id: documentId },
+      include: { scholar_profile: { include: { user: true } } },
+    });
+    if (!doc) {
+      throw new NotFoundException(`Document ID ${documentId} not found.`);
+    }
+
+    if (doc.status === 'VERIFIED') {
+      throw new BadRequestException('Document is already verified.');
+    }
+
+    const verifiedAt = new Date();
+    const updatedDocument = await this.prisma.scholarDocument.update({
+      where: { document_id: documentId },
+      data: {
+        status: 'VERIFIED',
+        verified_at: verifiedAt,
+        reviewed_by_employee_id: employee.employee_id,
+        rejection_reason: null,
+      },
+      include: {
+        reviewed_by_employee: {
+          select: {
+            employee_id: true,
+            first_name: true,
+            last_name: true,
+          },
+        },
+      },
+    });
+
+    await this.auditService.log(
+      staffUserId,
+      'DOCUMENT_VERIFIED',
+      `Staff verified document #${documentId} (${doc.document_type}) for scholar #${doc.scholar_profile_id} (previous status: ${doc.status}).${notes?.trim() ? ` Notes: ${notes.trim()}` : ''}`,
+    );
+
+    const verifyPayload = {
+      documentId,
+      scholarProfileId: doc.scholar_profile_id,
+      verifiedAt: verifiedAt.toISOString(),
+    };
+    this.eventsGateway.emitToStaff('document:verified', verifyPayload);
+    if (doc.scholar_profile?.user_id) {
+      this.eventsGateway.emitToUser(
+        doc.scholar_profile.user_id,
+        'document:verified',
+        verifyPayload,
+      );
+      void this.notificationsService.notifyUser(doc.scholar_profile.user_id, {
+        title: 'Document Verified',
+        message: `Your ${doc.label || doc.document_type} document has been verified by scholarship staff.`,
+        category: 'document',
+        link:
+          doc.scholar_profile.user.role === Role.SCHOLAR
+            ? '/schoProfile'
+            : '/ApplicantsApplication',
+      });
+    }
+
+    if (this.cacheService) {
+      await this.cacheService.delPattern('dashboard:');
+      await this.cacheService.delPattern('baseline:');
+    }
+
+    return {
+      document: updatedDocument,
+      message: 'Document verified successfully.',
     };
   }
 

@@ -372,4 +372,22 @@ export class DocumentsController {
   ) {
     return this.evaluationService.verifyAndEvaluate(req.user.user_id, id, dto);
   }
+
+  @Patch(':id/staff-verify')
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @ApiOperation({
+    summary:
+      'Coordinator or Grantor directly marks a bypassed or non-grade document as verified',
+  })
+  staffVerifyDocument(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body?: { notes?: string },
+  ) {
+    return this.evaluationService.staffVerifyDocument(
+      req.user.user_id,
+      id,
+      body?.notes,
+    );
+  }
 }

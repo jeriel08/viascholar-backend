@@ -59,6 +59,7 @@ describe('DocumentsController', () => {
       confirmDocument: vi.fn(),
       requestChanges: vi.fn(),
       verifyAndEvaluate: vi.fn(),
+      staffVerifyDocument: vi.fn(),
     };
     gradeReportsMock = {
       getMyGradeReports: vi.fn(),
@@ -239,6 +240,18 @@ describe('DocumentsController', () => {
 
       expect(evaluationMock.verifyAndEvaluate).toHaveBeenCalledWith(3, 55, dto);
     });
+
+    it('delegates staffVerifyDocument with user, id, and optional notes', () => {
+      void controller.staffVerifyDocument(makeRequest(3), 55, {
+        notes: 'Bypassed doc check',
+      });
+
+      expect(evaluationMock.staffVerifyDocument).toHaveBeenCalledWith(
+        3,
+        55,
+        'Bypassed doc check',
+      );
+    });
   });
 
   describe('validateUploadedFiles', () => {
@@ -360,6 +373,7 @@ describe('DocumentsController', () => {
         'getDocumentDetail',
         'requestChanges',
         'verifyAndEvaluate',
+        'staffVerifyDocument',
       ]) {
         const roles = rolesFor(handlerFor(name)) ?? [];
         expect(roles).toEqual(
