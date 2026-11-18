@@ -673,6 +673,320 @@ export class ScholarBaselineService {
     };
   }
 
+  // 5. Get Scholar's Prospectus & Program History (archived snapshots + legacy fallback)
+  async getScholarProspectusHistory(userId: number) {
+    const scholar = await this.prisma.scholarProfile.findUnique({
+      where: { user_id: userId },
+      select: { profile_id: true },
+    });
+    if (!scholar) {
+      throw new NotFoundException('Scholar profile not found.');
+    }
+    return this.getProspectusHistoryByProfileId(scholar.profile_id);
+  }
+
+  async getProspectusHistoryByProfileId(scholarProfileId: number) {
+    const scholar = await this.prisma.scholarProfile.findUnique({
+      where: { profile_id: scholarProfileId },
+      select: {
+        profile_id: true,
+        course_of_study: true,
+        school_name: true,
+        academic_baseline_status: true,
+      },
+    });
+    if (!scholar) {
+      throw new NotFoundException('Scholar profile not found.');
+    }
+
+    let savedRows: Array<any> = [];
+    if (
+      typeof (this.prisma as any).scholarProspectusHistory?.findMany ===
+      'function'
+    ) {
+      try {
+        savedRows = await (
+          this.prisma as any
+        ).scholarProspectusHistory.findMany({
+          where: { scholar_profile_id: scholarProfileId },
+          include: {
+            document: {
+              select: {
+                document_id: true,
+                file_name: true,
+                file_url: true,
+                file_type: true,
+                uploaded_at: true,
+              },
+            },
+            academic_change_request: {
+              select: {
+                request_id: true,
+                change_type: true,
+                requested_course_of_study: true,
+                requested_school_name: true,
+                effective_academic_year: true,
+                effective_semester: true,
+                reviewed_at: true,
+              },
+            },
+          },
+          orderBy: { archived_at: 'desc' },
+        });
+      } catch (err: any) {
+        if (err?.code !== 'P2021') {
+          throw err;
+        }
+      }
+    }
+
+    const mappedSaved: Array<{
+      history_id: number;
+      source: 'ARCHIVED_SNAPSHOT' | 'RECONSTRUCTED_PRE_SHIFT';
+      course_code: string | null;
+      course_name: string;
+      school_name: string | null;
+      curriculum_year: string;
+      total_units: number;
+      credited_units: number;
+      status: string;
+      archive_reason: string;
+      is_frozen: boolean;
+      frozen_at: Date | string | null;
+      archived_at: Date | string;
+      academic_change_request: {
+        request_id: number;
+        change_type: string;
+        requested_course_of_study: string | null;
+        requested_school_name: string | null;
+        effective_academic_year: string | null;
+        effective_semester: string | null;
+        reviewed_at: Date | string | null;
+      } | null;
+      document: {
+        document_id: number;
+        file_name: string | null;
+        file_url: string;
+        file_type: string;
+        uploaded_at: Date | string;
+      } | null;
+      subjects: Array<any>;
+    }> = savedRows.map((row) => {
+      const subjects = Array.isArray(row.subjects_snapshot)
+        ? row.subjects_snapshot
+        : [];
+      return {
+        history_id: row.history_id,
+        source: 'ARCHIVED_SNAPSHOT' as const,
+        course_code: row.course_code ?? null,
+        course_name: row.course_name,
+        school_name: row.school_name ?? null,
+        curriculum_year: row.curriculum_year,
+        total_units: Number(row.total_units ?? 0),
+        credited_units: Number(row.credited_units ?? 0),
+        status: row.status,
+        archive_reason: row.archive_reason,
+        is_frozen: Boolean(row.is_frozen),
+        frozen_at: row.frozen_at ?? null,
+        archived_at: row.archived_at,
+        academic_change_request: row.academic_change_request ?? null,
+        document: row.document ?? null,
+        subjects,
+      };
+    });
+
+    const coveredChangeRequestIds = new Set(
+      savedRows
+        .map((r) => r.academic_change_request_id)
+        .filter((id): id is number => typeof id === 'number'),
+    );
+    const coveredDocIds = new Set(
+      savedRows
+        .map((r) => r.document_id)
+        .filter((id): id is number => typeof id === 'number'),
+    );
+
+    const reconstructed: typeof mappedSaved = [];
+    if (
+      typeof (this.prisma as any).academicChangeRequest?.findMany ===
+      'function'
+    ) {
+      const approvedChanges =
+        (await (this.prisma as any).academicChangeRequest.findMany({
+          where: {
+            scholar_profile_id: scholarProfileId,
+            status: 'APPROVED',
+          },
+          orderBy: { reviewed_at: 'desc' },
+        })) || [];
+
+      const unarchivedChanges = approvedChanges.filter(
+        (c: any) => !coveredChangeRequestIds.has(c.request_id),
+      );
+
+      if (unarchivedChanges.length > 0) {
+        const [prospectusDocs, gradeReports] = await Promise.all([
+          typeof (this.prisma as any).scholarDocument?.findMany === 'function'
+            ? this.prisma.scholarDocument.findMany({
+                where: {
+                  scholar_profile_id: scholarProfileId,
+                  document_type: 'PROSPECTUS',
+                },
+                orderBy: { uploaded_at: 'desc' },
+              })
+            : Promise.resolve([]),
+          typeof (this.prisma as any).gradeReport?.findMany === 'function'
+            ? this.prisma.gradeReport.findMany({
+                where: { scholar_profile_id: scholarProfileId },
+                include: { grade_items: true },
+                orderBy: { submitted_at: 'desc' },
+              })
+            : Promise.resolve([]),
+        ]);
+
+        const normCode = (code?: string | null) =>
+          (code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+        for (const change of unarchivedChanges) {
+          const reviewedMs = change.reviewed_at
+            ? new Date(change.reviewed_at).getTime()
+            : Number.MAX_SAFE_INTEGER;
+
+          const matchedDoc = prospectusDocs.find((d: any) => {
+            if (coveredDocIds.has(d.document_id)) return false;
+            const upMs = d.uploaded_at ? new Date(d.uploaded_at).getTime() : 0;
+            return upMs <= reviewedMs;
+          });
+          if (matchedDoc) {
+            coveredDocIds.add(matchedDoc.document_id);
+          }
+
+          const preShiftReports = gradeReports.filter((gr: any) => {
+            const subMs = gr.submitted_at
+              ? new Date(gr.submitted_at).getTime()
+              : 0;
+            return subMs > 0 && subMs <= reviewedMs;
+          });
+
+          const gradeByCode = new Map<
+            string,
+            { grade: number; term: string; raw_status?: string | null }
+          >();
+          for (const gr of preShiftReports) {
+            for (const item of gr.grade_items || []) {
+              const key = normCode(item.subject_code);
+              if (key && !gradeByCode.has(key)) {
+                gradeByCode.set(key, {
+                  grade: Number(item.grade),
+                  term: `${gr.academic_year} ${gr.semester}`,
+                  raw_status: item.raw_status,
+                });
+              }
+            }
+          }
+
+          const ext = (matchedDoc?.extracted_data || null) as {
+            curriculum_year?: string;
+            course_code?: string;
+            course_name?: string;
+            total_units?: number;
+            subjects?: Array<Record<string, any>>;
+          } | null;
+
+          const rawSubjects = Array.isArray(ext?.subjects) ? ext.subjects : [];
+          const mergedSubjects = rawSubjects.map((s) => {
+            const matchedGrade = gradeByCode.get(normCode(s.subject_code));
+            const status = matchedGrade
+              ? matchedGrade.raw_status === 'FAILED'
+                ? 'FAILED'
+                : 'PASSED'
+              : String(s.status || 'UNTAKEN');
+            const grade =
+              matchedGrade?.grade ??
+              (s.grade != null ? Number(s.grade) : null);
+
+            return {
+              subject_code: String(s.subject_code || ''),
+              descriptive_title: String(s.descriptive_title || ''),
+              units: Number(s.units) || 0,
+              year_level: Number(s.year_level) || 1,
+              semester: String(s.semester || '1st Semester'),
+              status,
+              grade,
+              credited_term:
+                matchedGrade?.term ||
+                (s.credited_term ? String(s.credited_term) : null),
+              remarks: s.remarks ? String(s.remarks) : null,
+              prerequisites: Array.isArray(s.prerequisites)
+                ? s.prerequisites.map(String)
+                : null,
+            };
+          });
+
+          const totalUnits =
+            ext?.total_units && Number(ext.total_units) > 0
+              ? Number(ext.total_units)
+              : mergedSubjects.reduce((sum, s) => sum + s.units, 0);
+          const creditedUnits = mergedSubjects
+            .filter((s) => s.status === 'PASSED' || s.status === 'CREDITED')
+            .reduce((sum, s) => sum + s.units, 0);
+
+          reconstructed.push({
+            history_id: -change.request_id,
+            source: 'RECONSTRUCTED_PRE_SHIFT',
+            course_code: ext?.course_code ?? null,
+            course_name:
+              change.current_course_of_study ||
+              ext?.course_name ||
+              'Previous Program',
+            school_name: change.current_school_name ?? null,
+            curriculum_year: ext?.curriculum_year || 'Pre-Shift Curriculum',
+            total_units: Number(totalUnits.toFixed(1)),
+            credited_units: Number(creditedUnits.toFixed(1)),
+            status: 'ARCHIVED',
+            archive_reason: change.change_type || 'PROGRAM_SHIFT',
+            is_frozen: false,
+            frozen_at: null,
+            archived_at: change.reviewed_at || change.created_at,
+            academic_change_request: {
+              request_id: change.request_id,
+              change_type: change.change_type,
+              requested_course_of_study: change.requested_course_of_study,
+              requested_school_name: change.requested_school_name,
+              effective_academic_year: change.effective_academic_year,
+              effective_semester: change.effective_semester,
+              reviewed_at: change.reviewed_at,
+            },
+            document: matchedDoc
+              ? {
+                  document_id: matchedDoc.document_id,
+                  file_name: matchedDoc.file_name,
+                  file_url: matchedDoc.file_url,
+                  file_type: matchedDoc.file_type,
+                  uploaded_at: matchedDoc.uploaded_at,
+                }
+              : null,
+            subjects: mergedSubjects,
+          });
+        }
+      }
+    }
+
+    const history = [...mappedSaved, ...reconstructed].sort(
+      (a, b) =>
+        new Date(b.archived_at).getTime() - new Date(a.archived_at).getTime(),
+    );
+
+    return {
+      current_program: {
+        course_of_study: scholar.course_of_study,
+        school_name: scholar.school_name,
+        academic_baseline_status: scholar.academic_baseline_status,
+      },
+      history,
+    };
+  }
+
   // Fast aggregated summary endpoint for Scholar Dashboard
   async getScholarDashboardSummary(userId: number, forceRefresh = false) {
     const cacheKey = `dashboard:scholar:${userId}`;

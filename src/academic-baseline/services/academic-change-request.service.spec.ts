@@ -56,6 +56,10 @@ describe('AcademicChangeRequestService', () => {
         update: vi.fn(),
         deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
+      scholarProspectusHistory: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({ history_id: 1 }),
+      },
       academicChangeRequest: {
         findFirst: vi.fn(),
         findMany: vi.fn(),
@@ -221,8 +225,32 @@ describe('AcademicChangeRequestService', () => {
         first_name: 'Maria',
         last_name: 'Clara',
         school_id: 3,
+        school_name: 'State University',
         user: { email: 'maria@example.com', user_id: 42 },
-        prospectus: { prospectus_id: 55, is_frozen: true, status: 'FROZEN' },
+        prospectus: {
+          prospectus_id: 55,
+          document_id: 88,
+          curriculum_year: '2023-2024',
+          course_code: 'BSCS',
+          course_name: 'BS Computer Science',
+          total_units: 120,
+          is_frozen: true,
+          status: 'FROZEN',
+          subjects: [
+            {
+              subject_code: 'CS101',
+              descriptive_title: 'Intro to CS',
+              units: 3,
+              year_level: 1,
+              semester: '1st Semester',
+              status: 'PASSED',
+              grade: 1.5,
+              credited_term: '2024-2025 1st Semester',
+              remarks: 'Passed',
+              prerequisites: [],
+            },
+          ],
+        },
       },
     });
     prisma.academicChangeRequest.update.mockResolvedValue({
@@ -244,6 +272,21 @@ describe('AcademicChangeRequestService', () => {
         course_of_study: 'BS Information Technology',
         academic_baseline_status: 'PENDING_SHIFT_PROSPECTUS',
       },
+    });
+    expect(prisma.scholarProspectusHistory.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        scholar_profile_id: 10,
+        academic_change_request_id: 99,
+        course_name: 'BS Computer Science',
+        credited_units: 3,
+        subjects_snapshot: [
+          expect.objectContaining({
+            subject_code: 'CS101',
+            status: 'PASSED',
+            grade: 1.5,
+          }),
+        ],
+      }),
     });
     expect(prisma.scholarProspectus.deleteMany).toHaveBeenCalledWith({
       where: { scholar_profile_id: 10 },

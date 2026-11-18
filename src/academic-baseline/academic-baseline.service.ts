@@ -69,6 +69,17 @@ export class AcademicBaselineService {
     return this.scholarBaselineService.submitForReview(userId);
   }
 
+  // 6. Retrieve archived prospectus & program history
+  async getScholarProspectusHistory(userId: number) {
+    return this.scholarBaselineService.getScholarProspectusHistory(userId);
+  }
+
+  async getCoordinatorScholarProspectusHistory(scholarProfileId: number) {
+    return this.scholarBaselineService.getProspectusHistoryByProfileId(
+      scholarProfileId,
+    );
+  }
+
   // ==========================================
   // COORDINATOR AUDIT & GOVERNANCE OPERATIONS
   // ==========================================

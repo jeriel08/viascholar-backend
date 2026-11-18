@@ -51,6 +51,16 @@ const createPrismaMock = () => ({
   },
   academicChangeRequest: {
     findFirst: vi.fn(),
+    findMany: vi.fn().mockResolvedValue([]),
+  },
+  scholarProspectusHistory: {
+    findMany: vi.fn().mockResolvedValue([]),
+  },
+  scholarDocument: {
+    findMany: vi.fn().mockResolvedValue([]),
+  },
+  gradeReport: {
+    findMany: vi.fn().mockResolvedValue([]),
   },
 });
 
@@ -969,6 +979,117 @@ describe('ScholarBaselineService', () => {
       expect(state.prospectus?.subjects[0].subject_code).toBe('GE1');
       expect(state.prospectus?.subjects[0].status).toBe('UNTAKEN');
       expect(prisma.prospectusSubject.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getScholarProspectusHistory', () => {
+    it('returns archived prospectus snapshots and reconstructs unarchived pre-shift history with grade reports', async () => {
+      prisma.scholarProfile.findUnique.mockResolvedValue({
+        profile_id: 11,
+        course_of_study: 'BSIT',
+        school_name: 'University of Mindanao',
+        academic_baseline_status: 'PENDING_COORDINATOR_REVIEW',
+      });
+      prisma.scholarProspectusHistory.findMany.mockResolvedValue([
+        {
+          history_id: 5,
+          scholar_profile_id: 11,
+          academic_change_request_id: 2,
+          document_id: 51,
+          curriculum_year: '2024-2025',
+          course_code: 'BSCE',
+          course_name: 'BS Civil Engineering',
+          school_name: 'University of Mindanao',
+          total_units: 6,
+          credited_units: 3,
+          status: 'FROZEN',
+          archive_reason: 'PROGRAM_SHIFT',
+          is_frozen: true,
+          frozen_at: new Date('2026-01-15T08:00:00.000Z'),
+          archived_at: new Date('2026-03-01T08:00:00.000Z'),
+          subjects_snapshot: [
+            {
+              subject_code: 'CE101',
+              descriptive_title: 'Engineering Drawing',
+              units: 3,
+              year_level: 1,
+              semester: '1st Semester',
+              status: 'PASSED',
+              grade: 1.5,
+              credited_term: '2025-2026 1st Semester',
+              remarks: null,
+              prerequisites: null,
+            },
+          ],
+          document: {
+            document_id: 51,
+            file_name: 'ce-prospectus.pdf',
+            file_url: 'https://cdn.test/ce.pdf',
+            file_type: 'pdf',
+            uploaded_at: new Date('2026-01-05T08:00:00.000Z'),
+          },
+          academic_change_request: null,
+        },
+      ]);
+      prisma.academicChangeRequest.findMany.mockResolvedValue([
+        {
+          request_id: 1,
+          change_type: 'PROGRAM_SHIFT',
+          current_course_of_study: 'BS Accountancy',
+          current_school_name: 'University of Mindanao',
+          requested_course_of_study: 'BS Civil Engineering',
+          requested_school_name: null,
+          effective_academic_year: '2025-2026',
+          effective_semester: '2nd Semester',
+          reviewed_at: new Date('2026-01-01T08:00:00.000Z'),
+          created_at: new Date('2025-12-20T08:00:00.000Z'),
+        },
+      ]);
+      prisma.scholarDocument.findMany.mockResolvedValue([
+        {
+          document_id: 40,
+          file_name: 'bsa-prospectus.pdf',
+          file_url: 'https://cdn.test/bsa.pdf',
+          file_type: 'pdf',
+          uploaded_at: new Date('2025-08-01T08:00:00.000Z'),
+          extracted_data: {
+            curriculum_year: '2023-2024',
+            course_code: 'BSA',
+            total_units: 3,
+            subjects: [
+              {
+                subject_code: 'ACC101',
+                descriptive_title: 'Financial Accounting',
+                units: 3,
+                year_level: 1,
+                semester: '1st Semester',
+                status: 'UNTAKEN',
+              },
+            ],
+          },
+        },
+      ]);
+      prisma.gradeReport.findMany.mockResolvedValue([
+        {
+          academic_year: '2025-2026',
+          semester: '1st Semester',
+          submitted_at: new Date('2025-12-10T08:00:00.000Z'),
+          grade_items: [
+            { subject_code: 'ACC101', grade: 1.75, raw_status: 'PASSED' },
+          ],
+        },
+      ]);
+
+      const result = await service.getScholarProspectusHistory(7);
+
+      expect(result.current_program.course_of_study).toBe('BSIT');
+      expect(result.history).toHaveLength(2);
+      expect(result.history[0].course_name).toBe('BS Civil Engineering');
+      expect(result.history[0].source).toBe('ARCHIVED_SNAPSHOT');
+      expect(result.history[1].course_name).toBe('BS Accountancy');
+      expect(result.history[1].source).toBe('RECONSTRUCTED_PRE_SHIFT');
+      expect(result.history[1].subjects[0].grade).toBe(1.75);
+      expect(result.history[1].subjects[0].status).toBe('PASSED');
     });
   });
 

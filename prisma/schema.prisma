@@ -182,6 +182,7 @@ model ScholarProfile {
   documents     ScholarDocument[]
   meetings                 Meeting[]
   prospectus               ScholarProspectus?
+  prospectus_history       ScholarProspectusHistory[]
   enrollments              TermEnrollment[]
   academic_change_requests AcademicChangeRequest[]
 
@@ -336,6 +337,7 @@ model ScholarDocument {
   reviewed_by_employee Employee?       @relation("EmployeeReviewedDocuments", fields: [reviewed_by_employee_id], references: [employee_id])
   grade_reports        GradeReport[]
   prospectus_documents ScholarProspectus[]
+  prospectus_history   ScholarProspectusHistory[] @relation("ProspectusHistoryDocument")
   credited_subjects    ProspectusSubject[]
   cor_enrollments                 TermEnrollment[]     @relation("EnrollmentCorDocument")
   soa_enrollments                 TermEnrollment[]     @relation("EnrollmentSoaDocument")
@@ -589,6 +591,7 @@ model AcademicChangeRequest {
   requested_program   AcademicProgram? @relation(fields: [requested_program_id], references: [program_id], onDelete: SetNull)
   supporting_document ScholarDocument? @relation("AcademicChangeSupportingDocument", fields: [supporting_document_id], references: [document_id], onDelete: SetNull)
   reviewed_by         User?            @relation("AcademicChangeReviewedBy", fields: [reviewed_by_user_id], references: [user_id], onDelete: SetNull)
+  prospectus_history  ScholarProspectusHistory[]
 
   @@index([scholar_profile_id, status])
   @@index([status, created_at])
@@ -641,6 +644,32 @@ model ProspectusSubject {
   @@index([prospectus_id])
   @@index([subject_code])
   @@map("prospectus_subjects")
+}
+
+model ScholarProspectusHistory {
+  history_id                 Int       @id @default(autoincrement())
+  scholar_profile_id         Int
+  academic_change_request_id Int?
+  document_id                Int?
+  curriculum_year            String    @db.VarChar(50)
+  course_code                String?   @db.VarChar(50)
+  course_name                String    @db.VarChar(150)
+  school_name                String?   @db.VarChar(150)
+  total_units                Decimal?  @db.Decimal(5, 1)
+  credited_units             Decimal?  @db.Decimal(5, 1)
+  status                     String    @default("ARCHIVED") @db.VarChar(50)
+  archive_reason             String    @default("PROGRAM_SHIFT") @db.VarChar(50)
+  is_frozen                  Boolean   @default(false)
+  frozen_at                  DateTime?
+  subjects_snapshot          Json      @db.JsonB
+  archived_at                DateTime  @default(now())
+
+  scholar_profile         ScholarProfile         @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
+  academic_change_request AcademicChangeRequest? @relation(fields: [academic_change_request_id], references: [request_id], onDelete: SetNull)
+  document                ScholarDocument?       @relation("ProspectusHistoryDocument", fields: [document_id], references: [document_id], onDelete: SetNull)
+
+  @@index([scholar_profile_id, archived_at])
+  @@map("scholar_prospectus_history")
 }
 
 model TermEnrollment {

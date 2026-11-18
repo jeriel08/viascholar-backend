@@ -183,6 +183,16 @@ export class AcademicBaselineController {
     return this.baselineService.submitForReview(req.user.user_id);
   }
 
+  @Get('prospectus/history')
+  @Roles(Role.SCHOLAR, Role.APPLICANT)
+  @ApiOperation({
+    summary:
+      'Scholar retrieves archived previous prospectuses, programs, and grades',
+  })
+  getMyProspectusHistory(@Request() req: AuthenticatedRequest) {
+    return this.baselineService.getScholarProspectusHistory(req.user.user_id);
+  }
+
   // ==========================================
   // COORDINATOR AUDIT & FREEZE ENDPOINTS
   // ==========================================
@@ -217,6 +227,20 @@ export class AcademicBaselineController {
     @Param('scholarProfileId', ParseIntPipe) scholarProfileId: number,
   ) {
     return this.baselineService.getCoordinatorScholarDetails(scholarProfileId);
+  }
+
+  @Get('coordinator/scholars/:scholarProfileId/prospectus-history')
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @ApiOperation({
+    summary:
+      'Staff retrieve archived previous prospectuses & grades for a scholar',
+  })
+  getCoordinatorScholarProspectusHistory(
+    @Param('scholarProfileId', ParseIntPipe) scholarProfileId: number,
+  ) {
+    return this.baselineService.getCoordinatorScholarProspectusHistory(
+      scholarProfileId,
+    );
   }
 
   @Get('coordinator/review/:scholarProfileId')

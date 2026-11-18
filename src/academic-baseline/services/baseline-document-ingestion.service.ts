@@ -15,6 +15,10 @@ import {
   ProspectusOcrService,
 } from '../prospectus-ocr.service.js';
 import { AppCacheService } from '../../common/cache/app-cache.service.js';
+import {
+  archiveProspectusToHistory,
+  findLatestApprovedShift,
+} from '../utils/shift-prospectus.util.js';
 
 const STOP_WORDS = new Set([
   'in',
@@ -124,7 +128,20 @@ export class BaselineDocumentIngestionService {
 
     const scholar = await this.prisma.scholarProfile.findUnique({
       where: { user_id: userId },
-      include: { prospectus: true },
+      include: {
+        prospectus: {
+          include: {
+            subjects: {
+              orderBy: [
+                { year_level: 'asc' },
+                { semester: 'asc' },
+                { subject_code: 'asc' },
+              ],
+            },
+            document: true,
+          },
+        },
+      },
     });
 
     if (!scholar) {
@@ -206,8 +223,34 @@ export class BaselineDocumentIngestionService {
       this.prospectusOcrService.processProspectusExtraction(inputFiles),
     ]);
 
-    if (scholar.academic_baseline_status === 'PENDING_SHIFT_PROSPECTUS') {
+    if (isShiftUpload) {
       await this.validateShiftedProspectusUpload(scholar, extracted, fileHash);
+
+      // Safety net: if a pre-shift prospectus was still present on the scholar
+      // profile (e.g., recovered from a stale review), snapshot its grades first.
+      if (scholar.prospectus) {
+        const latestShift = await findLatestApprovedShift(
+          this.prisma,
+          scholar.profile_id,
+        );
+        const shiftReviewedMs = latestShift?.reviewed_at
+          ? new Date(latestShift.reviewed_at).getTime()
+          : 0;
+        const existingDocMs = scholar.prospectus.document?.uploaded_at
+          ? new Date(scholar.prospectus.document.uploaded_at).getTime()
+          : 0;
+        if (
+          shiftReviewedMs > 0 &&
+          (existingDocMs === 0 || existingDocMs <= shiftReviewedMs)
+        ) {
+          await archiveProspectusToHistory(this.prisma, scholar.prospectus, {
+            scholarProfileId: scholar.profile_id,
+            academicChangeRequestId: latestShift?.request_id ?? null,
+            schoolName: scholar.school_name ?? null,
+            archiveReason: latestShift?.change_type || 'PROGRAM_SHIFT',
+          });
+        }
+      }
     }
 
     const doc = await this.prisma.scholarDocument.create({

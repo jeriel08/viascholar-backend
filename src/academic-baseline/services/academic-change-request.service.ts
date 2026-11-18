@@ -22,6 +22,7 @@ import {
   CreateAcademicChangeRequestDto,
   ReviewAcademicChangeRequestDto,
 } from '../dto/academic-change-request.dto.js';
+import { archiveProspectusToHistory } from '../utils/shift-prospectus.util.js';
 
 export interface AcademicChangeEligibility {
   allowed: boolean;
@@ -647,7 +648,17 @@ export class AcademicChangeRequestService {
         scholar_profile: {
           include: {
             user: { select: { email: true, user_id: true } },
-            prospectus: true,
+            prospectus: {
+              include: {
+                subjects: {
+                  orderBy: [
+                    { year_level: 'asc' },
+                    { semester: 'asc' },
+                    { subject_code: 'asc' },
+                  ],
+                },
+              },
+            },
           },
         },
         requested_program: true,
@@ -724,9 +735,22 @@ export class AcademicChangeRequestService {
         },
       });
 
-      // Remove the previous program's prospectus & untaken/old checklist so the
-      // scholar uploads a clean prospectus for the newly confirmed program/school.
+      // Preserve the previous program's prospectus & earned grades in history,
+      // then clear the active checklist so the scholar uploads a clean new prospectus.
       if (existing.scholar_profile.prospectus) {
+        await archiveProspectusToHistory(
+          tx,
+          existing.scholar_profile.prospectus,
+          {
+            scholarProfileId: existing.scholar_profile_id,
+            academicChangeRequestId: existing.request_id,
+            schoolName:
+              (existing.scholar_profile as { school_name?: string | null })
+                .school_name ?? null,
+            archiveReason: existing.change_type || 'PROGRAM_SHIFT',
+          },
+        );
+
         if (typeof (tx as any).scholarProspectus?.deleteMany === 'function') {
           await (tx as any).scholarProspectus.deleteMany({
             where: { scholar_profile_id: existing.scholar_profile_id },
