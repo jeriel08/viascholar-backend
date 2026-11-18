@@ -6,7 +6,6 @@ import { BaselineDocumentIngestionService } from './baseline-document-ingestion.
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { AuditService } from '../../audit/audit.service.js';
 import { CloudinaryService } from '../../cloudinary/cloudinary.service.js';
-import { SettingsService } from '../../settings/settings.service.js';
 import { EventsGateway } from '../../events/events.gateway.js';
 import { ProspectusOcrService } from '../prospectus-ocr.service.js';
 import { AppCacheService } from '../../common/cache/app-cache.service.js';
@@ -24,6 +23,10 @@ const createPrismaMock = () => ({
   scholarDocument: {
     create: vi.fn(),
     update: vi.fn(),
+    findMany: vi.fn(),
+  },
+  academicChangeRequest: {
+    findFirst: vi.fn(),
   },
   scholarProspectus: {
     upsert: vi.fn(),
@@ -38,14 +41,12 @@ const createPrismaMock = () => ({
 
 const createAuditMock = () => ({ log: vi.fn() });
 const createCloudinaryMock = () => ({ uploadBuffer: vi.fn() });
-const createSettingsMock = () => ({ evaluateStudentGrade: vi.fn() });
 const createEventsMock = () => ({
   emitToUser: vi.fn(),
   emitToStaff: vi.fn(),
 });
 const createOcrMock = () => ({
   processProspectusExtraction: vi.fn(),
-  processHistoricalCcgExtraction: vi.fn(),
   normalizeSubjectCode: vi.fn().mockImplementation((code: string) =>
     (code || '')
       .trim()
@@ -128,7 +129,6 @@ describe('BaselineDocumentIngestionService', () => {
   let prisma: ReturnType<typeof createPrismaMock>;
   let audit: ReturnType<typeof createAuditMock>;
   let cloudinary: ReturnType<typeof createCloudinaryMock>;
-  let settings: ReturnType<typeof createSettingsMock>;
   let events: ReturnType<typeof createEventsMock>;
   let ocr: ReturnType<typeof createOcrMock>;
   let cache: ReturnType<typeof createCacheMock>;
@@ -137,7 +137,6 @@ describe('BaselineDocumentIngestionService', () => {
     prisma = createPrismaMock();
     audit = createAuditMock();
     cloudinary = createCloudinaryMock();
-    settings = createSettingsMock();
     events = createEventsMock();
     ocr = createOcrMock();
     cache = createCacheMock();
@@ -152,6 +151,8 @@ describe('BaselineDocumentIngestionService', () => {
     );
     prisma.scholarDocument.create.mockResolvedValue({ document_id: 50 });
     prisma.scholarDocument.update.mockResolvedValue({ document_id: 50 });
+    prisma.scholarDocument.findMany.mockResolvedValue([]);
+    prisma.academicChangeRequest.findFirst.mockResolvedValue(null);
     prisma.scholarProspectus.upsert.mockResolvedValue({
       prospectus_id: 60,
       scholar_profile_id: 11,
@@ -163,28 +164,6 @@ describe('BaselineDocumentIngestionService', () => {
     });
     prisma.prospectusSubject.deleteMany.mockResolvedValue({ count: 0 });
     prisma.prospectusSubject.createMany.mockResolvedValue({ count: 2 });
-    prisma.prospectusSubject.update.mockResolvedValue({ subject_id: 1 });
-    ocr.processHistoricalCcgExtraction.mockResolvedValue([
-      {
-        subject_code: 'CCE-101',
-        subject_name: 'Introduction to Computing',
-        units: 3,
-        grade: 1.75,
-        raw_status: 'P',
-        semester: '1st Year - 1st Sem',
-      },
-      {
-        subject_code: 'MATH101',
-        subject_name: 'College Algebra',
-        grade: 2.5,
-        semester: '1st Year - 1st Sem',
-      },
-    ]);
-    settings.evaluateStudentGrade.mockImplementation(
-      (grade: number | string) => ({
-        isPassing: Number(grade) <= 3.0,
-      }),
-    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -192,7 +171,6 @@ describe('BaselineDocumentIngestionService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: AuditService, useValue: audit },
         { provide: CloudinaryService, useValue: cloudinary },
-        { provide: SettingsService, useValue: settings },
         { provide: EventsGateway, useValue: events },
         { provide: ProspectusOcrService, useValue: ocr },
         { provide: AppCacheService, useValue: cache },
@@ -420,265 +398,140 @@ describe('BaselineDocumentIngestionService', () => {
       );
       expect(prisma.scholarDocument.create).not.toHaveBeenCalled();
     });
-  });
 
-  describe('uploadHistoricalCcg', () => {
-    const files = [
-      makeFile({ originalname: 'tor.pdf', mimetype: 'application/pdf' }),
-    ];
+    describe('shift/transfer validation (PENDING_SHIFT_PROSPECTUS)', () => {
+      const fiveOldSubjects = [
+        { subject_code: 'IT101' },
+        { subject_code: 'IT102' },
+        { subject_code: 'IT103' },
+        { subject_code: 'IT104' },
+        { subject_code: 'IT105' },
+      ];
 
-    it('rejects an empty upload', async () => {
-      await expect(service.uploadHistoricalCcg(7, [])).rejects.toThrow(
-        new BadRequestException(
-          'At least one historical grade transcript file is required.',
-        ),
-      );
-      expect(prisma.scholarProfile.findUnique).not.toHaveBeenCalled();
-    });
-
-    it('throws NotFoundException when the scholar profile is missing', async () => {
-      prisma.scholarProfile.findUnique.mockResolvedValue(null);
-
-      await expect(service.uploadHistoricalCcg(7, files)).rejects.toThrow(
-        'Scholar profile not found.',
-      );
-    });
-
-    it('requires a previously established prospectus', async () => {
-      prisma.scholarProfile.findUnique.mockResolvedValue(
-        makeScholar({ prospectus: null }),
-      );
-
-      await expect(service.uploadHistoricalCcg(7, files)).rejects.toThrow(
-        new BadRequestException(
-          'Please upload and establish your prospectus first before historical grades.',
-        ),
-      );
-    });
-
-    it('forbids uploads when the baseline is frozen', async () => {
-      prisma.scholarProfile.findUnique.mockResolvedValue(
-        makeScholar({
-          prospectus: {
-            prospectus_id: 60,
-            is_frozen: true,
-            subjects: [],
-          },
-        }),
-      );
-
-      await expect(service.uploadHistoricalCcg(7, files)).rejects.toThrow(
-        new ForbiddenException(
-          'Your academic baseline is frozen and cannot be modified.',
-        ),
-      );
-    });
-
-    it('credits passing courses and tags failed ones with the document', async () => {
-      const result = await service.uploadHistoricalCcg(7, files);
-
-      expect(cloudinary.uploadBuffer).toHaveBeenCalledWith(
-        files[0].buffer,
-        'viascholar/historical-ccg',
-        expect.stringMatching(/^historical_ccg_11_\d+$/),
-        'auto',
-      );
-      expect(ocr.processHistoricalCcgExtraction).toHaveBeenCalledWith([
-        objectMatching({
-          buffer: files[0].buffer,
-          fileName: 'tor.pdf',
-        }),
-      ]);
-      expect(prisma.scholarDocument.create).toHaveBeenCalledWith({
-        data: objectMatching({
-          scholar_profile_id: 11,
-          document_type: 'HISTORICAL_CCG',
-          status: 'PASSED_PRECHECK',
-        }),
-      });
-      expect(settings.evaluateStudentGrade).toHaveBeenCalledWith(
-        1.75,
-        objectMatching({ grading_scale: 'NUMERIC_4_POINT' }),
-      );
-      expect(settings.evaluateStudentGrade).toHaveBeenCalledTimes(1);
-      expect(prisma.prospectusSubject.update).toHaveBeenCalledTimes(1);
-      expect(prisma.prospectusSubject.update).toHaveBeenCalledWith({
-        where: { subject_id: 1 },
-        data: {
-          status: 'CREDITED',
-          grade: 1.75,
-          historical_document_id: 50,
-          credited_term: '1st Year - 1st Sem',
-        },
-      });
-
-      expect(result.matched_credited).toEqual([
-        {
-          subject_code: 'cce 101',
-          grade: 1.75,
-          title: 'Introduction to Computing',
-        },
-      ]);
-      expect(result.unmapped_items).toEqual([
-        { subject_code: 'MATH101', grade: 2.5 },
-      ]);
-      expect(result).toEqual(
-        objectMatching({
-          academic_baseline_status: 'PENDING_HISTORICAL_CCG',
-        }),
-      );
-
-      expect(prisma.scholarDocument.update).toHaveBeenCalledWith({
-        where: { document_id: 50 },
-        data: {
-          extracted_data: objectMatching({
-            matched_credited: anyArg(Array),
+      beforeEach(() => {
+        prisma.scholarProfile.findUnique.mockResolvedValue(
+          makeScholar({
+            academic_baseline_status: 'PENDING_SHIFT_PROSPECTUS',
+            course_of_study: 'BS Computer Science',
+            prospectus: null,
           }),
-        },
-      });
-      expect(prisma.scholarProfile.update).toHaveBeenCalledWith({
-        where: { profile_id: 11 },
-        data: { academic_baseline_status: 'PENDING_HISTORICAL_CCG' },
-      });
-      expect(cache.del).toHaveBeenCalledWith('baseline:scholar:7');
-      expect(cache.del).toHaveBeenCalledWith('baseline:review:11');
-      expect(cache.del).toHaveBeenCalledWith('dashboard:scholar:7');
-    });
-
-    it('credits unmatched courses into the unmapped list', async () => {
-      ocr.processHistoricalCcgExtraction.mockResolvedValue([
-        { subject_code: 'UNKNOWN101', grade: 1.0 },
-      ]);
-
-      const result = await service.uploadHistoricalCcg(7, files);
-
-      expect(prisma.prospectusSubject.update).not.toHaveBeenCalled();
-      expect(result.matched_credited).toEqual([]);
-      expect(result.unmapped_items).toEqual([
-        { subject_code: 'UNKNOWN101', grade: 1.0 },
-      ]);
-    });
-
-    it('marks failing courses FAILED when the school config says so', async () => {
-      ocr.processHistoricalCcgExtraction.mockResolvedValue([
-        { subject_code: 'cce 101', grade: 5.0, semester: '2nd Year - 2nd Sem' },
-      ]);
-      settings.evaluateStudentGrade.mockReturnValue({ isPassing: false });
-
-      const result = await service.uploadHistoricalCcg(7, files);
-
-      expect(prisma.prospectusSubject.update).toHaveBeenCalledWith({
-        where: { subject_id: 1 },
-        data: objectMatching({
-          status: 'FAILED',
-          grade: 5.0,
-          credited_term: '2nd Year - 2nd Sem',
-        }),
-      });
-      expect(result.matched_credited).toHaveLength(1);
-    });
-
-    it('uses the pass-by-grade heuristic when no school config exists', async () => {
-      prisma.scholarProfile.findUnique.mockResolvedValue(
-        makeScholar({ school_grading_system: null }),
-      );
-
-      await service.uploadHistoricalCcg(7, files);
-
-      expect(settings.evaluateStudentGrade).not.toHaveBeenCalled();
-      expect(prisma.prospectusSubject.update).toHaveBeenCalledTimes(1);
-      expect(prisma.prospectusSubject.update).toHaveBeenCalledWith({
-        where: { subject_id: 1 },
-        data: objectMatching({ status: 'CREDITED' }),
-      });
-    });
-
-    it('falls back to the year-level term when the course has no semester', async () => {
-      ocr.processHistoricalCcgExtraction.mockResolvedValue([
-        { subject_code: 'cce 101', grade: 1.75 },
-      ]);
-
-      await service.uploadHistoricalCcg(7, files);
-
-      expect(prisma.prospectusSubject.update).toHaveBeenCalledWith({
-        where: { subject_id: 1 },
-        data: objectMatching({
-          credited_term: '1 Year - 1st Semester',
-        }),
-      });
-    });
-
-    it('credits 75-or-above grades and 1.0–3.0 grades in the heuristic', async () => {
-      prisma.scholarProfile.findUnique.mockResolvedValue(
-        makeScholar({
-          school_grading_system: null,
-          prospectus: {
-            prospectus_id: 60,
-            is_frozen: false,
-            subjects: [
-              {
-                subject_id: 1,
-                subject_code: 'a',
-                descriptive_title: 'A',
-                units: 3,
-                year_level: 1,
-                semester: '1st Semester',
-              },
-              {
-                subject_id: 2,
-                subject_code: 'b',
-                descriptive_title: 'B',
-                units: 3,
-                year_level: 1,
-                semester: '1st Semester',
-              },
-              {
-                subject_id: 3,
-                subject_code: 'c',
-                descriptive_title: 'C',
-                units: 3,
-                year_level: 1,
-                semester: '1st Semester',
-              },
-            ],
+        );
+        prisma.academicChangeRequest.findFirst.mockResolvedValue({
+          change_type: 'PROGRAM_SHIFT',
+          current_course_of_study: 'BS Information Technology',
+          requested_course_of_study: 'BS Computer Science',
+          requested_program: {
+            program_code: 'BSCS',
+            program_name: 'BS Computer Science',
           },
-        }),
-      );
-      ocr.processHistoricalCcgExtraction.mockResolvedValue([
-        { subject_code: 'a', grade: 80, semester: 'X' },
-        { subject_code: 'b', grade: 2.5, semester: 'Y' },
-        { subject_code: 'c', grade: 5.0, semester: 'Z' },
-      ]);
-
-      await service.uploadHistoricalCcg(7, files);
-
-      const calls = prisma.prospectusSubject.update.mock.calls.map((call) => {
-        const arg = call[0] as { data: { status: string } };
-        return arg.data.status;
+        });
       });
-      expect(calls).toEqual(['CREDITED', 'CREDITED', 'FAILED']);
-    });
 
-    it('propagates OCR failures before writing to the database', async () => {
-      ocr.processHistoricalCcgExtraction.mockRejectedValue(
-        new Error('TOR parse failed'),
-      );
+      it('blocks uploading an empty-subject document during a shift', async () => {
+        ocr.processProspectusExtraction.mockResolvedValue({
+          course_name: 'BS Computer Science',
+          subjects: [],
+        });
 
-      await expect(service.uploadHistoricalCcg(7, files)).rejects.toThrow(
-        'TOR parse failed',
-      );
-      expect(prisma.scholarDocument.create).not.toHaveBeenCalled();
-    });
+        await expect(service.uploadProspectus(7, files)).rejects.toThrow(
+          BadRequestException,
+        );
+        expect(prisma.scholarDocument.create).not.toHaveBeenCalled();
+      });
 
-    it('propagates Cloudinary failures before writing to the database', async () => {
-      cloudinary.uploadBuffer.mockRejectedValue(
-        new Error('Cloudinary upload failed'),
-      );
+      it('blocks re-uploading the exact same file hash from the previous prospectus', async () => {
+        const crypto = await import('node:crypto');
+        const expectedHash = crypto
+          .createHash('sha256')
+          .update(files[0].buffer)
+          .digest('hex');
 
-      await expect(service.uploadHistoricalCcg(7, files)).rejects.toThrow(
-        'Cloudinary upload failed',
-      );
-      expect(prisma.scholarDocument.create).not.toHaveBeenCalled();
+        prisma.scholarDocument.findMany.mockResolvedValue([
+          { extracted_data: { file_hash: expectedHash } },
+        ]);
+
+        await expect(service.uploadProspectus(7, files)).rejects.toThrow(
+          'You uploaded the exact same prospectus file from your previous program. Please upload the updated prospectus for your new program.',
+        );
+        expect(cloudinary.uploadBuffer).not.toHaveBeenCalled();
+      });
+
+      it('blocks uploading a prospectus that still matches the old program', async () => {
+        ocr.processProspectusExtraction.mockResolvedValue({
+          course_name: 'Bachelor of Science in Information Technology',
+          course_code: 'BSIT',
+          subjects: fiveOldSubjects,
+        });
+
+        await expect(service.uploadProspectus(7, files)).rejects.toThrow(
+          /matches your previous program/i,
+        );
+        expect(prisma.scholarDocument.create).not.toHaveBeenCalled();
+      });
+
+      it('blocks uploading a prospectus for an unapproved third program', async () => {
+        ocr.processProspectusExtraction.mockResolvedValue({
+          course_name: 'Bachelor of Science in Accountancy',
+          course_code: 'BSA',
+          subjects: [{ subject_code: 'ACC101' }],
+        });
+
+        await expect(service.uploadProspectus(7, files)).rejects.toThrow(
+          /does not match your Grantor-approved program/i,
+        );
+        expect(prisma.scholarDocument.create).not.toHaveBeenCalled();
+      });
+
+      it('blocks uploading a prospectus with >= 85% identical subjects to the old prospectus even if title is omitted', async () => {
+        prisma.scholarDocument.findMany.mockResolvedValue([
+          { extracted_data: { subjects: fiveOldSubjects } },
+        ]);
+        ocr.processProspectusExtraction.mockResolvedValue({
+          course_name: '',
+          course_code: '',
+          subjects: fiveOldSubjects,
+        });
+
+        await expect(service.uploadProspectus(7, files)).rejects.toThrow(
+          /same curriculum subjects as your previous program prospectus/i,
+        );
+        expect(prisma.scholarDocument.create).not.toHaveBeenCalled();
+      });
+
+      it('allows uploading a valid new program prospectus with credited subjects', async () => {
+        prisma.scholarDocument.findMany.mockResolvedValue([
+          {
+            extracted_data: {
+              course_name: 'BS Information Technology',
+              course_code: 'BSIT',
+              subjects: fiveOldSubjects,
+            },
+          },
+        ]);
+        ocr.processProspectusExtraction.mockResolvedValue({
+          course_name: 'Bachelor of Science in Computer Science',
+          course_code: 'BSCS',
+          curriculum_year: '2025-2026',
+          total_units: 12,
+          subjects: [
+            {
+              subject_code: 'CS101',
+              descriptive_title: 'Algorithms',
+              units: 3,
+              year_level: 1,
+              semester: '1st Semester',
+              prerequisites: [],
+              status: 'CREDITED',
+              grade: 1.5,
+            },
+          ],
+        });
+
+        const res = await service.uploadProspectus(7, files);
+        expect(res.academic_baseline_status).toBe('PENDING_SHIFT_PROSPECTUS');
+        expect(prisma.scholarDocument.create).toHaveBeenCalled();
+      });
     });
   });
+
 });

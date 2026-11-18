@@ -12,6 +12,10 @@ import { EventsGateway } from '../../events/events.gateway.js';
 import { SelectSchoolDto } from '../dto/select-school.dto.js';
 import { BatchUpdateSubjectsDto } from '../dto/batch-update-subjects.dto.js';
 import { AppCacheService } from '../../common/cache/app-cache.service.js';
+import {
+  findLatestApprovedShift,
+  pruneStalePreShiftSubjects,
+} from '../utils/shift-prospectus.util.js';
 
 @Injectable()
 export class ScholarBaselineService {
@@ -71,32 +75,76 @@ export class ScholarBaselineService {
           throw new NotFoundException('Scholar profile not found.');
         }
 
-        // Normalize legacy pre-fix shifted accounts that were placed into onboarding statuses
+        const needsShiftCheck =
+          Boolean(scholar.prospectus) ||
+          [
+            'PENDING_SCHOOL_SELECTION',
+            'PENDING_PROSPECTUS',
+            'PENDING_HISTORICAL_CCG',
+            'PENDING_COORDINATOR_REVIEW',
+            'PENDING_SHIFT_PROSPECTUS',
+          ].includes(scholar.academic_baseline_status);
+
+        const latestApprovedShift = needsShiftCheck
+          ? await findLatestApprovedShift(this.prisma, scholar.profile_id)
+          : null;
+        const shiftReviewedAt = latestApprovedShift?.reviewed_at
+          ? new Date(latestApprovedShift.reviewed_at).getTime()
+          : 0;
+
+        // Recover legacy pre-fix shifted accounts OR accidentally submitted old prospectuses
         if (
-          ['PENDING_SCHOOL_SELECTION', 'PENDING_PROSPECTUS', 'PENDING_HISTORICAL_CCG'].includes(
-            scholar.academic_baseline_status,
-          ) &&
-          typeof (this.prisma as any).academicChangeRequest?.findFirst === 'function'
+          latestApprovedShift &&
+          [
+            'PENDING_SCHOOL_SELECTION',
+            'PENDING_PROSPECTUS',
+            'PENDING_HISTORICAL_CCG',
+            'PENDING_COORDINATOR_REVIEW',
+          ].includes(scholar.academic_baseline_status)
         ) {
-          const latestApprovedShift = await (this.prisma as any).academicChangeRequest.findFirst({
-            where: { scholar_profile_id: scholar.profile_id, status: 'APPROVED' },
-            orderBy: { reviewed_at: 'desc' },
-          });
-          if (latestApprovedShift) {
+          const staleProspectus = scholar.prospectus;
+          const prospectusDocAt = staleProspectus?.document?.uploaded_at
+            ? new Date(staleProspectus.document.uploaded_at).getTime()
+            : staleProspectus?.created_at
+              ? new Date(staleProspectus.created_at).getTime()
+              : 0;
+          const hasStaleProspectus = Boolean(
+            staleProspectus &&
+              shiftReviewedAt > 0 &&
+              prospectusDocAt > 0 &&
+              prospectusDocAt <= shiftReviewedAt,
+          );
+
+          if (scholar.academic_baseline_status === 'PENDING_COORDINATOR_REVIEW') {
+            if (hasStaleProspectus && staleProspectus) {
+              await this.prisma.scholarProfile.update({
+                where: { profile_id: scholar.profile_id },
+                data: { academic_baseline_status: 'PENDING_SHIFT_PROSPECTUS' },
+              });
+              scholar.academic_baseline_status = 'PENDING_SHIFT_PROSPECTUS';
+              await this.prisma.scholarProspectus.update({
+                where: { prospectus_id: staleProspectus.prospectus_id },
+                data: { status: 'DRAFT' },
+              });
+              staleProspectus.status = 'DRAFT';
+            }
+          } else {
             await this.prisma.scholarProfile.update({
               where: { profile_id: scholar.profile_id },
               data: { academic_baseline_status: 'PENDING_SHIFT_PROSPECTUS' },
             });
             scholar.academic_baseline_status = 'PENDING_SHIFT_PROSPECTUS';
 
-            const staleProspectus = scholar.prospectus;
             if (
               staleProspectus &&
               latestApprovedShift.reviewed_at &&
               new Date(staleProspectus.updated_at).getTime() <=
                 new Date(latestApprovedShift.reviewed_at).getTime()
             ) {
-              if (typeof (this.prisma as any).scholarProspectus?.deleteMany === 'function') {
+              if (
+                typeof (this.prisma as any).scholarProspectus?.deleteMany ===
+                'function'
+              ) {
                 await (this.prisma as any).scholarProspectus.deleteMany({
                   where: { scholar_profile_id: scholar.profile_id },
                 });
@@ -104,6 +152,16 @@ export class ScholarBaselineService {
               scholar.prospectus = null;
             }
           }
+        }
+
+        const prunedPreShift = await pruneStalePreShiftSubjects(
+          this.prisma,
+          scholar.prospectus,
+          shiftReviewedAt,
+        );
+        if (prunedPreShift) {
+          await this.cacheService.del(`baseline:review:${scholar.profile_id}`);
+          await this.cacheService.del(`dashboard:scholar:${userId}`);
         }
 
         const subjects = scholar.prospectus?.subjects || [];
@@ -133,6 +191,17 @@ export class ScholarBaselineService {
               .trim();
 
           for (const enr of enrollments) {
+            const enrCreatedMs = enr.created_at
+              ? new Date(enr.created_at).getTime()
+              : 0;
+            if (
+              shiftReviewedAt > 0 &&
+              enrCreatedMs > 0 &&
+              enrCreatedMs <= shiftReviewedAt
+            ) {
+              continue;
+            }
+
             if (
               enr.status === 'COMPLETED' &&
               enr.reviewed_by_employee_id === null &&
@@ -485,7 +554,14 @@ export class ScholarBaselineService {
   async submitForReview(userId: number) {
     const scholar = await this.prisma.scholarProfile.findUnique({
       where: { user_id: userId },
-      include: { prospectus: { include: { subjects: true } } },
+      include: {
+        prospectus: {
+          include: {
+            subjects: true,
+            document: true,
+          },
+        },
+      },
     });
 
     if (!scholar) throw new NotFoundException('Scholar profile not found.');
@@ -494,9 +570,62 @@ export class ScholarBaselineService {
         'Please upload your prospectus before submitting for review.',
       );
     }
+    if (scholar.prospectus.is_frozen) {
+      throw new ForbiddenException(
+        'Your academic baseline is already frozen.',
+      );
+    }
+    if (scholar.academic_baseline_status === 'PENDING_COORDINATOR_REVIEW') {
+      throw new BadRequestException(
+        'Your prospectus has already been submitted and is currently under Coordinator review.',
+      );
+    }
     if (scholar.prospectus.subjects.length === 0) {
       throw new BadRequestException(
         'No subjects found on prospectus checklist.',
+      );
+    }
+
+    if (
+      typeof (this.prisma as any).academicChangeRequest?.findFirst ===
+      'function'
+    ) {
+      const latestApprovedShift = await (
+        this.prisma as any
+      ).academicChangeRequest.findFirst({
+        where: { scholar_profile_id: scholar.profile_id, status: 'APPROVED' },
+        orderBy: { reviewed_at: 'desc' },
+      });
+
+      if (
+        latestApprovedShift &&
+        (scholar.academic_baseline_status === 'PENDING_SHIFT_PROSPECTUS' ||
+          !scholar.prospectus.is_frozen)
+      ) {
+        const shiftReviewedMs = latestApprovedShift.reviewed_at
+          ? new Date(latestApprovedShift.reviewed_at).getTime()
+          : 0;
+        const docUploadedMs = scholar.prospectus.document?.uploaded_at
+          ? new Date(scholar.prospectus.document.uploaded_at).getTime()
+          : scholar.prospectus.created_at
+            ? new Date(scholar.prospectus.created_at).getTime()
+            : 0;
+
+        if (
+          (scholar.academic_baseline_status === 'PENDING_SHIFT_PROSPECTUS' &&
+            !scholar.prospectus.document) ||
+          (shiftReviewedMs > 0 &&
+            docUploadedMs > 0 &&
+            docUploadedMs <= shiftReviewedMs)
+        ) {
+          throw new BadRequestException(
+            'You have not uploaded a new prospectus yet after your approved program shift/transfer. Please upload your new prospectus (with credited grades) before submitting for review.',
+          );
+        }
+      }
+    } else if (scholar.academic_baseline_status === 'PENDING_SHIFT_PROSPECTUS' && !scholar.prospectus.document) {
+      throw new BadRequestException(
+        'Please upload your new prospectus before submitting for review.',
       );
     }
 

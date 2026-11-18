@@ -10,6 +10,10 @@ import { EventsGateway } from '../../events/events.gateway.js';
 import { BatchUpdateSubjectsDto } from '../dto/batch-update-subjects.dto.js';
 import { FreezeBaselineDto } from '../dto/freeze-baseline.dto.js';
 import { AppCacheService } from '../../common/cache/app-cache.service.js';
+import {
+  findLatestApprovedShift,
+  pruneStalePreShiftSubjects,
+} from '../utils/shift-prospectus.util.js';
 
 @Injectable()
 export class CoordinatorBaselineService {
@@ -21,6 +25,49 @@ export class CoordinatorBaselineService {
     private readonly eventsGateway: EventsGateway,
     private readonly cacheService: AppCacheService,
   ) {}
+
+  private async isAwaitingShiftProspectusUpload(
+    scholarProfileId: number,
+    baselineStatus?: string | null,
+    prospectus?: {
+      document_id?: number | null;
+      created_at?: Date | string | null;
+      document?: { uploaded_at?: Date | string | null } | null;
+    } | null,
+  ): Promise<boolean> {
+    if (baselineStatus !== 'PENDING_SHIFT_PROSPECTUS') {
+      return false;
+    }
+    if (!prospectus || !prospectus.document_id) {
+      return true;
+    }
+
+    if (
+      typeof (this.prisma as any).academicChangeRequest?.findFirst !==
+      'function'
+    ) {
+      return false;
+    }
+
+    const latestApprovedShift = await (
+      this.prisma as any
+    ).academicChangeRequest.findFirst({
+      where: { scholar_profile_id: scholarProfileId, status: 'APPROVED' },
+      orderBy: { reviewed_at: 'desc' },
+    });
+
+    if (!latestApprovedShift?.reviewed_at) {
+      return false;
+    }
+
+    const shiftReviewedMs = new Date(latestApprovedShift.reviewed_at).getTime();
+    const docUploadedAt = prospectus.document?.uploaded_at ?? prospectus.created_at;
+    if (!docUploadedAt) {
+      return true;
+    }
+
+    return new Date(docUploadedAt).getTime() <= shiftReviewedMs;
+  }
 
   // 1. Coordinator: Get all scholars awaiting baseline review / frozen status
   async getCoordinatorPendingBaselines() {
@@ -111,7 +158,32 @@ export class CoordinatorBaselineService {
           );
         }
 
-        const subjects = scholar.prospectus?.subjects || [];
+        const awaitingShiftUpload = await this.isAwaitingShiftProspectusUpload(
+          scholar.profile_id,
+          scholar.academic_baseline_status,
+          scholar.prospectus,
+        );
+
+        const activeProspectus = awaitingShiftUpload ? null : scholar.prospectus;
+        if (activeProspectus && !activeProspectus.is_frozen) {
+          const latestApprovedShift = await findLatestApprovedShift(
+            this.prisma,
+            scholar.profile_id,
+          );
+          const shiftReviewedMs = latestApprovedShift?.reviewed_at
+            ? new Date(latestApprovedShift.reviewed_at).getTime()
+            : 0;
+          const prunedPreShift = await pruneStalePreShiftSubjects(
+            this.prisma,
+            activeProspectus,
+            shiftReviewedMs,
+          );
+          if (prunedPreShift && scholar.user_id) {
+            await this.cacheService.del(`baseline:scholar:${scholar.user_id}`);
+            await this.cacheService.del(`dashboard:scholar:${scholar.user_id}`);
+          }
+        }
+        const subjects = activeProspectus?.subjects || [];
         let totalUnits = 0;
         let creditedUnits = 0;
         let untakenUnits = 0;
@@ -138,14 +210,15 @@ export class CoordinatorBaselineService {
             academic_baseline_status: scholar.academic_baseline_status,
           },
           school_grading_system: scholar.school_grading_system,
-          prospectus: scholar.prospectus,
-          documents: scholar.documents,
+          prospectus: activeProspectus,
+          documents: awaitingShiftUpload ? [] : scholar.documents,
+          awaiting_new_prospectus_upload: awaitingShiftUpload,
           metrics: {
             total_subjects: subjects.length,
             total_units: Number(totalUnits.toFixed(1)),
             credited_units: Number(creditedUnits.toFixed(1)),
             remaining_units: Number(untakenUnits.toFixed(1)),
-            is_frozen: scholar.prospectus?.is_frozen ?? false,
+            is_frozen: activeProspectus?.is_frozen ?? false,
           },
         };
       },
@@ -168,11 +241,29 @@ export class CoordinatorBaselineService {
     const prospectus = await this.prisma.scholarProspectus.findUnique({
       where: { prospectus_id: prospectusId },
       include: {
-        scholar_profile: { select: { profile_id: true, user_id: true } },
+        document: true,
+        scholar_profile: {
+          select: {
+            profile_id: true,
+            user_id: true,
+            academic_baseline_status: true,
+          },
+        },
       },
     });
     if (!prospectus)
       throw new NotFoundException(`Prospectus ID ${prospectusId} not found.`);
+
+    const awaitingShiftUpload = await this.isAwaitingShiftProspectusUpload(
+      prospectus.scholar_profile_id,
+      prospectus.scholar_profile?.academic_baseline_status,
+      prospectus,
+    );
+    if (awaitingShiftUpload) {
+      throw new BadRequestException(
+        'Cannot modify prospectus subjects while the scholar has not uploaded their new program prospectus yet.',
+      );
+    }
 
     await this.prisma.scholarProspectus.update({
       where: { prospectus_id: prospectusId },
@@ -270,6 +361,7 @@ export class CoordinatorBaselineService {
     const prospectus = await this.prisma.scholarProspectus.findUnique({
       where: { prospectus_id: prospectusId },
       include: {
+        document: true,
         scholar_profile: { include: { user: true } },
         subjects: true,
       },
@@ -282,6 +374,17 @@ export class CoordinatorBaselineService {
     if (prospectus.is_frozen) {
       throw new BadRequestException(
         'This academic baseline is already frozen.',
+      );
+    }
+
+    const awaitingShiftUpload = await this.isAwaitingShiftProspectusUpload(
+      prospectus.scholar_profile_id,
+      prospectus.scholar_profile?.academic_baseline_status,
+      prospectus,
+    );
+    if (awaitingShiftUpload) {
+      throw new BadRequestException(
+        'Cannot freeze baseline: The scholar has not uploaded their new program prospectus yet after their approved shift/transfer.',
       );
     }
 

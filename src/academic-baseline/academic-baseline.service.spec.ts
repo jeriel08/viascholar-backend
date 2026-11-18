@@ -20,7 +20,6 @@ const createScholarBaselineServiceMock = () => ({
 
 const createBaselineDocumentIngestionServiceMock = () => ({
   uploadProspectus: vi.fn(),
-  uploadHistoricalCcg: vi.fn(),
 });
 
 const createCoordinatorBaselineServiceMock = () => ({
@@ -181,20 +180,6 @@ describe('AcademicBaselineService', () => {
     expect(
       scholarBaselineServiceMock.updateProspectusSubjects,
     ).toHaveBeenCalledWith(123, subjectsDto, true);
-  });
-
-  it('delegates uploadHistoricalCcg to the document ingestion service', async () => {
-    const expected = { matched_credited: [] };
-    baselineDocumentIngestionServiceMock.uploadHistoricalCcg.mockResolvedValue(
-      expected,
-    );
-
-    const result = await service.uploadHistoricalCcg(123, files);
-
-    expect(
-      baselineDocumentIngestionServiceMock.uploadHistoricalCcg,
-    ).toHaveBeenCalledWith(123, files);
-    expect(result).toBe(expected);
   });
 
   it('delegates submitForReview to the scholar baseline service', async () => {

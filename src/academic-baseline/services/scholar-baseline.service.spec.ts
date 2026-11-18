@@ -31,6 +31,11 @@ const createPrismaMock = () => ({
   prospectusSubject: {
     update: vi.fn(),
     create: vi.fn(),
+    deleteMany: vi.fn(),
+  },
+  termEnrollment: {
+    findMany: vi.fn(),
+    update: vi.fn(),
   },
   systemSetting: {
     findFirst: vi.fn(),
@@ -43,6 +48,9 @@ const createPrismaMock = () => ({
   },
   forumPost: {
     findMany: vi.fn(),
+  },
+  academicChangeRequest: {
+    findFirst: vi.fn(),
   },
 });
 
@@ -802,6 +810,165 @@ describe('ScholarBaselineService', () => {
         message: 'Academic baseline submitted for coordinator review.',
         academic_baseline_status: 'PENDING_COORDINATOR_REVIEW',
       });
+    });
+
+    it('blocks submitting the old prospectus during PENDING_SHIFT_PROSPECTUS when uploaded before shift approval', async () => {
+      prisma.scholarProfile.findUnique.mockResolvedValue(
+        makeScholar({
+          academic_baseline_status: 'PENDING_SHIFT_PROSPECTUS',
+          prospectus: {
+            prospectus_id: 60,
+            is_frozen: false,
+            status: 'DRAFT',
+            document: {
+              document_id: 50,
+              uploaded_at: new Date('2026-01-01T08:00:00.000Z'),
+            },
+            subjects: [makeSubject()],
+          },
+        }),
+      );
+      prisma.academicChangeRequest.findFirst.mockResolvedValue({
+        request_id: 1,
+        status: 'APPROVED',
+        reviewed_at: new Date('2026-02-01T08:00:00.000Z'),
+      });
+
+      await expect(service.submitForReview(7)).rejects.toThrow(
+        /You have not uploaded a new prospectus yet/i,
+      );
+      expect(prisma.scholarProfile.update).not.toHaveBeenCalled();
+      expect(prisma.scholarProspectus.update).not.toHaveBeenCalled();
+    });
+
+    it('allows submitting once a new prospectus is uploaded after shift approval', async () => {
+      prisma.scholarProfile.findUnique.mockResolvedValue(
+        makeScholar({
+          academic_baseline_status: 'PENDING_SHIFT_PROSPECTUS',
+          prospectus: {
+            prospectus_id: 61,
+            is_frozen: false,
+            status: 'DRAFT',
+            document: {
+              document_id: 51,
+              uploaded_at: new Date('2026-02-02T08:00:00.000Z'),
+            },
+            subjects: [makeSubject()],
+          },
+        }),
+      );
+      prisma.academicChangeRequest.findFirst.mockResolvedValue({
+        request_id: 1,
+        status: 'APPROVED',
+        reviewed_at: new Date('2026-02-01T08:00:00.000Z'),
+      });
+      prisma.scholarProfile.update.mockResolvedValue({
+        profile_id: 11,
+        academic_baseline_status: 'PENDING_COORDINATOR_REVIEW',
+      });
+
+      const result = await service.submitForReview(7);
+
+      expect(result.academic_baseline_status).toBe('PENDING_COORDINATOR_REVIEW');
+      expect(prisma.scholarProspectus.update).toHaveBeenCalledWith({
+        where: { prospectus_id: 61 },
+        data: { status: 'PENDING_REVIEW' },
+      });
+    });
+
+    it('heals an accidentally submitted old prospectus back to PENDING_SHIFT_PROSPECTUS in getScholarBaselineState', async () => {
+      prisma.scholarProfile.findUnique.mockResolvedValue(
+        makeScholar({
+          academic_baseline_status: 'PENDING_COORDINATOR_REVIEW',
+          prospectus: {
+            prospectus_id: 60,
+            is_frozen: false,
+            status: 'PENDING_REVIEW',
+            document: {
+              document_id: 50,
+              uploaded_at: new Date('2026-01-01T08:00:00.000Z'),
+            },
+            subjects: [makeSubject()],
+          },
+        }),
+      );
+      prisma.academicChangeRequest.findFirst.mockResolvedValue({
+        request_id: 1,
+        status: 'APPROVED',
+        reviewed_at: new Date('2026-02-01T08:00:00.000Z'),
+      });
+
+      const state = await service.getScholarBaselineState(7, true);
+
+      expect(state.academic_baseline_status).toBe('PENDING_SHIFT_PROSPECTUS');
+      expect(prisma.scholarProfile.update).toHaveBeenCalledWith({
+        where: { profile_id: 11 },
+        data: { academic_baseline_status: 'PENDING_SHIFT_PROSPECTUS' },
+      });
+      expect(prisma.scholarProspectus.update).toHaveBeenCalledWith({
+        where: { prospectus_id: 60 },
+        data: { status: 'DRAFT' },
+      });
+    });
+
+    it('prunes leftover pre-shift 1st-semester subjects and skips pre-shift enrollments after post-shift upload', async () => {
+      prisma.scholarProfile.findUnique.mockResolvedValue(
+        makeScholar({
+          academic_baseline_status: 'PENDING_SHIFT_PROSPECTUS',
+          prospectus: {
+            prospectus_id: 61,
+            is_frozen: false,
+            status: 'DRAFT',
+            document: {
+              document_id: 51,
+              uploaded_at: new Date('2026-02-02T08:00:00.000Z'),
+            },
+            subjects: [
+              makeSubject({
+                subject_id: 10,
+                subject_code: 'OLD101',
+                status: 'PASSED',
+                grade: 1.5,
+                units: 3,
+                created_at: new Date('2026-01-01T08:00:00.000Z'),
+              }),
+              makeSubject({
+                subject_id: 11,
+                subject_code: 'GE1',
+                status: 'UNTAKEN',
+                grade: null,
+                units: 3,
+                created_at: new Date('2026-02-02T08:00:01.000Z'),
+              }),
+            ],
+          },
+        }),
+      );
+      prisma.academicChangeRequest.findFirst.mockResolvedValue({
+        request_id: 1,
+        status: 'APPROVED',
+        reviewed_at: new Date('2026-02-01T08:00:00.000Z'),
+      });
+      prisma.termEnrollment.findMany.mockResolvedValue([
+        {
+          enrollment_id: 99,
+          academic_year: '2025-2026',
+          semester: '1st Semester',
+          status: 'APPROVED',
+          created_at: new Date('2026-01-10T08:00:00.000Z'),
+          enrolled_subjects: [{ subject_code: 'GE1' }],
+        },
+      ]);
+
+      const state = await service.getScholarBaselineState(7, true);
+
+      expect(prisma.prospectusSubject.deleteMany).toHaveBeenCalledWith({
+        where: { subject_id: { in: [10] } },
+      });
+      expect(state.prospectus?.subjects).toHaveLength(1);
+      expect(state.prospectus?.subjects[0].subject_code).toBe('GE1');
+      expect(state.prospectus?.subjects[0].status).toBe('UNTAKEN');
+      expect(prisma.prospectusSubject.update).not.toHaveBeenCalled();
     });
   });
 

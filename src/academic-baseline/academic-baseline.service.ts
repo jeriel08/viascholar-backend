@@ -64,15 +64,7 @@ export class AcademicBaselineService {
     );
   }
 
-  // 5. Upload Historical CCG / TOR & Auto-Credit Passed Courses
-  async uploadHistoricalCcg(userId: number, files: Express.Multer.File[]) {
-    return this.baselineDocumentIngestionService.uploadHistoricalCcg(
-      userId,
-      files,
-    );
-  }
-
-  // 6. Scholar submits baseline for coordinator freeze review
+  // 5. Scholar submits baseline for coordinator freeze review
   async submitForReview(userId: number) {
     return this.scholarBaselineService.submitForReview(userId);
   }

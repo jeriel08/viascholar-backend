@@ -41,7 +41,6 @@ describe('AcademicBaselineController', () => {
       selectOrProposeSchool: vi.fn(),
       uploadProspectus: vi.fn(),
       updateProspectusSubjects: vi.fn(),
-      uploadHistoricalCcg: vi.fn(),
       submitForReview: vi.fn(),
       getCoordinatorPendingBaselines: vi.fn(),
       getCoordinatorActiveScholars: vi.fn(),
@@ -229,19 +228,6 @@ describe('AcademicBaselineController', () => {
       expect(result).toBe(expected);
     });
 
-    it('validates and delegates historical CCG uploads', async () => {
-      const files = [
-        makeFile({ originalname: 'tor.png', mimetype: 'image/png' }),
-      ];
-
-      await controller.uploadHistoricalCcg(req, files);
-
-      expect(serviceMock.uploadHistoricalCcg).toHaveBeenCalledWith(42, files);
-      expect(() => controller.uploadHistoricalCcg(req, [])).toThrow(
-        'At least one file must be provided.',
-      );
-    });
-
     it('delegates submitForReview to the service', async () => {
       await controller.submitForReview(req);
 
@@ -351,7 +337,6 @@ describe('AcademicBaselineController', () => {
         'selectSchool',
         'uploadProspectus',
         'updateMyProspectusSubjects',
-        'uploadHistoricalCcg',
         'submitForReview',
         'getAcademicChangeEligibility',
         'getMyAcademicChangeRequests',

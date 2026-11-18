@@ -173,35 +173,6 @@ export class AcademicBaselineController {
     return this.baselineService.updateProspectusSubjects(req.user.user_id, dto);
   }
 
-  @Throttle({ default: { limit: 10, ttl: 60000 } })
-  @Post('upload-historical-ccg')
-  @Roles(Role.SCHOLAR, Role.APPLICANT)
-  @UseInterceptors(AnyFilesInterceptor())
-  @ApiConsumes('multipart/form-data')
-  @ApiOperation({
-    summary:
-      'Continuing scholar uploads historical CCG/TOR to auto-credit completed courses',
-  })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        files: {
-          type: 'array',
-          items: { type: 'string', format: 'binary' },
-          description: 'Historical transcript / grade slip PDFs or images',
-        },
-      },
-    },
-  })
-  uploadHistoricalCcg(
-    @Request() req: AuthenticatedRequest,
-    @UploadedFiles() files: Express.Multer.File[],
-  ) {
-    this.validateUploadedFiles(files);
-    return this.baselineService.uploadHistoricalCcg(req.user.user_id, files);
-  }
-
   @Post('submit-for-review')
   @Roles(Role.SCHOLAR, Role.APPLICANT)
   @ApiOperation({
