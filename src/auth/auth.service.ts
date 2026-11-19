@@ -277,6 +277,8 @@ export class AuthService {
     if (activeMethod === 'AUTHENTICATOR_APP') {
       return {
         mfa_required: true,
+        mfa_purpose: purpose,
+        account_verification_required: purpose === 'REGISTER',
         mfa_token: mfaToken,
         mfa_method: activeMethod,
         mfa_destination: user.email,
@@ -295,6 +297,8 @@ export class AuthService {
 
     return {
       mfa_required: true,
+      mfa_purpose: purpose,
+      account_verification_required: purpose === 'REGISTER',
       mfa_token: mfaToken,
       mfa_method: activeMethod,
       mfa_destination: dispatched.destination,
@@ -664,16 +668,29 @@ export class AuthService {
       user.created_at,
     );
 
-    if (settings.twoFactor && !isTrustedDevice) {
+    const needsAccountVerification =
+      user.is_email_verified === false &&
+      user.scholar_profile?.is_phone_verified !== true &&
+      !settings.emailVerified &&
+      !settings.phoneVerified &&
+      (user.role === Role.APPLICANT || user.role === Role.SCHOLAR);
+
+    if (needsAccountVerification || (settings.twoFactor && !isTrustedDevice)) {
+      const challengePurpose: 'REGISTER' | 'LOGIN' = needsAccountVerification
+        ? 'REGISTER'
+        : 'LOGIN';
+
       await this.auditService.log(
         user.user_id,
         'USER_LOGIN_MFA_REQUIRED',
-        `MFA verification required for login (ID: ${user.user_id}, Email: ${user.email}, Role: ${user.role})`,
+        needsAccountVerification
+          ? `Account verification OTP required on login (ID: ${user.user_id}, Email: ${user.email}, Role: ${user.role})`
+          : `MFA verification required for login (ID: ${user.user_id}, Email: ${user.email}, Role: ${user.role})`,
       );
 
       const mfaChallenge = await this.createMfaChallengeForUser({
         user,
-        purpose: 'LOGIN',
+        purpose: challengePurpose,
         rememberSession: false,
         settings,
         logId,

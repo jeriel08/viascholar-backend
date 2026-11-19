@@ -1154,6 +1154,36 @@ describe('AuthService', () => {
       expect(rememberedLogin.access_token).toBe('signed-access-token');
     });
 
+    it('redirects an unverified applicant/scholar logging back in to account-verification OTP even if twoFactor is disabled', async () => {
+      const password = 'Password123!';
+      const unverifiedUser = makeUser({
+        role: Role.APPLICANT,
+        is_email_verified: false,
+        two_factor_enabled: false,
+        password_hash: await bcrypt.hash(password, 10),
+        scholar_profile: {
+          profile_id: 10,
+          user_id: 1,
+          first_name: 'Juan',
+          last_name: 'Dela Cruz',
+          phone_number: '09171234567',
+          is_phone_verified: false,
+        },
+      });
+      mfaPrisma.user.findUnique.mockResolvedValue(unverifiedUser);
+      mfaPrisma.user.update.mockResolvedValue(unverifiedUser);
+
+      const res = (await mfaService.login(
+        makeLoginDto({ email: unverifiedUser.email, password }),
+      )) as Record<string, unknown>;
+
+      expect(res.mfa_required).toBe(true);
+      expect(res.mfa_purpose).toBe('REGISTER');
+      expect(res.account_verification_required).toBe(true);
+      expect(res.available_methods).toEqual(['EMAIL_OTP', 'SMS_OTP']);
+      expect(mfaMail.sendTwoFactorOtpEmail).toHaveBeenCalledTimes(1);
+    });
+
     it('skips redundant EMAIL_OTP on Google OAuth while enforcing SMS_OTP and AUTHENTICATOR_APP unless trusted', async () => {
       vi.stubGlobal(
         'fetch',
