@@ -31,6 +31,10 @@ import {
 import { buildPasswordResetHtml } from './templates/password-reset.template.js';
 import { buildTwoFactorOtpHtml } from './templates/two-factor.template.js';
 import {
+  buildDeadlineFollowUpHtml,
+  type DeadlineFollowUpEmailData,
+} from './templates/deadline.templates.js';
+import {
   USER_SETTINGS_AUDIT_ACTION,
   parseUserSettings,
 } from '../auth/user-settings.util.js';
@@ -612,6 +616,20 @@ export class MailService {
       `[${data.changeLabel} ${data.decision === 'APPROVED' ? 'Confirmed' : 'Declined'}] ${data.requestedSummary}`,
       html,
       { cc: coordinatorEmails },
+    );
+  }
+
+  // 18. Submission Deadline Follow-Up Reminder (Coordinator -> Scholar)
+  async sendDeadlineFollowUpEmail(
+    studentEmail: string,
+    data: DeadlineFollowUpEmailData,
+  ) {
+    const html = buildDeadlineFollowUpHtml(data, this.frontendUrl);
+    const prefix = data.isOverdue ? 'Overdue' : 'Reminder';
+    await this.sendEmail(
+      studentEmail,
+      `[${prefix}] Missing ${data.requirementLabel} — A.Y. ${data.academicYear} ${data.semester}`,
+      html,
     );
   }
 }

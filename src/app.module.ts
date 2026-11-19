@@ -26,6 +26,7 @@ import { DisbursementsModule } from './disbursements/disbursements.module.js';
 import { AnalyticsModule } from './analytics/analytics.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { ArchiveModule } from './archive/archive.module.js';
+import { DeadlinesModule } from './deadlines/deadlines.module.js';
 import { AppController } from './app.controller.js';
 
 @Module({
@@ -60,6 +61,7 @@ import { AppController } from './app.controller.js';
     ForumModule,
     NotificationsModule,
     ArchiveModule,
+    DeadlinesModule,
   ],
   controllers: [AppController],
   providers: [

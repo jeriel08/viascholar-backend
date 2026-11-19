@@ -102,10 +102,13 @@ model User {
   systemSettings SystemSetting[] @relation("SettingsUpdatedBy")
   notifications             Notification[]
 
-  archived_schools          School[]                @relation("SchoolArchivedBy")
-  archived_programs         AcademicProgram[]       @relation("ProgramArchivedBy")
-  archived_scholar_profiles ScholarProfile[]        @relation("ScholarArchivedBy")
-  reviewed_academic_changes AcademicChangeRequest[] @relation("AcademicChangeReviewedBy")
+  archived_schools            School[]                @relation("SchoolArchivedBy")
+  archived_programs           AcademicProgram[]       @relation("ProgramArchivedBy")
+  archived_scholar_profiles   ScholarProfile[]        @relation("ScholarArchivedBy")
+  reviewed_academic_changes   AcademicChangeRequest[] @relation("AcademicChangeReviewedBy")
+  created_deadlines           SubmissionDeadline[]    @relation("UserCreatedDeadlines")
+  sent_deadline_follow_ups    DeadlineFollowUp[]      @relation("UserSentDeadlineFollowUps")
+  created_deadline_exemptions DeadlineExemption[]     @relation("UserCreatedDeadlineExemptions")
 
   @@map("users")
 }
@@ -185,6 +188,8 @@ model ScholarProfile {
   prospectus_history       ScholarProspectusHistory[]
   enrollments              TermEnrollment[]
   academic_change_requests AcademicChangeRequest[]
+  deadline_follow_ups      DeadlineFollowUp[]
+  deadline_exemptions      DeadlineExemption[]
 
   @@index([archived_at])
   @@map("scholar_profiles")
@@ -378,9 +383,10 @@ model Conversation {
   created_at           DateTime  @default(now())
   updated_at           DateTime  @updatedAt
 
-  scholar     User      @relation("ScholarConversations", fields: [scholar_user_id], references: [user_id], onDelete: Cascade)
-  coordinator User      @relation("CoordinatorConversations", fields: [coordinator_user_id], references: [user_id], onDelete: Cascade)
-  messages    Message[]
+  scholar             User               @relation("ScholarConversations", fields: [scholar_user_id], references: [user_id], onDelete: Cascade)
+  coordinator         User               @relation("CoordinatorConversations", fields: [coordinator_user_id], references: [user_id], onDelete: Cascade)
+  messages            Message[]
+  deadline_follow_ups DeadlineFollowUp[]
 
   @@unique([scholar_user_id, coordinator_user_id])
   @@index([scholar_user_id])
@@ -536,9 +542,10 @@ model School {
   created_at        DateTime             @default(now())
   updated_at        DateTime             @updatedAt
 
-  grading_system   SchoolGradingSystem? @relation("SchoolGradingScale", fields: [grading_system_id], references: [school_id], onDelete: SetNull)
-  archived_by      User?                @relation("SchoolArchivedBy", fields: [archived_by_user_id], references: [user_id], onDelete: SetNull)
-  scholar_profiles ScholarProfile[]
+  grading_system       SchoolGradingSystem? @relation("SchoolGradingScale", fields: [grading_system_id], references: [school_id], onDelete: SetNull)
+  archived_by          User?                @relation("SchoolArchivedBy", fields: [archived_by_user_id], references: [user_id], onDelete: SetNull)
+  scholar_profiles     ScholarProfile[]
+  submission_deadlines SubmissionDeadline[]
 
   @@index([archived_at])
   @@map("schools")
@@ -724,4 +731,71 @@ model Notification {
   @@index([user_id, is_read])
   @@index([user_id, created_at])
   @@map("notifications")
+}
+
+// ==========================================
+// SUBMISSION DEADLINES & FOLLOW-UP MODELS
+// ==========================================
+
+model SubmissionDeadline {
+  deadline_id        Int      @id @default(autoincrement())
+  requirement_type   String   @db.VarChar(40) // "ENROLLMENT" | "GRADES"
+  academic_year      String   @db.VarChar(15)
+  semester           String   @db.VarChar(30)
+  school_id          Int?
+  due_date           DateTime
+  grace_period_days  Int      @default(0)
+  is_optional_term   Boolean  @default(false)
+  title              String?  @db.VarChar(150)
+  instructions       String?  @db.Text
+  is_active          Boolean  @default(true)
+  created_by_user_id Int?
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  school     School?             @relation(fields: [school_id], references: [school_id], onDelete: SetNull)
+  created_by User?               @relation("UserCreatedDeadlines", fields: [created_by_user_id], references: [user_id], onDelete: SetNull)
+  follow_ups DeadlineFollowUp[]
+  exemptions DeadlineExemption[]
+
+  @@index([academic_year, semester, requirement_type, is_active])
+  @@index([school_id])
+  @@map("submission_deadlines")
+}
+
+model DeadlineFollowUp {
+  follow_up_id       Int      @id @default(autoincrement())
+  deadline_id        Int
+  scholar_profile_id Int
+  sent_by_user_id    Int?
+  channels           Json     @db.JsonB
+  conversation_id    Int?
+  message_text       String   @db.Text
+  created_at         DateTime @default(now())
+
+  deadline        SubmissionDeadline @relation(fields: [deadline_id], references: [deadline_id], onDelete: Cascade)
+  scholar_profile ScholarProfile     @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
+  sent_by         User?              @relation("UserSentDeadlineFollowUps", fields: [sent_by_user_id], references: [user_id], onDelete: SetNull)
+  conversation    Conversation?      @relation(fields: [conversation_id], references: [conversation_id], onDelete: SetNull)
+
+  @@index([deadline_id, scholar_profile_id])
+  @@index([scholar_profile_id, created_at])
+  @@map("deadline_follow_ups")
+}
+
+model DeadlineExemption {
+  exemption_id       Int      @id @default(autoincrement())
+  deadline_id        Int
+  scholar_profile_id Int
+  reason             String?  @db.Text
+  exempted_by_user_id Int?
+  created_at         DateTime @default(now())
+
+  deadline        SubmissionDeadline @relation(fields: [deadline_id], references: [deadline_id], onDelete: Cascade)
+  scholar_profile ScholarProfile     @relation(fields: [scholar_profile_id], references: [profile_id], onDelete: Cascade)
+  exempted_by     User?              @relation("UserCreatedDeadlineExemptions", fields: [exempted_by_user_id], references: [user_id], onDelete: SetNull)
+
+  @@unique([deadline_id, scholar_profile_id])
+  @@index([scholar_profile_id])
+  @@map("deadline_exemptions")
 }
