@@ -519,7 +519,9 @@ describe('AnalyticsService', () => {
       { yearLevel: 1, label: '1st Year', count: 1, pct: 33.3 },
       { yearLevel: 2, label: '2nd Year', count: 1, pct: 33.3 },
       { yearLevel: 3, label: '3rd Year', count: 0, pct: 0 },
-      { yearLevel: 4, label: '4th Year (Graduating)', count: 1, pct: 33.3 },
+      { yearLevel: 4, label: '4th Year', count: 1, pct: 33.3 },
+      { yearLevel: 5, label: '5th Year', count: 0, pct: 0 },
+      { yearLevel: 6, label: '6th Year', count: 0, pct: 0 },
     ]);
 
     expect(result.overallStats).toEqual({
@@ -872,18 +874,31 @@ describe('AnalyticsService', () => {
     expect(result.scholars[0].gradeStatus).toBe('SUBMITTED');
   });
 
-  it('clamps out-of-range year levels into the 1-4 distribution buckets', async () => {
+  it('clamps out-of-range year levels into the 1-6 distribution buckets', async () => {
     prisma.scholarProfile.findMany.mockResolvedValue([
-      makeScholar({ profile_id: 1, current_year_level: 7 }),
+      makeScholar({ profile_id: 1, current_year_level: 9 }),
       makeScholar({ profile_id: 2, current_year_level: null }),
       makeScholar({ profile_id: 3, current_year_level: 3 }),
+      makeScholar({ profile_id: 4, current_year_level: 5 }),
+      makeScholar({ profile_id: 5, current_year_level: 6 }),
     ]);
 
     const result = await loadAnalytics();
 
     expect(
       result.academicAspect.yearLevelBreakdown.map((item) => item.count),
-    ).toEqual([1, 0, 1, 1]);
+    ).toEqual([1, 0, 1, 0, 1, 2]);
+    expect(
+      result.academicAspect.yearLevelBreakdown.map((item) => item.label),
+    ).toEqual([
+      '1st Year',
+      '2nd Year',
+      '3rd Year',
+      '4th Year',
+      '5th Year',
+      '6th Year',
+    ]);
+    expect(result.academicAspect.graduatingCount).toBe(3);
   });
 
   it('aggregates across every term when the query selects ALL', async () => {
@@ -1367,7 +1382,8 @@ describe('AnalyticsService', () => {
     it('builds a plain-English heuristic for the year level distribution chart', () => {
       const yearLevelBreakdown = [
         { yearLevel: 1, label: '1st Year', count: 6, pct: 30 },
-        { yearLevel: 4, label: '4th Year (Graduating)', count: 2, pct: 10 },
+        { yearLevel: 4, label: '4th Year', count: 2, pct: 10 },
+        { yearLevel: 6, label: '6th Year', count: 1, pct: 5 },
       ];
 
       const result = service['generateStatisticalHeuristicExplanation'](
@@ -1379,7 +1395,8 @@ describe('AnalyticsService', () => {
 
       expect(result.keyHighlights).toEqual([
         '1st Year: 6 (30%)',
-        '4th Year (Graduating): 2 (10%)',
+        '4th Year: 2 (10%)',
+        '6th Year: 1 (5%)',
       ]);
     });
 

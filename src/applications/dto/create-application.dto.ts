@@ -70,7 +70,7 @@ export class CreateApplicationDto {
   @ApiPropertyOptional({
     example: 1,
     description:
-      'Current academic year level of the student (1 to 5: College, 6: Masteral, 7: Doctoral)',
+      'Current academic year level of the student (1 to 6: College/Doctor, 7: Masteral, 8: Doctoral)',
   })
   @Type(() => Number)
   @IsInt()

@@ -45,6 +45,15 @@ export interface YearLevelBreakdownItem {
   pct: number;
 }
 
+const YEAR_LEVEL_BUCKETS: ReadonlyArray<{ yearLevel: number; label: string }> = [
+  { yearLevel: 1, label: '1st Year' },
+  { yearLevel: 2, label: '2nd Year' },
+  { yearLevel: 3, label: '3rd Year' },
+  { yearLevel: 4, label: '4th Year' },
+  { yearLevel: 5, label: '5th Year' },
+  { yearLevel: 6, label: '6th Year' },
+];
+
 export interface AcademicStandingBreakdown {
   goodStandingCount: number;
   goodStandingPercent: number;
@@ -914,51 +923,31 @@ export class AnalyticsService {
               : 0,
         };
 
-        // Year-Level Distribution Breakdown
-        const yearLevelMap: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
+        // Year-Level Distribution Breakdown (1st Year through 6th Year)
+        const yearLevelMap: Record<number, number> = {
+          1: 0,
+          2: 0,
+          3: 0,
+          4: 0,
+          5: 0,
+          6: 0,
+        };
         for (const s of operationalScholars) {
-          const y = Math.min(4, Math.max(1, s.yearLevel));
+          const y = Math.min(6, Math.max(1, Math.trunc(s.yearLevel)));
           yearLevelMap[y] = (yearLevelMap[y] || 0) + 1;
         }
 
-        const yearLevelBreakdown: YearLevelBreakdownItem[] = [
-          {
-            yearLevel: 1,
-            label: '1st Year',
-            count: yearLevelMap[1] || 0,
-            pct:
-              totalN > 0
-                ? Number((((yearLevelMap[1] || 0) / totalN) * 100).toFixed(1))
-                : 0,
-          },
-          {
-            yearLevel: 2,
-            label: '2nd Year',
-            count: yearLevelMap[2] || 0,
-            pct:
-              totalN > 0
-                ? Number((((yearLevelMap[2] || 0) / totalN) * 100).toFixed(1))
-                : 0,
-          },
-          {
-            yearLevel: 3,
-            label: '3rd Year',
-            count: yearLevelMap[3] || 0,
-            pct:
-              totalN > 0
-                ? Number((((yearLevelMap[3] || 0) / totalN) * 100).toFixed(1))
-                : 0,
-          },
-          {
-            yearLevel: 4,
-            label: '4th Year (Graduating)',
-            count: yearLevelMap[4] || 0,
-            pct:
-              totalN > 0
-                ? Number((((yearLevelMap[4] || 0) / totalN) * 100).toFixed(1))
-                : 0,
-          },
-        ];
+        const yearLevelBreakdown: YearLevelBreakdownItem[] =
+          YEAR_LEVEL_BUCKETS.map(({ yearLevel, label }) => {
+            const count = yearLevelMap[yearLevel] || 0;
+            return {
+              yearLevel,
+              label,
+              count,
+              pct:
+                totalN > 0 ? Number(((count / totalN) * 100).toFixed(1)) : 0,
+            };
+          });
 
         const academicAspect: AcademicAspectData = {
           unsubmittedGradesCount,
@@ -1252,7 +1241,7 @@ Return ONLY a JSON object with this exact structure (no markdown formatting, no 
       const list = (m.yearLevelBreakdown as YearLevelBreakdownItem[]) || [];
 
       return {
-        summary: `The scholarship cohort is distributed across undergraduate year levels, leading up to the graduating class.`,
+        summary: `The scholarship cohort is distributed across academic year levels from 1st Year through 6th Year.`,
         statisticalInterpretation: `Tracking year levels provides clear visibility into student progression and the volume of scholars approaching graduation. This assists the coordinator and grantor in forecasting future scholarship slot turnover.`,
         recommendations: [
           'Ensure upper-year scholars receive guidance for on-the-job training and graduation requirements.',
