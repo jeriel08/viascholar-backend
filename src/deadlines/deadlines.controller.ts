@@ -143,6 +143,19 @@ export class DeadlinesController {
     return this.deadlinesService.createDeadline(req.user.user_id, dto);
   }
 
+  @Post('reminders/run')
+  @Roles(Role.ADMIN, Role.COORDINATOR)
+  @ApiOperation({
+    summary:
+      'Run the automated deadline reminder sweep immediately (deduplicated per scholar & milestone)',
+  })
+  runScheduledReminders(@Request() req: AuthenticatedRequest) {
+    return this.deadlinesService.processScheduledReminders(
+      new Date(),
+      req.user.user_id,
+    );
+  }
+
   @Get(':id/compliance')
   @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
   @ApiOperation({

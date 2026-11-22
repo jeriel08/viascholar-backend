@@ -29,6 +29,7 @@ import {
 } from './dto/deadline.dto.js';
 import {
   type DeadlineComplianceStatus,
+  type DeadlineReminderMilestone,
   type EvaluationResult,
   evaluateScholarRequirementStatus,
   getRequirementActionPath,
@@ -36,6 +37,7 @@ import {
   normalizeDueDateInput,
   normalizeSchoolName,
   resolveEffectiveDeadline,
+  resolveScheduledReminderMilestone,
   resolveScholarSchoolName,
   scholarMatchesDeadlineSchool,
 } from './utils/deadline-compliance.util.js';
@@ -174,6 +176,7 @@ export class DeadlinesService {
             total_assessment: true,
             total_units: true,
             audit_flags: true,
+            coordinator_notes: true,
             reviewed_at: true,
             created_at: true,
             updated_at: true,
@@ -191,6 +194,7 @@ export class DeadlinesService {
             appeal_status: true,
             evaluation_flag: true,
             gpa: true,
+            reviewed_at: true,
             submitted_at: true,
             document: { select: { uploaded_at: true } },
           },
@@ -202,6 +206,7 @@ export class DeadlinesService {
             document_id: true,
             document_type: true,
             status: true,
+            rejection_reason: true,
             confirmed_data: true,
             extracted_data: true,
             uploaded_at: true,
@@ -279,6 +284,7 @@ export class DeadlinesService {
       missing_count: 0,
       overdue_count: 0,
       needs_action_count: 0,
+      stalled_revisions_count: 0,
       upcoming_count: 0,
       exempt_count: 0,
       not_applicable_count: 0,
@@ -300,6 +306,7 @@ export class DeadlinesService {
       missing_count: number;
       overdue_count: number;
       needs_action_count: number;
+      stalled_revisions_count?: number;
       upcoming_count: number;
       exempt_count: number;
       not_applicable_count: number;
@@ -347,6 +354,10 @@ export class DeadlinesService {
       case 'NEEDS_ACTION':
         summary.needs_action_count++;
         summary.missing_count++;
+        if (evaluation.revision?.is_stalled) {
+          summary.stalled_revisions_count =
+            (summary.stalled_revisions_count ?? 0) + 1;
+        }
         break;
       case 'UPCOMING':
         summary.upcoming_count++;
@@ -431,6 +442,7 @@ export class DeadlinesService {
       is_late: evaluation.is_late ?? false,
       days_late: evaluation.days_late ?? 0,
       lock: evaluation.lock ?? null,
+      revision: evaluation.revision ?? null,
       submission: evaluation.submission ?? null,
       scholar: {
         profile_id: scholar.profile_id,
@@ -455,21 +467,30 @@ export class DeadlinesService {
         : null,
       follow_up_count: followUps.length,
       last_follow_up: latestFollowUp
-        ? {
-            follow_up_id: latestFollowUp.follow_up_id,
-            channels: Array.isArray(latestFollowUp.channels)
-              ? latestFollowUp.channels
-              : [],
-            conversation_id: latestFollowUp.conversation_id ?? null,
-            message_text: latestFollowUp.message_text,
-            sent_by_name: latestFollowUp.sent_by?.employee
-              ? `${latestFollowUp.sent_by.employee.first_name || ''} ${latestFollowUp.sent_by.employee.last_name || ''}`.trim()
-              : latestFollowUp.sent_by?.email || 'Coordinator',
-            created_at:
-              latestFollowUp.created_at instanceof Date
-                ? latestFollowUp.created_at.toISOString()
-                : latestFollowUp.created_at,
-          }
+        ? (() => {
+            const rawChannels = Array.isArray(latestFollowUp.channels)
+              ? latestFollowUp.channels.map(String)
+              : [];
+            const autoTag =
+              rawChannels.find((c: string) => c.startsWith('AUTO:')) ?? null;
+            const isAutomated = Boolean(autoTag);
+            return {
+              follow_up_id: latestFollowUp.follow_up_id,
+              channels: rawChannels.filter((c: string) => !c.startsWith('AUTO:')),
+              conversation_id: latestFollowUp.conversation_id ?? null,
+              message_text: latestFollowUp.message_text,
+              sent_by_name: latestFollowUp.sent_by?.employee
+                ? `${latestFollowUp.sent_by.employee.first_name || ''} ${latestFollowUp.sent_by.employee.last_name || ''}`.trim()
+                : latestFollowUp.sent_by?.email ||
+                  (isAutomated ? 'Automated Reminder' : 'Coordinator'),
+              is_automated: isAutomated,
+              auto_milestone: autoTag ? autoTag.replace(/^AUTO:/, '') : null,
+              created_at:
+                latestFollowUp.created_at instanceof Date
+                  ? latestFollowUp.created_at.toISOString()
+                  : latestFollowUp.created_at,
+            };
+          })()
         : null,
     };
   }
@@ -499,6 +520,10 @@ export class DeadlinesService {
                 'NOT_SUBMITTED',
               ].includes(item.status)
             ) {
+              return false;
+            }
+          } else if (query.status === 'STALLED_REVISIONS') {
+            if (!(item.status === 'NEEDS_ACTION' && item.revision?.is_stalled)) {
               return false;
             }
           } else if (query.status === 'SUBMITTED_LATE') {
@@ -542,6 +567,15 @@ export class DeadlinesService {
           (STATUS_SORT_PRIORITY[a.status as DeadlineComplianceStatus] ?? 99) -
           (STATUS_SORT_PRIORITY[b.status as DeadlineComplianceStatus] ?? 99);
         if (pDiff !== 0) return pDiff;
+        if (a.status === 'NEEDS_ACTION' && b.status === 'NEEDS_ACTION') {
+          const stalledDiff =
+            (b.revision?.is_stalled ? 1 : 0) - (a.revision?.is_stalled ? 1 : 0);
+          if (stalledDiff !== 0) return stalledDiff;
+          const elapsedDiff =
+            (b.revision?.days_since_requested ?? 0) -
+            (a.revision?.days_since_requested ?? 0);
+          if (elapsedDiff !== 0) return elapsedDiff;
+        }
         if (b.days_overdue !== a.days_overdue) {
           return b.days_overdue - a.days_overdue;
         }
@@ -830,6 +864,7 @@ export class DeadlinesService {
                 total_assessment: true,
                 total_units: true,
                 audit_flags: true,
+                coordinator_notes: true,
                 reviewed_at: true,
                 created_at: true,
                 updated_at: true,
@@ -847,6 +882,7 @@ export class DeadlinesService {
                 appeal_status: true,
                 evaluation_flag: true,
                 gpa: true,
+                reviewed_at: true,
                 submitted_at: true,
                 document: { select: { uploaded_at: true } },
               },
@@ -858,6 +894,7 @@ export class DeadlinesService {
                 document_id: true,
                 document_type: true,
                 status: true,
+                rejection_reason: true,
                 confirmed_data: true,
                 extracted_data: true,
                 uploaded_at: true,
@@ -1112,6 +1149,7 @@ export class DeadlinesService {
       missing_count: 0,
       overdue_count: 0,
       needs_action_count: 0,
+      stalled_revisions_count: 0,
       upcoming_count: 0,
       exempt_count: 0,
       not_applicable_count: 0,
@@ -1568,6 +1606,7 @@ export class DeadlinesService {
             total_assessment: true,
             total_units: true,
             audit_flags: true,
+            coordinator_notes: true,
             reviewed_at: true,
             created_at: true,
             updated_at: true,
@@ -1585,6 +1624,7 @@ export class DeadlinesService {
             appeal_status: true,
             evaluation_flag: true,
             gpa: true,
+            reviewed_at: true,
             submitted_at: true,
             document: { select: { uploaded_at: true } },
           },
@@ -1596,6 +1636,7 @@ export class DeadlinesService {
             document_id: true,
             document_type: true,
             status: true,
+            rejection_reason: true,
             confirmed_data: true,
             extracted_data: true,
             uploaded_at: true,
@@ -1770,6 +1811,7 @@ export class DeadlinesService {
           is_late: evaluation.is_late ?? false,
           days_late: evaluation.days_late ?? 0,
           lock: evaluation.lock ?? null,
+          revision: evaluation.revision ?? null,
           submission: evaluation.submission ?? null,
         });
       }
@@ -1779,6 +1821,216 @@ export class DeadlinesService {
       academic_year: activeTerm.effective_academic_year,
       semester: activeTerm.effective_semester,
       deadlines: items,
+    };
+  }
+
+  async processScheduledReminders(
+    now = new Date(),
+    triggeredByUserId?: number,
+  ) {
+    const breakdown: Record<DeadlineReminderMilestone, number> = {
+      BEFORE_3D: 0,
+      DUE_TODAY: 0,
+      AFTER_GRACE_1D: 0,
+      STALLED_REVISION: 0,
+    };
+
+    const activeDeadlines = await this.prisma.submissionDeadline.findMany({
+      where: { is_active: true },
+      include: {
+        school: {
+          select: { school_id: true, school_name: true, school_code: true },
+        },
+      },
+      orderBy: { due_date: 'asc' },
+    });
+
+    if (!Array.isArray(activeDeadlines) || activeDeadlines.length === 0) {
+      return {
+        ran_at: now.toISOString(),
+        evaluated_deadlines: 0,
+        sent_count: 0,
+        skipped_dedup_count: 0,
+        breakdown,
+      };
+    }
+
+    const deadlineIds = activeDeadlines.map((d) => d.deadline_id);
+    const scholars = await this.fetchComplianceScholars(deadlineIds);
+
+    const siblingsByBucket = new Map<string, typeof activeDeadlines>();
+    for (const d of activeDeadlines) {
+      const key = `${normalizeAcademicYear(d.academic_year) || d.academic_year}||${normalizeSemester(d.semester) || d.semester}||${d.requirement_type}`;
+      const list = siblingsByBucket.get(key) ?? [];
+      list.push(d);
+      siblingsByBucket.set(key, list);
+    }
+
+    let sentCount = 0;
+    let skippedDedupCount = 0;
+
+    for (const deadline of activeDeadlines) {
+      const reqType = deadline.requirement_type as DeadlineRequirementType;
+      const reqLabel = getRequirementLabel(reqType);
+      const actionPath = getRequirementActionPath(reqType);
+      const bucketKey = `${normalizeAcademicYear(deadline.academic_year) || deadline.academic_year}||${normalizeSemester(deadline.semester) || deadline.semester}||${reqType}`;
+      const siblings = siblingsByBucket.get(bucketKey) ?? [deadline];
+      const dueDateLabel = new Date(deadline.due_date).toLocaleDateString(
+        'en-US',
+        { month: 'short', day: 'numeric', year: 'numeric' },
+      );
+
+      for (const scholar of scholars) {
+        const effective = resolveEffectiveDeadline(siblings, reqType, scholar);
+        if (!effective || effective.deadline_id !== deadline.deadline_id) {
+          continue;
+        }
+
+        const exemption =
+          (scholar as any).deadline_exemptions?.find(
+            (e: any) => e.deadline_id === deadline.deadline_id,
+          ) ?? null;
+        const evaluation = evaluateScholarRequirementStatus({
+          deadline,
+          scholar,
+          exemption,
+          now,
+        });
+        const match = resolveScheduledReminderMilestone({
+          deadline,
+          evaluation,
+          now,
+        });
+        if (!match) {
+          continue;
+        }
+
+        const followUps: any[] = ((scholar as any).deadline_follow_ups ??= []);
+        const alreadySent = followUps.some(
+          (f: any) =>
+            f.deadline_id === deadline.deadline_id &&
+            Array.isArray(f.channels) &&
+            f.channels.includes(match.dedup_tag),
+        );
+        if (alreadySent) {
+          skippedDedupCount++;
+          continue;
+        }
+
+        const studentName =
+          `${scholar.first_name || ''} ${scholar.last_name || ''}`.trim() ||
+          'Scholar';
+        let title = `Reminder: ${reqLabel}`;
+        let messageText = `Your ${reqLabel} for A.Y. ${deadline.academic_year} ${deadline.semester} is due soon.`;
+
+        if (match.milestone === 'BEFORE_3D') {
+          title = `Upcoming Deadline (3 Days Left): ${reqLabel}`;
+          messageText = `Friendly reminder: your ${reqLabel} for A.Y. ${deadline.academic_year} ${deadline.semester} is due on ${dueDateLabel} (in 3 days).`;
+        } else if (match.milestone === 'DUE_TODAY') {
+          title = `Due Today: ${reqLabel}`;
+          messageText = `Reminder: your ${reqLabel} for A.Y. ${deadline.academic_year} ${deadline.semester} is due today (${dueDateLabel}).${deadline.grace_period_days > 0 ? ` A ${deadline.grace_period_days}-day grace period applies if needed.` : ''}`;
+        } else if (match.milestone === 'AFTER_GRACE_1D') {
+          title = `Past Grace Cutoff: ${reqLabel}`;
+          messageText = `The grace period for ${reqLabel} (A.Y. ${deadline.academic_year} ${deadline.semester}) has ended, but submissions remain open. Please submit your documents as soon as possible or message your Coordinator about any school delay.`;
+        } else if (match.milestone === 'STALLED_REVISION') {
+          const waitDays = evaluation.revision?.days_since_requested ?? 3;
+          title = `Revision Follow-Up: ${reqLabel}`;
+          messageText = `Your requested revision for ${reqLabel} (A.Y. ${deadline.academic_year} ${deadline.semester}) has been waiting for ${waitDays} day${waitDays === 1 ? '' : 's'}. Please upload your corrected document through the portal so the Coordinator can re-verify it.`;
+        }
+
+        const deliveredChannels: string[] = [];
+
+        if (scholar.user_id && this.notificationsService) {
+          try {
+            await this.notificationsService.notifyUser(scholar.user_id, {
+              title,
+              message: messageText,
+              category: 'deadline',
+              link: actionPath,
+            });
+            deliveredChannels.push('IN_APP');
+          } catch (err) {
+            this.logger.warn(
+              `Failed automated in-app notification for scholar user ${scholar.user_id}: ${err}`,
+            );
+          }
+        }
+
+        if (scholar.user?.email && this.mailService) {
+          try {
+            const isOverdue = evaluation.status === 'OVERDUE';
+            await this.mailService.sendDeadlineFollowUpEmail(
+              scholar.user.email,
+              {
+                studentName,
+                requirementLabel: reqLabel,
+                academicYear: deadline.academic_year,
+                semester: deadline.semester,
+                dueDateLabel,
+                isOverdue,
+                daysOverdue: evaluation.days_overdue,
+                coordinatorName: 'ViaScholar Automated Reminder',
+                message: messageText,
+                actionPath,
+              },
+            );
+            deliveredChannels.push('EMAIL');
+          } catch (err) {
+            this.logger.warn(
+              `Failed automated email reminder to ${scholar.user.email}: ${err}`,
+            );
+          }
+        }
+
+        const storedChannels = [match.dedup_tag, ...deliveredChannels];
+        const createdFollowUp =
+          typeof (this.prisma as any).deadlineFollowUp?.create === 'function'
+            ? await this.prisma.deadlineFollowUp.create({
+                data: {
+                  deadline_id: deadline.deadline_id,
+                  scholar_profile_id: scholar.profile_id,
+                  sent_by_user_id: null,
+                  channels: storedChannels,
+                  conversation_id: null,
+                  message_text: messageText,
+                },
+              })
+            : null;
+
+        followUps.push({
+          follow_up_id: createdFollowUp?.follow_up_id ?? Date.now(),
+          deadline_id: deadline.deadline_id,
+          scholar_profile_id: scholar.profile_id,
+          channels: storedChannels,
+          message_text: messageText,
+          created_at: now,
+        });
+        sentCount++;
+        breakdown[match.milestone]++;
+      }
+    }
+
+    if (sentCount > 0) {
+      this.eventsGateway.emitToStaff('deadline:followup_sent', {
+        automated: true,
+        sent_count: sentCount,
+      });
+    }
+
+    if (triggeredByUserId) {
+      await this.auditService.log(
+        triggeredByUserId,
+        'DEADLINE_REMINDERS_RUN',
+        `Ran scheduled deadline reminders: evaluated ${activeDeadlines.length} active deadline(s), sent ${sentCount}, skipped ${skippedDedupCount} already sent.`,
+      );
+    }
+
+    return {
+      ran_at: now.toISOString(),
+      evaluated_deadlines: activeDeadlines.length,
+      sent_count: sentCount,
+      skipped_dedup_count: skippedDedupCount,
+      breakdown,
     };
   }
 }

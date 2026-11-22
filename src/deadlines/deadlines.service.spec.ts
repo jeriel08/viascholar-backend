@@ -1204,4 +1204,303 @@ describe('DeadlinesService', () => {
       expect(lateCcgItem?.days_late).toBe(3);
     });
   });
+
+  describe('changes requested revision window & automated scheduled reminders', () => {
+    it('tracks elapsed days, 3-day revision window, and STALLED_REVISIONS sorting/filtering when changes are requested after deadline', async () => {
+      const deadline = makeDeadlineRow({
+        deadline_id: 1,
+        requirement_type: 'ENROLLMENT',
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+        due_date: new Date('2026-10-01T23:59:59.999+08:00'),
+        grace_period_days: 0,
+      });
+
+      const recentRevisionScholar = makeScholarRow({
+        profile_id: 31,
+        user_id: 301,
+        first_name: 'Anna',
+        last_name: 'Recent',
+        enrollments: [
+          {
+            enrollment_id: 801,
+            academic_year: '2026-2027',
+            semester: '1st Semester',
+            status: 'CHANGES_REQUESTED',
+            reviewed_at: new Date('2026-10-09T10:00:00.000Z'),
+            updated_at: new Date('2026-10-09T10:00:00.000Z'),
+          },
+        ],
+      });
+
+      const stalledRevisionScholar = makeScholarRow({
+        profile_id: 32,
+        user_id: 302,
+        first_name: 'Zed',
+        last_name: 'Stalled',
+        enrollments: [
+          {
+            enrollment_id: 802,
+            academic_year: '2026-2027',
+            semester: '1st Semester',
+            status: 'CHANGES_REQUESTED',
+            reviewed_at: new Date('2026-10-05T10:00:00.000Z'),
+            updated_at: new Date('2026-10-05T10:00:00.000Z'),
+          },
+        ],
+      });
+
+      prisma.submissionDeadline.findUnique.mockResolvedValueOnce(deadline);
+      prisma.submissionDeadline.findMany.mockResolvedValueOnce([deadline]);
+      prisma.scholarProfile.findMany.mockResolvedValueOnce([
+        recentRevisionScholar,
+        stalledRevisionScholar,
+      ]);
+
+      const detail = await service.getDeadlineDetailCompliance(1, {});
+      expect(detail.summary.needs_action_count).toBe(2);
+      expect(detail.summary.stalled_revisions_count).toBe(1);
+
+      // Stalled revision should sort ahead of recent revision
+      expect(detail.items[0].scholar.profile_id).toBe(32);
+      expect(detail.items[1].scholar.profile_id).toBe(31);
+
+      const recentRow = detail.items[1];
+      expect(recentRow.status).toBe('NEEDS_ACTION');
+      expect(recentRow.revision?.requested_after_deadline).toBe(true);
+      expect(recentRow.revision?.days_since_requested).toBe(1);
+      expect(recentRow.revision?.days_remaining).toBe(2);
+      expect(recentRow.revision?.is_stalled).toBe(false);
+
+      const stalledRow = detail.items[0];
+      expect(stalledRow.status).toBe('NEEDS_ACTION');
+      expect(stalledRow.revision?.requested_after_deadline).toBe(true);
+      expect(stalledRow.revision?.days_since_requested).toBe(5);
+      expect(stalledRow.revision?.is_stalled).toBe(true);
+      expect(stalledRow.revision?.days_overdue).toBe(2);
+
+      prisma.submissionDeadline.findUnique.mockResolvedValueOnce(deadline);
+      prisma.submissionDeadline.findMany.mockResolvedValueOnce([deadline]);
+      prisma.scholarProfile.findMany.mockResolvedValueOnce([
+        recentRevisionScholar,
+        stalledRevisionScholar,
+      ]);
+
+      const stalledOnly = await service.getDeadlineDetailCompliance(1, {
+        status: 'STALLED_REVISIONS',
+      });
+      expect(stalledOnly.items).toHaveLength(1);
+      expect(stalledOnly.items[0].scholar.profile_id).toBe(32);
+    });
+
+    it('dispatches scheduled reminders for BEFORE_3D, DUE_TODAY, AFTER_GRACE_1D, and STALLED_REVISION and deduplicates repeats', async () => {
+      const now = new Date('2026-10-10T01:00:00.000Z'); // 2026-10-10 09:00 PHT
+
+      const before3dDeadline = makeDeadlineRow({
+        deadline_id: 101,
+        requirement_type: 'ENROLLMENT',
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+        school_id: null,
+        due_date: new Date('2026-10-13T23:59:59.999+08:00'),
+        grace_period_days: 0,
+      });
+
+      const dueTodayDeadline = makeDeadlineRow({
+        deadline_id: 102,
+        requirement_type: 'GRADES',
+        academic_year: '2025-2026',
+        semester: '2nd Semester',
+        school_id: null,
+        due_date: new Date('2026-10-10T23:59:59.999+08:00'),
+        grace_period_days: 0,
+      });
+
+      const afterGraceOverrideDeadline = makeDeadlineRow({
+        deadline_id: 103,
+        requirement_type: 'ENROLLMENT',
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+        school_id: 3,
+        school: {
+          school_id: 3,
+          school_name: 'Ateneo de Davao University',
+          school_code: 'ADDU',
+        },
+        due_date: new Date('2026-10-07T23:59:59.999+08:00'),
+        grace_period_days: 2, // cutoff = 2026-10-09 -> 1 day past grace on 2026-10-10
+      });
+
+      const scholarBefore3d = makeScholarRow({
+        profile_id: 41,
+        user_id: 401,
+        first_name: 'Before',
+        last_name: 'ThreeDays',
+        enrollments: [],
+        grade_reports: [],
+      });
+
+      const scholarDueToday = makeScholarRow({
+        profile_id: 47,
+        user_id: 407,
+        first_name: 'Due',
+        last_name: 'Today',
+        enrollments: [
+          {
+            enrollment_id: 901,
+            academic_year: '2025-2026',
+            semester: '2nd Semester',
+            status: 'APPROVED',
+          },
+        ],
+        grade_reports: [],
+      });
+
+      const scholarAfterGrace = makeScholarRow({
+        profile_id: 42,
+        user_id: 402,
+        first_name: 'After',
+        last_name: 'Grace',
+        school_id: 3,
+        school_name: 'Ateneo de Davao University',
+        school: {
+          school_id: 3,
+          school_name: 'Ateneo de Davao University',
+          school_code: 'ADDU',
+        },
+        enrollments: [],
+      });
+
+      const scholarStalled = makeScholarRow({
+        profile_id: 43,
+        user_id: 403,
+        first_name: 'Stalled',
+        last_name: 'Revision',
+        enrollments: [
+          {
+            enrollment_id: 903,
+            academic_year: '2026-2027',
+            semester: '1st Semester',
+            status: 'CHANGES_REQUESTED',
+            reviewed_at: new Date('2026-10-05T01:00:00.000Z'),
+            updated_at: new Date('2026-10-05T01:00:00.000Z'),
+          },
+        ],
+      });
+
+      const scholarSubmitted = makeScholarRow({
+        profile_id: 44,
+        user_id: 404,
+        enrollments: [
+          {
+            enrollment_id: 904,
+            academic_year: '2026-2027',
+            semester: '1st Semester',
+            status: 'APPROVED',
+          },
+        ],
+        grade_reports: [
+          {
+            report_id: 905,
+            academic_year: '2025-2026',
+            semester: '2nd Semester',
+            status: 'APPROVED',
+            submitted_at: new Date('2026-10-08T00:00:00.000Z'),
+          },
+        ],
+      });
+
+      const scholarOnHold = makeScholarRow({
+        profile_id: 45,
+        user_id: 405,
+        academic_baseline_status: 'DISCONTINUED',
+        enrollments: [],
+      });
+
+      const scholarExempt = makeScholarRow({
+        profile_id: 46,
+        user_id: 406,
+        deadline_exemptions: [{ deadline_id: 101, reason: 'LOA' }],
+      });
+
+      const scholarsPool = [
+        scholarBefore3d,
+        scholarDueToday,
+        scholarAfterGrace,
+        scholarStalled,
+        scholarSubmitted,
+        scholarOnHold,
+        scholarExempt,
+      ];
+
+      prisma.submissionDeadline.findMany.mockResolvedValueOnce([
+        before3dDeadline,
+        dueTodayDeadline,
+        afterGraceOverrideDeadline,
+      ]);
+      prisma.scholarProfile.findMany.mockResolvedValueOnce(scholarsPool);
+      prisma.deadlineFollowUp.create.mockImplementation(async ({ data }) => ({
+        follow_up_id: Math.floor(Math.random() * 1000) + 1,
+        ...data,
+        created_at: now,
+      }));
+
+      const firstRun = await service.processScheduledReminders(now, 2);
+
+      // scholarBefore3d hits BEFORE_3D on 101 (no ongoing enrollment)
+      // scholarDueToday hits DUE_TODAY on 102 (APPROVED 2025-2026 2nd Sem w/o grade report) and CURRENTLY_ENROLLED on 101
+      // scholarAfterGrace hits AFTER_GRACE_1D on 103
+      // scholarStalled hits STALLED_REVISION on 101
+      // scholarSubmitted, scholarOnHold, scholarExempt are all skipped
+      expect(firstRun.evaluated_deadlines).toBe(3);
+      expect(firstRun.sent_count).toBe(4);
+      expect(firstRun.skipped_dedup_count).toBe(0);
+      expect(firstRun.breakdown).toEqual({
+        BEFORE_3D: 1,
+        DUE_TODAY: 1,
+        AFTER_GRACE_1D: 1,
+        STALLED_REVISION: 1,
+      });
+      expect(prisma.deadlineFollowUp.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            sent_by_user_id: null,
+            channels: expect.arrayContaining([
+              'AUTO:STALLED_REVISION:2026-10-05',
+              'IN_APP',
+              'EMAIL',
+            ]),
+          }),
+        }),
+      );
+      expect(eventsGateway.emitToStaff).toHaveBeenCalledWith(
+        'deadline:followup_sent',
+        { automated: true, sent_count: 4 },
+      );
+      expect(auditService.log).toHaveBeenCalledWith(
+        2,
+        'DEADLINE_REMINDERS_RUN',
+        expect.any(String),
+      );
+
+      // Re-run on same day -> every milestone is deduplicated via followUps
+      notificationsService.notifyUser.mockClear();
+      mailService.sendDeadlineFollowUpEmail.mockClear();
+      prisma.deadlineFollowUp.create.mockClear();
+
+      prisma.submissionDeadline.findMany.mockResolvedValueOnce([
+        before3dDeadline,
+        dueTodayDeadline,
+        afterGraceOverrideDeadline,
+      ]);
+      prisma.scholarProfile.findMany.mockResolvedValueOnce(scholarsPool);
+
+      const secondRun = await service.processScheduledReminders(now);
+      expect(secondRun.sent_count).toBe(0);
+      expect(secondRun.skipped_dedup_count).toBe(4);
+      expect(notificationsService.notifyUser).not.toHaveBeenCalled();
+      expect(mailService.sendDeadlineFollowUpEmail).not.toHaveBeenCalled();
+      expect(prisma.deadlineFollowUp.create).not.toHaveBeenCalled();
+    });
+  });
 });

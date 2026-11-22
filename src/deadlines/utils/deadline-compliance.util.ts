@@ -30,6 +30,30 @@ export interface DeadlineLockInfo {
   detail: string;
 }
 
+export const DEFAULT_REVISION_WINDOW_DAYS = 3;
+
+export interface DeadlineRevisionInfo {
+  requested_at: string | null;
+  days_since_requested: number;
+  window_days: number;
+  revision_due_date: string | null;
+  days_remaining: number;
+  days_overdue: number;
+  is_stalled: boolean;
+  requested_after_deadline: boolean;
+}
+
+export type DeadlineReminderMilestone =
+  | 'BEFORE_3D'
+  | 'DUE_TODAY'
+  | 'AFTER_GRACE_1D'
+  | 'STALLED_REVISION';
+
+export interface ScheduledReminderMatch {
+  milestone: DeadlineReminderMilestone;
+  dedup_tag: string;
+}
+
 export interface DeadlineRecordLike {
   deadline_id: number;
   requirement_type: string;
@@ -106,6 +130,7 @@ export interface ScholarComplianceInput {
     total_assessment?: unknown;
     total_units?: unknown;
     audit_flags?: unknown;
+    coordinator_notes?: string | null;
     reviewed_at?: Date | string | null;
     created_at?: Date | string | null;
     updated_at?: Date | string | null;
@@ -121,6 +146,7 @@ export interface ScholarComplianceInput {
     appeal_status?: string | null;
     evaluation_flag?: string | null;
     gpa?: unknown;
+    reviewed_at?: Date | string | null;
     submitted_at?: Date | string | null;
     document?: { uploaded_at?: Date | string | null } | null;
   }>;
@@ -128,6 +154,7 @@ export interface ScholarComplianceInput {
     document_id: number;
     document_type?: string | null;
     status: string;
+    rejection_reason?: string | null;
     confirmed_data?: unknown;
     extracted_data?: unknown;
     uploaded_at?: Date | string | null;
@@ -154,10 +181,99 @@ export interface EvaluationResult {
   is_late?: boolean;
   days_late?: number;
   lock?: DeadlineLockInfo | null;
+  revision?: DeadlineRevisionInfo | null;
   submission?: DeadlineSubmissionSummary | null;
 }
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+export function getManilaDateParts(date: Date): {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  dateKey: string;
+} {
+  const shifted = new Date(date.getTime() + MANILA_OFFSET_MS);
+  const year = shifted.getUTCFullYear();
+  const month = shifted.getUTCMonth() + 1;
+  const day = shifted.getUTCDate();
+  const hour = shifted.getUTCHours();
+  const dateKey = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  return { year, month, day, hour, dateKey };
+}
+
+export function diffCalendarDaysManila(
+  target: Date | string,
+  reference: Date,
+): number {
+  const targetDate = target instanceof Date ? target : new Date(target);
+  const t = getManilaDateParts(targetDate);
+  const r = getManilaDateParts(reference);
+  const targetDayMs = Date.UTC(t.year, t.month - 1, t.day);
+  const refDayMs = Date.UTC(r.year, r.month - 1, r.day);
+  return Math.round((targetDayMs - refDayMs) / MS_PER_DAY);
+}
+
+export function computeRevisionState(
+  requestedAt: Date | string | null | undefined,
+  effectiveDueDate: Date,
+  now: Date,
+  windowDays = DEFAULT_REVISION_WINDOW_DAYS,
+): DeadlineRevisionInfo | null {
+  const requestedDate = parseValidDate(requestedAt);
+  if (!requestedDate) return null;
+
+  const requested_after_deadline =
+    requestedDate.getTime() > effectiveDueDate.getTime();
+  const elapsedMs = Math.max(0, now.getTime() - requestedDate.getTime());
+  const days_since_requested = Math.floor(elapsedMs / MS_PER_DAY);
+  const revisionDueDate = new Date(
+    requestedDate.getTime() + windowDays * MS_PER_DAY,
+  );
+  const diffMs = revisionDueDate.getTime() - now.getTime();
+
+  if (diffMs < 0) {
+    return {
+      requested_at: requestedDate.toISOString(),
+      days_since_requested,
+      window_days: windowDays,
+      revision_due_date: revisionDueDate.toISOString(),
+      days_remaining: 0,
+      days_overdue: Math.max(1, Math.ceil(Math.abs(diffMs) / MS_PER_DAY)),
+      is_stalled: true,
+      requested_after_deadline,
+    };
+  }
+
+  return {
+    requested_at: requestedDate.toISOString(),
+    days_since_requested,
+    window_days: windowDays,
+    revision_due_date: revisionDueDate.toISOString(),
+    days_remaining: Math.ceil(diffMs / MS_PER_DAY),
+    days_overdue: 0,
+    is_stalled: false,
+    requested_after_deadline,
+  };
+}
+
+function formatRevisionStatusDetail(
+  prefix: string,
+  fallback: string,
+  revision: DeadlineRevisionInfo | null,
+): string {
+  if (!revision) return fallback;
+  const whenLabel =
+    revision.days_since_requested === 0
+      ? 'today'
+      : `${revision.days_since_requested}d ago`;
+  if (revision.is_stalled) {
+    return `${prefix} ${whenLabel} · Revision window expired ${revision.days_overdue}d ago`;
+  }
+  return `${prefix} ${whenLabel} · ${revision.days_remaining}d left in ${revision.window_days}d revision window`;
+}
 
 function stripSchoolParens(name?: string | null): string {
   return (name || '')
@@ -684,14 +800,22 @@ export function evaluateScholarRequirementStatus(params: {
       ['CHANGES_REQUESTED', 'REJECTED'].includes(matchingEnrollment.status)
     ) {
       const isRejected = matchingEnrollment.status === 'REJECTED';
+      const revision = computeRevisionState(
+        matchingEnrollment.reviewed_at ?? matchingEnrollment.updated_at,
+        timing.effectiveDueDate,
+        now,
+      );
+      const prefix = isRejected ? 'Enrollment rejected' : 'Changes requested';
+      const fallback = isRejected
+        ? 'Enrollment rejected · Re-upload required'
+        : 'Changes requested on enrollment';
       return {
         status: 'NEEDS_ACTION',
-        status_detail: isRejected
-          ? 'Enrollment rejected · Re-upload required'
-          : 'Changes requested on enrollment',
+        status_detail: formatRevisionStatusDetail(prefix, fallback, revision),
         effective_due_date: timing.effectiveDueDate.toISOString(),
         days_remaining: timing.daysRemaining,
         days_overdue: timing.daysOverdue,
+        revision,
         submission: buildEnrollmentSubmission(
           isRejected ? 'REJECTED' : 'NEEDS_REVISION',
         ),
@@ -801,12 +925,22 @@ export function evaluateScholarRequirementStatus(params: {
 
   if (matchingReport) {
     if (matchingReport.status === 'REJECTED') {
+      const revision = computeRevisionState(
+        matchingReport.reviewed_at ?? matchingReport.submitted_at,
+        timing.effectiveDueDate,
+        now,
+      );
       return {
         status: 'NEEDS_ACTION',
-        status_detail: 'Grade report rejected · Re-upload required',
+        status_detail: formatRevisionStatusDetail(
+          'Grade report rejected',
+          'Grade report rejected · Re-upload required',
+          revision,
+        ),
         effective_due_date: timing.effectiveDueDate.toISOString(),
         days_remaining: timing.daysRemaining,
         days_overdue: timing.daysOverdue,
+        revision,
         submission: {
           kind: 'GRADES',
           grade_report_id: matchingReport.report_id,
@@ -859,12 +993,22 @@ export function evaluateScholarRequirementStatus(params: {
 
   if (matchingCcgDoc) {
     if (matchingCcgDoc.status === 'NEEDS_REUPLOAD') {
+      const revision = computeRevisionState(
+        matchingCcgDoc.uploaded_at ?? matchingCcgDoc.created_at,
+        timing.effectiveDueDate,
+        now,
+      );
       return {
         status: 'NEEDS_ACTION',
-        status_detail: 'Grade document needs re-upload',
+        status_detail: formatRevisionStatusDetail(
+          'Grade document needs re-upload',
+          'Grade document needs re-upload',
+          revision,
+        ),
         effective_due_date: timing.effectiveDueDate.toISOString(),
         days_remaining: timing.daysRemaining,
         days_overdue: timing.daysOverdue,
+        revision,
         submission: {
           kind: 'GRADES',
           grade_document_id: matchingCcgDoc.document_id,
@@ -964,4 +1108,59 @@ export function evaluateScholarRequirementStatus(params: {
     days_remaining: timing.daysRemaining,
     days_overdue: 0,
   };
+}
+
+export function resolveScheduledReminderMilestone(params: {
+  deadline: DeadlineRecordLike;
+  evaluation: EvaluationResult;
+  now?: Date;
+}): ScheduledReminderMatch | null {
+  const { deadline, evaluation, now = new Date() } = params;
+  if (
+    !['OVERDUE', 'NEEDS_ACTION', 'UPCOMING', 'NOT_SUBMITTED'].includes(
+      evaluation.status,
+    )
+  ) {
+    return null;
+  }
+
+  if (evaluation.status === 'NEEDS_ACTION' && evaluation.revision?.is_stalled) {
+    const reqDay = evaluation.revision.requested_at
+      ? evaluation.revision.requested_at.slice(0, 10)
+      : 'default';
+    return {
+      milestone: 'STALLED_REVISION',
+      dedup_tag: `AUTO:STALLED_REVISION:${reqDay}`,
+    };
+  }
+
+  const daysToCutoff = diffCalendarDaysManila(
+    evaluation.effective_due_date,
+    now,
+  );
+  if (
+    daysToCutoff === -1 &&
+    (evaluation.status === 'OVERDUE' || evaluation.status === 'NEEDS_ACTION')
+  ) {
+    return {
+      milestone: 'AFTER_GRACE_1D',
+      dedup_tag: 'AUTO:AFTER_GRACE_1D',
+    };
+  }
+
+  const daysToDue = diffCalendarDaysManila(deadline.due_date, now);
+  if (daysToDue === 0) {
+    return {
+      milestone: 'DUE_TODAY',
+      dedup_tag: 'AUTO:DUE_TODAY',
+    };
+  }
+  if (daysToDue === 3) {
+    return {
+      milestone: 'BEFORE_3D',
+      dedup_tag: 'AUTO:BEFORE_3D',
+    };
+  }
+
+  return null;
 }

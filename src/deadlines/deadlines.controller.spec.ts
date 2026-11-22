@@ -25,6 +25,7 @@ describe('DeadlinesController', () => {
       createDeadline: vi.fn(),
       updateDeadline: vi.fn(),
       deleteDeadline: vi.fn(),
+      processScheduledReminders: vi.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -65,6 +66,12 @@ describe('DeadlinesController', () => {
 
     await controller.getMyDeadlines(makeRequest(42, Role.SCHOLAR));
     expect(serviceMock.getMyDeadlines).toHaveBeenCalledWith(42);
+
+    await controller.runScheduledReminders(makeRequest(7, Role.COORDINATOR));
+    expect(serviceMock.processScheduledReminders).toHaveBeenCalledWith(
+      expect.any(Date),
+      7,
+    );
   });
 
   describe('authorization metadata', () => {
@@ -102,6 +109,13 @@ describe('DeadlinesController', () => {
       expect(rolesFor(handlerFor('getMyDeadlines'))).toEqual([
         Role.SCHOLAR,
         Role.APPLICANT,
+      ]);
+    });
+
+    it('restricts runScheduledReminders to ADMIN and COORDINATOR roles', () => {
+      expect(rolesFor(handlerFor('runScheduledReminders'))).toEqual([
+        Role.ADMIN,
+        Role.COORDINATOR,
       ]);
     });
   });
