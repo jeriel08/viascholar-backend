@@ -482,6 +482,7 @@ describe('DeadlinesService', () => {
               academic_year: '2023-2024',
               semester: '1st Semester',
               status: 'FLAGGED',
+              appeal_status: 'APPROVED',
             },
           ],
         }),
@@ -891,6 +892,316 @@ describe('DeadlinesService', () => {
       await expect(service.getMyDeadlines(999)).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  describe('academic locks (ON_HOLD) & late submission tracking', () => {
+    it('detects appeal, program shift, and discontinued locks as ON_HOLD and excludes them from overdue alerts & broadcast notifications', async () => {
+      const overdueDeadline = makeDeadlineRow({
+        deadline_id: 1,
+        requirement_type: 'ENROLLMENT',
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+        due_date: new Date('2026-10-01T23:59:59.999+08:00'),
+        grace_period_days: 0,
+      });
+
+      const appealPendingScholar = makeScholarRow({
+        profile_id: 11,
+        user_id: 111,
+        first_name: 'Appeal',
+        last_name: 'Pending',
+        grade_reports: [
+          {
+            report_id: 301,
+            academic_year: '2025-2026',
+            semester: '2nd Semester',
+            status: 'FLAGGED',
+            appeal_status: 'PENDING_GRANTOR',
+            submitted_at: new Date('2026-08-01T00:00:00.000Z'),
+          },
+        ],
+      });
+
+      const appealRequiredScholar = makeScholarRow({
+        profile_id: 12,
+        user_id: 112,
+        first_name: 'Appeal',
+        last_name: 'Required',
+        grade_reports: [
+          {
+            report_id: 302,
+            academic_year: '2025-2026',
+            semester: '2nd Semester',
+            status: 'FLAGGED',
+            appeal_status: 'NONE',
+            submitted_at: new Date('2026-08-02T00:00:00.000Z'),
+          },
+        ],
+      });
+
+      const shiftProspectusScholar = makeScholarRow({
+        profile_id: 13,
+        user_id: 113,
+        first_name: 'Shift',
+        last_name: 'Prospectus',
+        academic_baseline_status: 'PENDING_SHIFT_PROSPECTUS',
+      });
+
+      const pendingShiftScholar = makeScholarRow({
+        profile_id: 14,
+        user_id: 114,
+        first_name: 'Shift',
+        last_name: 'Request',
+        academic_change_requests: [
+          {
+            request_id: 1,
+            change_type: 'PROGRAM_SHIFT',
+            status: 'PENDING_GRANTOR',
+            created_at: new Date('2026-09-20T00:00:00.000Z'),
+          },
+        ],
+      });
+
+      const discontinuedScholar = makeScholarRow({
+        profile_id: 15,
+        user_id: 115,
+        first_name: 'Discontinued',
+        last_name: 'Scholar',
+        academic_baseline_status: 'DISCONTINUED',
+        enrollments: [
+          {
+            enrollment_id: 400,
+            academic_year: '2025-2026',
+            semester: '2nd Semester',
+            status: 'APPROVED',
+          },
+        ],
+      });
+
+      prisma.submissionDeadline.findUnique.mockResolvedValueOnce(overdueDeadline);
+      prisma.submissionDeadline.findMany.mockResolvedValueOnce([overdueDeadline]);
+      prisma.scholarProfile.findMany.mockResolvedValueOnce([
+        appealPendingScholar,
+        appealRequiredScholar,
+        shiftProspectusScholar,
+        pendingShiftScholar,
+        discontinuedScholar,
+      ]);
+
+      const detail = await service.getDeadlineDetailCompliance(1, {});
+      expect(detail.summary.overdue_count).toBe(0);
+      expect(detail.summary.missing_count).toBe(0);
+      expect(detail.summary.on_hold_count).toBe(5);
+
+      const byProfile = new Map(
+        detail.items.map((item) => [item.scholar.profile_id, item]),
+      );
+      expect(byProfile.get(11)?.status).toBe('ON_HOLD');
+      expect(byProfile.get(11)?.lock?.reason).toBe('APPEAL_PENDING');
+      expect(byProfile.get(11)?.days_overdue).toBe(0);
+      expect(byProfile.get(12)?.status).toBe('ON_HOLD');
+      expect(byProfile.get(12)?.lock?.reason).toBe('APPEAL_REQUIRED');
+      expect(byProfile.get(13)?.status).toBe('ON_HOLD');
+      expect(byProfile.get(13)?.lock?.reason).toBe('ACADEMIC_SHIFT_IN_PROGRESS');
+      expect(byProfile.get(14)?.status).toBe('ON_HOLD');
+      expect(byProfile.get(14)?.lock?.reason).toBe('SHIFT_REQUEST_PENDING');
+      expect(byProfile.get(15)?.status).toBe('ON_HOLD');
+      expect(byProfile.get(15)?.lock?.reason).toBe('DISCONTINUED');
+
+      // Broadcast notification excludes DISCONTINUED / ON_HOLD scholars
+      const newDeadline = makeDeadlineRow({
+        deadline_id: 22,
+        requirement_type: 'ENROLLMENT',
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+        due_date: new Date('2026-10-15T23:59:59.999+08:00'),
+      });
+      const eligibleScholar = makeScholarRow({ profile_id: 99, user_id: 199 });
+      prisma.submissionDeadline.findFirst.mockResolvedValueOnce(null);
+      prisma.submissionDeadline.create.mockResolvedValueOnce(newDeadline);
+      prisma.submissionDeadline.findMany.mockResolvedValueOnce([newDeadline]);
+      prisma.scholarProfile.findMany.mockResolvedValueOnce([
+        discontinuedScholar,
+        appealPendingScholar,
+        eligibleScholar,
+      ]);
+
+      await service.createDeadline(2, {
+        requirement_type: 'ENROLLMENT',
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+        due_date: '2026-10-15',
+        notify_scholars: true,
+      });
+
+      expect(notificationsService.notifyUser).toHaveBeenCalledTimes(1);
+      expect(notificationsService.notifyUser).toHaveBeenCalledWith(
+        199,
+        expect.objectContaining({ category: 'deadline' }),
+      );
+    });
+
+    it('tracks late ENROLLMENT and GRADES submissions accurately without false-flagging coordinator reviews after cutoff', async () => {
+      const enrollmentDeadline = makeDeadlineRow({
+        deadline_id: 1,
+        requirement_type: 'ENROLLMENT',
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+        due_date: new Date('2026-10-01T23:59:59.999+08:00'),
+        grace_period_days: 0,
+      });
+
+      // Submitted 4 days after effective cutoff (2026-10-01T15:59:59.999Z)
+      const lateEnrollmentScholar = makeScholarRow({
+        profile_id: 21,
+        user_id: 201,
+        first_name: 'Late',
+        last_name: 'Enrollee',
+        enrollments: [
+          {
+            enrollment_id: 601,
+            academic_year: '2026-2027',
+            semester: '1st Semester',
+            status: 'PENDING_REVIEW',
+            total_assessment: 14000,
+            total_units: 18,
+            cor_document: { uploaded_at: new Date('2026-10-05T15:59:59.999Z') },
+            soa_document: { uploaded_at: new Date('2026-10-05T15:59:59.999Z') },
+            created_at: new Date('2026-10-05T14:00:00.000Z'),
+            updated_at: new Date('2026-10-05T15:59:59.999Z'),
+          },
+        ],
+      });
+
+      // Uploaded BEFORE cutoff, reviewed/approved AFTER cutoff -> NOT late
+      const reviewedAfterCutoffScholar = makeScholarRow({
+        profile_id: 22,
+        user_id: 202,
+        first_name: 'Ontime',
+        last_name: 'ApprovedLater',
+        enrollments: [
+          {
+            enrollment_id: 602,
+            academic_year: '2026-2027',
+            semester: '1st Semester',
+            status: 'APPROVED',
+            total_assessment: 16000,
+            total_units: 21,
+            cor_document: { uploaded_at: new Date('2026-09-28T08:00:00.000Z') },
+            soa_document: { uploaded_at: new Date('2026-09-29T08:00:00.000Z') },
+            created_at: new Date('2026-09-29T08:00:00.000Z'),
+            reviewed_at: new Date('2026-10-06T09:00:00.000Z'),
+            updated_at: new Date('2026-10-06T09:00:00.000Z'),
+          },
+        ],
+      });
+
+      prisma.submissionDeadline.findUnique.mockResolvedValueOnce(enrollmentDeadline);
+      prisma.submissionDeadline.findMany.mockResolvedValueOnce([enrollmentDeadline]);
+      prisma.scholarProfile.findMany.mockResolvedValueOnce([
+        lateEnrollmentScholar,
+        reviewedAfterCutoffScholar,
+      ]);
+
+      const enrollDetail = await service.getDeadlineDetailCompliance(1, {});
+      expect(enrollDetail.summary.submitted_count).toBe(2);
+      expect(enrollDetail.summary.submitted_late_count).toBe(1);
+
+      const lateItem = enrollDetail.items.find((i) => i.scholar.profile_id === 21);
+      const onTimeItem = enrollDetail.items.find((i) => i.scholar.profile_id === 22);
+      expect(lateItem?.status).toBe('SUBMITTED');
+      expect(lateItem?.is_late).toBe(true);
+      expect(lateItem?.days_late).toBe(4);
+      expect(lateItem?.submission?.is_late).toBe(true);
+      expect(lateItem?.submission?.days_late).toBe(4);
+      expect(lateItem?.status_detail).toContain('Late by 4d');
+      expect(onTimeItem?.is_late).toBe(false);
+      expect(onTimeItem?.days_late).toBe(0);
+
+      prisma.submissionDeadline.findUnique.mockResolvedValueOnce(enrollmentDeadline);
+      prisma.submissionDeadline.findMany.mockResolvedValueOnce([enrollmentDeadline]);
+      prisma.scholarProfile.findMany.mockResolvedValueOnce([
+        lateEnrollmentScholar,
+        reviewedAfterCutoffScholar,
+      ]);
+
+      const lateOnlyFilter = await service.getDeadlineDetailCompliance(1, {
+        status: 'SUBMITTED_LATE',
+      });
+      expect(lateOnlyFilter.items).toHaveLength(1);
+      expect(lateOnlyFilter.items[0].scholar.profile_id).toBe(21);
+
+      // GRADES deadline checks
+      const gradesDeadline = makeDeadlineRow({
+        deadline_id: 2,
+        requirement_type: 'GRADES',
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+        due_date: new Date('2026-10-01T23:59:59.999+08:00'),
+        grace_period_days: 0,
+      });
+
+      // CCG uploaded before cutoff, verified into GradeReport after cutoff -> NOT late
+      const onTimeVerifiedGradeScholar = makeScholarRow({
+        profile_id: 23,
+        user_id: 203,
+        grade_reports: [
+          {
+            report_id: 701,
+            document_id: 901,
+            academic_year: '2026-2027',
+            semester: '1st Semester',
+            status: 'APPROVED',
+            submitted_at: new Date('2026-10-06T12:00:00.000Z'),
+            document: { uploaded_at: new Date('2026-09-25T10:00:00.000Z') },
+          },
+        ],
+      });
+
+      // Pending CCG uploaded 3 days after cutoff -> Late by 3d
+      const latePendingCcgScholar = makeScholarRow({
+        profile_id: 24,
+        user_id: 204,
+        grade_reports: [],
+        documents: [
+          {
+            document_id: 902,
+            document_type: 'CCG',
+            status: 'STUDENT_CONFIRMED',
+            confirmed_data: {
+              academic_year: '2026-2027',
+              semester: '1st Semester',
+            },
+            extracted_data: null,
+            uploaded_at: new Date('2026-10-04T15:59:59.999Z'),
+            verified_at: null,
+          },
+        ],
+      });
+
+      prisma.submissionDeadline.findUnique.mockResolvedValueOnce(gradesDeadline);
+      prisma.submissionDeadline.findMany.mockResolvedValueOnce([gradesDeadline]);
+      prisma.scholarProfile.findMany.mockResolvedValueOnce([
+        onTimeVerifiedGradeScholar,
+        latePendingCcgScholar,
+      ]);
+
+      const gradesDetail = await service.getDeadlineDetailCompliance(2, {});
+      expect(gradesDetail.summary.submitted_count).toBe(2);
+      expect(gradesDetail.summary.submitted_late_count).toBe(1);
+
+      const onTimeGradeItem = gradesDetail.items.find(
+        (i) => i.scholar.profile_id === 23,
+      );
+      const lateCcgItem = gradesDetail.items.find(
+        (i) => i.scholar.profile_id === 24,
+      );
+      expect(onTimeGradeItem?.is_late).toBe(false);
+      expect(onTimeGradeItem?.days_late).toBe(0);
+      expect(lateCcgItem?.status).toBe('SUBMITTED');
+      expect(lateCcgItem?.is_late).toBe(true);
+      expect(lateCcgItem?.days_late).toBe(3);
     });
   });
 });

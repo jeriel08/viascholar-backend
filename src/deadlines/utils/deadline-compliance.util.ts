@@ -9,12 +9,26 @@ import type { DeadlineRequirementType } from '../dto/deadline.dto.js';
 export type DeadlineComplianceStatus =
   | 'SUBMITTED'
   | 'CURRENTLY_ENROLLED'
+  | 'ON_HOLD'
   | 'NEEDS_ACTION'
   | 'UPCOMING'
   | 'NOT_SUBMITTED'
   | 'OVERDUE'
   | 'EXEMPT'
   | 'NOT_APPLICABLE';
+
+export type DeadlineLockReason =
+  | 'APPEAL_REQUIRED'
+  | 'APPEAL_PENDING'
+  | 'DISCONTINUED'
+  | 'ACADEMIC_SHIFT_IN_PROGRESS'
+  | 'SHIFT_REQUEST_PENDING';
+
+export interface DeadlineLockInfo {
+  reason: DeadlineLockReason;
+  label: string;
+  detail: string;
+}
 
 export interface DeadlineRecordLike {
   deadline_id: number;
@@ -53,6 +67,8 @@ export interface DeadlineSubmissionSummary {
   total_units?: number | null;
   audit_flags_count?: number;
   submitted_at?: string | null;
+  is_late?: boolean;
+  days_late?: number;
 }
 
 export interface ScholarComplianceInput {
@@ -68,6 +84,9 @@ export interface ScholarComplianceInput {
   school?: { school_id?: number; school_name: string } | null;
   school_grading_system?: { school_id?: number; school_name: string } | null;
   phone_number?: string | null;
+  academic_baseline_status?: string | null;
+  archived_at?: Date | string | null;
+  archive_reason?: string | null;
   user?: { email?: string | null } | null;
   prospectus?: {
     is_frozen?: boolean;
@@ -87,8 +106,11 @@ export interface ScholarComplianceInput {
     total_assessment?: unknown;
     total_units?: unknown;
     audit_flags?: unknown;
+    reviewed_at?: Date | string | null;
     created_at?: Date | string | null;
     updated_at?: Date | string | null;
+    cor_document?: { uploaded_at?: Date | string | null } | null;
+    soa_document?: { uploaded_at?: Date | string | null } | null;
   }>;
   grade_reports?: Array<{
     report_id: number;
@@ -96,7 +118,11 @@ export interface ScholarComplianceInput {
     academic_year: string;
     semester: string;
     status: string;
+    appeal_status?: string | null;
+    evaluation_flag?: string | null;
+    gpa?: unknown;
     submitted_at?: Date | string | null;
+    document?: { uploaded_at?: Date | string | null } | null;
   }>;
   documents?: Array<{
     document_id: number;
@@ -108,6 +134,15 @@ export interface ScholarComplianceInput {
     created_at?: Date | string | null;
     verified_at?: Date | string | null;
   }>;
+  academic_change_requests?: Array<{
+    request_id: number;
+    change_type: string;
+    status: string;
+    requested_course_of_study?: string | null;
+    requested_school_name?: string | null;
+    created_at?: Date | string | null;
+    reviewed_at?: Date | string | null;
+  }>;
 }
 
 export interface EvaluationResult {
@@ -116,6 +151,9 @@ export interface EvaluationResult {
   effective_due_date: string;
   days_remaining: number;
   days_overdue: number;
+  is_late?: boolean;
+  days_late?: number;
+  lock?: DeadlineLockInfo | null;
   submission?: DeadlineSubmissionSummary | null;
 }
 
@@ -212,11 +250,199 @@ export function resolveEffectiveDeadline<T extends DeadlineRecordLike>(
   return candidates.find((d) => d.school_id == null) ?? null;
 }
 
+function parseValidDate(value?: Date | string | null): Date | null {
+  if (!value) return null;
+  const parsed = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function toIsoTimestamp(value?: Date | string | null): string | null {
   if (!value) return null;
   if (value instanceof Date) return value.toISOString();
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toISOString();
+}
+
+function latestValidDate(values: Array<Date | string | null | undefined>): Date | null {
+  let latest: Date | null = null;
+  for (const val of values) {
+    const parsed = parseValidDate(val);
+    if (!parsed) continue;
+    if (!latest || parsed.getTime() > latest.getTime()) {
+      latest = parsed;
+    }
+  }
+  return latest;
+}
+
+function resolveEnrollmentSubmittedAt(enrollment: {
+  status: string;
+  reviewed_at?: Date | string | null;
+  created_at?: Date | string | null;
+  updated_at?: Date | string | null;
+  cor_document?: { uploaded_at?: Date | string | null } | null;
+  soa_document?: { uploaded_at?: Date | string | null } | null;
+}): Date | null {
+  const docUploads = [
+    parseValidDate(enrollment.cor_document?.uploaded_at),
+    parseValidDate(enrollment.soa_document?.uploaded_at),
+  ].filter((d): d is Date => d !== null);
+  const reviewedAt = parseValidDate(enrollment.reviewed_at);
+
+  if (enrollment.status === 'PENDING_REVIEW' && !reviewedAt) {
+    return latestValidDate([
+      enrollment.updated_at,
+      enrollment.created_at,
+      ...docUploads,
+    ]);
+  }
+
+  if (docUploads.length > 0) {
+    const candidate = latestValidDate([...docUploads, enrollment.created_at]);
+    if (candidate && reviewedAt && candidate.getTime() > reviewedAt.getTime()) {
+      return reviewedAt;
+    }
+    return candidate;
+  }
+
+  return parseValidDate(enrollment.created_at) ?? parseValidDate(enrollment.updated_at);
+}
+
+function resolveGradeReportSubmittedAt(
+  report: {
+    document_id?: number | null;
+    submitted_at?: Date | string | null;
+    document?: { uploaded_at?: Date | string | null } | null;
+  },
+  matchingCcgDoc?: {
+    document_id: number;
+    uploaded_at?: Date | string | null;
+    created_at?: Date | string | null;
+  },
+): Date | null {
+  const reportDocUpload = parseValidDate(report.document?.uploaded_at);
+  if (reportDocUpload) return reportDocUpload;
+
+  if (
+    matchingCcgDoc &&
+    (!report.document_id || matchingCcgDoc.document_id === report.document_id)
+  ) {
+    const ccgUpload = parseValidDate(
+      matchingCcgDoc.uploaded_at ?? matchingCcgDoc.created_at,
+    );
+    if (ccgUpload) return ccgUpload;
+  }
+
+  return parseValidDate(report.submitted_at);
+}
+
+export function computeSubmissionLateness(
+  submittedAt: Date | string | null | undefined,
+  effectiveDueDate: Date,
+): { is_late: boolean; days_late: number } {
+  const submittedDate = parseValidDate(submittedAt);
+  if (!submittedDate) {
+    return { is_late: false, days_late: 0 };
+  }
+  const diffMs = submittedDate.getTime() - effectiveDueDate.getTime();
+  if (diffMs <= 0) {
+    return { is_late: false, days_late: 0 };
+  }
+  return {
+    is_late: true,
+    days_late: Math.max(1, Math.ceil(diffMs / MS_PER_DAY)),
+  };
+}
+
+export function detectScholarDeadlineLock(
+  scholar: ScholarComplianceInput,
+  requirementType: string,
+): DeadlineLockInfo | null {
+  const sortedReports = [...(scholar.grade_reports || [])].sort((a, b) => {
+    const aMs = parseValidDate(a.submitted_at)?.getTime() ?? 0;
+    const bMs = parseValidDate(b.submitted_at)?.getTime() ?? 0;
+    return bMs - aMs;
+  });
+
+  const latestFlagged = sortedReports.find(
+    (r) => r.status === 'FLAGGED' && r.appeal_status !== 'APPROVED',
+  );
+
+  const hasPriorResolvedAppeal = Boolean(
+    latestFlagged &&
+      (!latestFlagged.appeal_status || latestFlagged.appeal_status === 'NONE') &&
+      sortedReports.some(
+        (r) =>
+          r.report_id !== latestFlagged.report_id &&
+          ['APPROVED', 'DENIED'].includes(r.appeal_status || ''),
+      ),
+  );
+
+  if (
+    scholar.academic_baseline_status === 'DISCONTINUED' ||
+    Boolean(scholar.archived_at) ||
+    latestFlagged?.appeal_status === 'DENIED' ||
+    hasPriorResolvedAppeal
+  ) {
+    return {
+      reason: 'DISCONTINUED',
+      label: 'Scholarship Discontinued',
+      detail:
+        'On Hold — Scholarship discontinued following academic standing / appeal decision',
+    };
+  }
+
+  if (requirementType !== 'ENROLLMENT') {
+    return null;
+  }
+
+  const changeRequests = scholar.academic_change_requests || [];
+  const isShiftInProgress =
+    scholar.academic_baseline_status === 'PENDING_SHIFT_PROSPECTUS' ||
+    (scholar.academic_baseline_status === 'PENDING_COORDINATOR_REVIEW' &&
+      !scholar.prospectus?.is_frozen &&
+      changeRequests.some((r) => r.status === 'APPROVED'));
+
+  if (isShiftInProgress) {
+    return {
+      reason: 'ACADEMIC_SHIFT_IN_PROGRESS',
+      label: 'Shift Prospectus Pending',
+      detail:
+        'On Hold — Program shift / school transfer prospectus pending upload & verification',
+    };
+  }
+
+  const pendingShift = changeRequests.find((r) => r.status === 'PENDING_GRANTOR');
+  if (pendingShift) {
+    const changeLabel =
+      pendingShift.change_type === 'SCHOOL_TRANSFER'
+        ? 'School transfer'
+        : pendingShift.change_type === 'BOTH'
+          ? 'Program shift & school transfer'
+          : 'Program shift';
+    return {
+      reason: 'SHIFT_REQUEST_PENDING',
+      label: `${changeLabel} Pending`,
+      detail: `On Hold — ${changeLabel} request awaiting Grantor approval`,
+    };
+  }
+
+  if (latestFlagged) {
+    if (latestFlagged.appeal_status === 'PENDING_GRANTOR') {
+      return {
+        reason: 'APPEAL_PENDING',
+        label: 'Appeal Pending',
+        detail: `On Hold — Second Chance Appeal awaiting Grantor verdict (${latestFlagged.academic_year} ${latestFlagged.semester})`,
+      };
+    }
+    return {
+      reason: 'APPEAL_REQUIRED',
+      label: 'Appeal Required',
+      detail: `On Hold — Flagged academic standing (${latestFlagged.academic_year} ${latestFlagged.semester}); Second Chance Appeal required`,
+    };
+  }
+
+  return null;
 }
 
 function findMatchingCcgDocument<
@@ -388,8 +614,12 @@ export function evaluateScholarRequirementStatus(params: {
           (f) => f && String(f) !== 'ALL_CLEARED',
         ).length
       : 0;
+    const submittedDate = matchingEnrollment
+      ? resolveEnrollmentSubmittedAt(matchingEnrollment)
+      : null;
     const buildEnrollmentSubmission = (
       reviewStage: DeadlineSubmissionStage,
+      lateness?: { is_late: boolean; days_late: number },
     ): DeadlineSubmissionSummary | null => {
       if (!matchingEnrollment) return null;
       return {
@@ -406,9 +636,8 @@ export function evaluateScholarRequirementStatus(params: {
             ? Number(matchingEnrollment.total_units)
             : null,
         audit_flags_count: auditFlagsCount,
-        submitted_at: toIsoTimestamp(
-          matchingEnrollment.updated_at || matchingEnrollment.created_at,
-        ),
+        submitted_at: toIsoTimestamp(submittedDate),
+        ...(lateness ? { is_late: lateness.is_late, days_late: lateness.days_late } : {}),
       };
     };
 
@@ -418,6 +647,10 @@ export function evaluateScholarRequirementStatus(params: {
         matchingEnrollment.status,
       )
     ) {
+      const lateness = computeSubmissionLateness(
+        submittedDate,
+        timing.effectiveDueDate,
+      );
       let reviewStage: DeadlineSubmissionStage = 'PENDING_AUDIT';
       let statusDetail = 'Submitted · Awaiting coordinator audit';
       if (matchingEnrollment.status === 'VERIFIED') {
@@ -430,6 +663,9 @@ export function evaluateScholarRequirementStatus(params: {
         reviewStage = 'ENDORSED';
         statusDetail = 'Completed & settled';
       }
+      if (lateness.is_late) {
+        statusDetail += ` · Late by ${lateness.days_late}d`;
+      }
 
       return {
         status: 'SUBMITTED',
@@ -437,7 +673,9 @@ export function evaluateScholarRequirementStatus(params: {
         effective_due_date: timing.effectiveDueDate.toISOString(),
         days_remaining: 0,
         days_overdue: 0,
-        submission: buildEnrollmentSubmission(reviewStage),
+        is_late: lateness.is_late,
+        days_late: lateness.days_late,
+        submission: buildEnrollmentSubmission(reviewStage, lateness),
       };
     }
 
@@ -457,6 +695,18 @@ export function evaluateScholarRequirementStatus(params: {
         submission: buildEnrollmentSubmission(
           isRejected ? 'REJECTED' : 'NEEDS_REVISION',
         ),
+      };
+    }
+
+    const lock = detectScholarDeadlineLock(scholar, 'ENROLLMENT');
+    if (lock?.reason === 'DISCONTINUED') {
+      return {
+        status: 'ON_HOLD',
+        status_detail: lock.detail,
+        effective_due_date: timing.effectiveDueDate.toISOString(),
+        days_remaining: 0,
+        days_overdue: 0,
+        lock,
       };
     }
 
@@ -499,6 +749,17 @@ export function evaluateScholarRequirementStatus(params: {
         effective_due_date: timing.effectiveDueDate.toISOString(),
         days_remaining: 0,
         days_overdue: 0,
+      };
+    }
+
+    if (lock) {
+      return {
+        status: 'ON_HOLD',
+        status_detail: lock.detail,
+        effective_due_date: timing.effectiveDueDate.toISOString(),
+        days_remaining: 0,
+        days_overdue: 0,
+        lock,
       };
     }
 
@@ -558,15 +819,30 @@ export function evaluateScholarRequirementStatus(params: {
       };
     }
 
+    const submittedDate = resolveGradeReportSubmittedAt(
+      matchingReport,
+      matchingCcgDoc,
+    );
+    const lateness = computeSubmissionLateness(
+      submittedDate,
+      timing.effectiveDueDate,
+    );
+    let statusDetail =
+      matchingReport.status === 'APPROVED'
+        ? 'Submitted & verified'
+        : `Submitted (${matchingReport.status})`;
+    if (lateness.is_late) {
+      statusDetail += ` · Late by ${lateness.days_late}d`;
+    }
+
     return {
       status: 'SUBMITTED',
-      status_detail:
-        matchingReport.status === 'APPROVED'
-          ? 'Submitted & verified'
-          : `Submitted (${matchingReport.status})`,
+      status_detail: statusDetail,
       effective_due_date: timing.effectiveDueDate.toISOString(),
       days_remaining: 0,
       days_overdue: 0,
+      is_late: lateness.is_late,
+      days_late: lateness.days_late,
       submission: {
         kind: 'GRADES',
         grade_report_id: matchingReport.report_id,
@@ -574,7 +850,9 @@ export function evaluateScholarRequirementStatus(params: {
           matchingReport.document_id ?? matchingCcgDoc?.document_id ?? null,
         raw_status: matchingReport.status,
         review_stage: 'ENDORSED',
-        submitted_at: toIsoTimestamp(matchingReport.submitted_at),
+        submitted_at: toIsoTimestamp(submittedDate),
+        is_late: lateness.is_late,
+        days_late: lateness.days_late,
       },
     };
   }
@@ -605,22 +883,36 @@ export function evaluateScholarRequirementStatus(params: {
       )
     ) {
       const isDocVerified = matchingCcgDoc.status === 'VERIFIED';
+      const submittedDate = parseValidDate(
+        matchingCcgDoc.uploaded_at ?? matchingCcgDoc.created_at,
+      );
+      const lateness = computeSubmissionLateness(
+        submittedDate,
+        timing.effectiveDueDate,
+      );
+      let statusDetail = isDocVerified
+        ? 'Submitted & verified'
+        : 'Submitted · Awaiting grade audit';
+      if (lateness.is_late) {
+        statusDetail += ` · Late by ${lateness.days_late}d`;
+      }
+
       return {
         status: 'SUBMITTED',
-        status_detail: isDocVerified
-          ? 'Submitted & verified'
-          : 'Submitted · Awaiting grade audit',
+        status_detail: statusDetail,
         effective_due_date: timing.effectiveDueDate.toISOString(),
         days_remaining: 0,
         days_overdue: 0,
+        is_late: lateness.is_late,
+        days_late: lateness.days_late,
         submission: {
           kind: 'GRADES',
           grade_document_id: matchingCcgDoc.document_id,
           raw_status: matchingCcgDoc.status,
           review_stage: isDocVerified ? 'ENDORSED' : 'PENDING_AUDIT',
-          submitted_at: toIsoTimestamp(
-            matchingCcgDoc.uploaded_at ?? matchingCcgDoc.created_at,
-          ),
+          submitted_at: toIsoTimestamp(submittedDate),
+          is_late: lateness.is_late,
+          days_late: lateness.days_late,
         },
       };
     }
@@ -640,6 +932,18 @@ export function evaluateScholarRequirementStatus(params: {
       effective_due_date: timing.effectiveDueDate.toISOString(),
       days_remaining: 0,
       days_overdue: 0,
+    };
+  }
+
+  const gradeLock = detectScholarDeadlineLock(scholar, 'GRADES');
+  if (gradeLock) {
+    return {
+      status: 'ON_HOLD',
+      status_detail: gradeLock.detail,
+      effective_due_date: timing.effectiveDueDate.toISOString(),
+      days_remaining: 0,
+      days_overdue: 0,
+      lock: gradeLock,
     };
   }
 

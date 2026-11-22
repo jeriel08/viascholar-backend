@@ -45,10 +45,11 @@ const STATUS_SORT_PRIORITY: Record<DeadlineComplianceStatus, number> = {
   NEEDS_ACTION: 1,
   UPCOMING: 2,
   NOT_SUBMITTED: 3,
-  CURRENTLY_ENROLLED: 4,
-  SUBMITTED: 5,
-  EXEMPT: 6,
-  NOT_APPLICABLE: 7,
+  ON_HOLD: 4,
+  CURRENTLY_ENROLLED: 5,
+  SUBMITTED: 6,
+  EXEMPT: 7,
+  NOT_APPLICABLE: 8,
 };
 
 @Injectable()
@@ -173,8 +174,11 @@ export class DeadlinesService {
             total_assessment: true,
             total_units: true,
             audit_flags: true,
+            reviewed_at: true,
             created_at: true,
             updated_at: true,
+            cor_document: { select: { uploaded_at: true } },
+            soa_document: { select: { uploaded_at: true } },
           },
         },
         grade_reports: {
@@ -184,8 +188,13 @@ export class DeadlinesService {
             academic_year: true,
             semester: true,
             status: true,
+            appeal_status: true,
+            evaluation_flag: true,
+            gpa: true,
             submitted_at: true,
+            document: { select: { uploaded_at: true } },
           },
+          orderBy: { submitted_at: 'desc' },
         },
         documents: {
           where: { document_type: 'CCG' },
@@ -199,6 +208,19 @@ export class DeadlinesService {
             verified_at: true,
           },
           orderBy: { uploaded_at: 'desc' },
+        },
+        academic_change_requests: {
+          where: { status: { in: ['PENDING_GRANTOR', 'APPROVED'] } },
+          select: {
+            request_id: true,
+            change_type: true,
+            status: true,
+            requested_course_of_study: true,
+            requested_school_name: true,
+            created_at: true,
+            reviewed_at: true,
+          },
+          orderBy: { created_at: 'desc' },
         },
         ...(deadlineIds.length > 0
           ? {
@@ -247,11 +269,13 @@ export class DeadlinesService {
       total_in_scope: totalInScope,
       covered_count: 0,
       submitted_count: 0,
+      submitted_late_count: 0,
       pending_audit_count: 0,
       verified_ready_count: 0,
       endorsed_count: 0,
       verified_total_amount: 0,
       currently_enrolled_count: 0,
+      on_hold_count: 0,
       missing_count: 0,
       overdue_count: 0,
       needs_action_count: 0,
@@ -266,11 +290,13 @@ export class DeadlinesService {
     summary: {
       covered_count?: number;
       submitted_count: number;
+      submitted_late_count?: number;
       pending_audit_count?: number;
       verified_ready_count?: number;
       endorsed_count?: number;
       verified_total_amount?: number;
       currently_enrolled_count: number;
+      on_hold_count?: number;
       missing_count: number;
       overdue_count: number;
       needs_action_count: number;
@@ -292,6 +318,10 @@ export class DeadlinesService {
     switch (status) {
       case 'SUBMITTED':
         summary.submitted_count++;
+        if (evaluation.is_late || evaluation.submission?.is_late) {
+          summary.submitted_late_count =
+            (summary.submitted_late_count ?? 0) + 1;
+        }
         if (evaluation.submission?.review_stage === 'PENDING_AUDIT') {
           summary.pending_audit_count = (summary.pending_audit_count ?? 0) + 1;
         } else if (evaluation.submission?.review_stage === 'VERIFIED_READY') {
@@ -306,6 +336,9 @@ export class DeadlinesService {
         break;
       case 'CURRENTLY_ENROLLED':
         summary.currently_enrolled_count++;
+        break;
+      case 'ON_HOLD':
+        summary.on_hold_count = (summary.on_hold_count ?? 0) + 1;
         break;
       case 'OVERDUE':
         summary.overdue_count++;
@@ -395,6 +428,9 @@ export class DeadlinesService {
       status_detail: evaluation.status_detail,
       days_remaining: evaluation.days_remaining,
       days_overdue: evaluation.days_overdue,
+      is_late: evaluation.is_late ?? false,
+      days_late: evaluation.days_late ?? 0,
+      lock: evaluation.lock ?? null,
       submission: evaluation.submission ?? null,
       scholar: {
         profile_id: scholar.profile_id,
@@ -462,6 +498,15 @@ export class DeadlinesService {
                 'UPCOMING',
                 'NOT_SUBMITTED',
               ].includes(item.status)
+            ) {
+              return false;
+            }
+          } else if (query.status === 'SUBMITTED_LATE') {
+            if (
+              !(
+                item.status === 'SUBMITTED' &&
+                (item.is_late || item.submission?.is_late)
+              )
             ) {
               return false;
             }
@@ -763,8 +808,12 @@ export class DeadlinesService {
             school_grading_system: {
               select: { school_id: true, school_name: true },
             },
+            academic_baseline_status: true,
+            archived_at: true,
+            archive_reason: true,
             prospectus: {
-              include: {
+              select: {
+                is_frozen: true,
                 subjects: {
                   select: { year_level: true, semester: true, status: true },
                 },
@@ -781,8 +830,11 @@ export class DeadlinesService {
                 total_assessment: true,
                 total_units: true,
                 audit_flags: true,
+                reviewed_at: true,
                 created_at: true,
                 updated_at: true,
+                cor_document: { select: { uploaded_at: true } },
+                soa_document: { select: { uploaded_at: true } },
               },
             },
             grade_reports: {
@@ -792,8 +844,13 @@ export class DeadlinesService {
                 academic_year: true,
                 semester: true,
                 status: true,
+                appeal_status: true,
+                evaluation_flag: true,
+                gpa: true,
                 submitted_at: true,
+                document: { select: { uploaded_at: true } },
               },
+              orderBy: { submitted_at: 'desc' },
             },
             documents: {
               where: { document_type: 'CCG' },
@@ -807,6 +864,19 @@ export class DeadlinesService {
                 verified_at: true,
               },
               orderBy: { uploaded_at: 'desc' },
+            },
+            academic_change_requests: {
+              where: { status: { in: ['PENDING_GRANTOR', 'APPROVED'] } },
+              select: {
+                request_id: true,
+                change_type: true,
+                status: true,
+                requested_course_of_study: true,
+                requested_school_name: true,
+                created_at: true,
+                reviewed_at: true,
+              },
+              orderBy: { created_at: 'desc' },
             },
           },
         }),
@@ -1032,7 +1102,9 @@ export class DeadlinesService {
       total_scholars: scholars.length,
       total_entries: 0,
       submitted_count: 0,
+      submitted_late_count: 0,
       currently_enrolled_count: 0,
+      on_hold_count: 0,
       pending_audit_count: 0,
       verified_ready_count: 0,
       endorsed_count: 0,
@@ -1496,8 +1568,11 @@ export class DeadlinesService {
             total_assessment: true,
             total_units: true,
             audit_flags: true,
+            reviewed_at: true,
             created_at: true,
             updated_at: true,
+            cor_document: { select: { uploaded_at: true } },
+            soa_document: { select: { uploaded_at: true } },
           },
         },
         grade_reports: {
@@ -1507,8 +1582,13 @@ export class DeadlinesService {
             academic_year: true,
             semester: true,
             status: true,
+            appeal_status: true,
+            evaluation_flag: true,
+            gpa: true,
             submitted_at: true,
+            document: { select: { uploaded_at: true } },
           },
+          orderBy: { submitted_at: 'desc' },
         },
         documents: {
           where: { document_type: 'CCG' },
@@ -1522,6 +1602,19 @@ export class DeadlinesService {
             verified_at: true,
           },
           orderBy: { uploaded_at: 'desc' },
+        },
+        academic_change_requests: {
+          where: { status: { in: ['PENDING_GRANTOR', 'APPROVED'] } },
+          select: {
+            request_id: true,
+            change_type: true,
+            status: true,
+            requested_course_of_study: true,
+            requested_school_name: true,
+            created_at: true,
+            reviewed_at: true,
+          },
+          orderBy: { created_at: 'desc' },
         },
       },
     });
@@ -1551,7 +1644,6 @@ export class DeadlinesService {
     ];
 
     for (const e of scholar.enrollments || []) {
-      if (!['APPROVED', 'PENDING_REVIEW'].includes(e.status)) continue;
       if (!['APPROVED', 'VERIFIED', 'PENDING_REVIEW'].includes(e.status)) {
         continue;
       }
@@ -1650,7 +1742,9 @@ export class DeadlinesService {
 
         if (
           !tp.isSystemActiveTerm &&
-          ['NOT_APPLICABLE', 'CURRENTLY_ENROLLED'].includes(evaluation.status)
+          ['NOT_APPLICABLE', 'CURRENTLY_ENROLLED', 'ON_HOLD'].includes(
+            evaluation.status,
+          )
         ) {
           continue;
         }
@@ -1673,6 +1767,9 @@ export class DeadlinesService {
           status_detail: evaluation.status_detail,
           days_remaining: evaluation.days_remaining,
           days_overdue: evaluation.days_overdue,
+          is_late: evaluation.is_late ?? false,
+          days_late: evaluation.days_late ?? 0,
+          lock: evaluation.lock ?? null,
           submission: evaluation.submission ?? null,
         });
       }
