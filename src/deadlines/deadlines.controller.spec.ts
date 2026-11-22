@@ -16,6 +16,7 @@ describe('DeadlinesController', () => {
   beforeEach(async () => {
     serviceMock = {
       getCompliance: vi.fn(),
+      getDeadlineDetailCompliance: vi.fn(),
       sendFollowUp: vi.fn(),
       exemptScholar: vi.fn(),
       removeExemption: vi.fn(),
@@ -36,12 +37,13 @@ describe('DeadlinesController', () => {
 
   it('delegates controller methods to DeadlinesService', async () => {
     serviceMock.listDeadlines.mockResolvedValue([]);
-    await controller.listDeadlines('2026-2027', '1st Semester', 'ENROLLMENT', 'true');
+    await controller.listDeadlines('2026-2027', '1st Semester', 'ENROLLMENT', 'true', 'true');
     expect(serviceMock.listDeadlines).toHaveBeenCalledWith({
       academic_year: '2026-2027',
       semester: '1st Semester',
       requirement_type: 'ENROLLMENT',
       only_active: true,
+      include_summary: true,
     });
 
     await controller.getCompliance('2026-2027', '1st Semester', 'ALL', 'OVERDUE', '3', 'juan');
@@ -52,6 +54,13 @@ describe('DeadlinesController', () => {
       status: 'OVERDUE',
       school_id: 3,
       search: 'juan',
+    });
+
+    await controller.getDeadlineDetailCompliance(5, 'COVERED_ALL', '2', 'ana');
+    expect(serviceMock.getDeadlineDetailCompliance).toHaveBeenCalledWith(5, {
+      status: 'COVERED_ALL',
+      school_id: 2,
+      search: 'ana',
     });
 
     await controller.getMyDeadlines(makeRequest(42, Role.SCHOLAR));
@@ -72,6 +81,7 @@ describe('DeadlinesController', () => {
     it('restricts staff deadline endpoints to ADMIN, GRANTOR, COORDINATOR', () => {
       for (const name of [
         'getCompliance',
+        'getDeadlineDetailCompliance',
         'sendFollowUp',
         'exemptScholar',
         'removeExemption',

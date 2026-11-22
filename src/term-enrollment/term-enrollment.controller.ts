@@ -29,7 +29,10 @@ import { Role } from '../generated/prisma/enums.js';
 import { ScholarEnrollmentService } from './services/scholar-enrollment.service.js';
 import { CoordinatorEnrollmentService } from './services/coordinator-enrollment.service.js';
 import { SubmitEnrollmentDto } from './dto/submit-enrollment.dto.js';
-import { ReviewEnrollmentDto } from './dto/review-enrollment.dto.js';
+import {
+  BatchEndorseEnrollmentsDto,
+  ReviewEnrollmentDto,
+} from './dto/review-enrollment.dto.js';
 
 interface AuthenticatedRequest {
   user: {
@@ -284,6 +287,22 @@ export class TermEnrollmentController {
     @Query('status') status?: string,
   ) {
     return this.coordinatorService.getPendingEnrollments(search, status);
+  }
+
+  @Post('coordinator/batch-endorse')
+  @Roles(Role.COORDINATOR, Role.ADMIN)
+  @ApiOperation({
+    summary:
+      'Endorse a batch of Coordinator-verified term enrollments to Grantor disbursement queue',
+  })
+  async batchEndorseEnrollments(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: BatchEndorseEnrollmentsDto,
+  ) {
+    return this.coordinatorService.batchEndorseEnrollments(
+      req.user.user_id,
+      dto,
+    );
   }
 
   @Get('coordinator/:id')

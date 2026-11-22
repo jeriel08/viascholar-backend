@@ -588,6 +588,113 @@ describe('CoordinatorEnrollmentService', () => {
         enrollment: { enrollment_id: 44, status: 'REJECTED' },
       });
     });
+
+    it('verifies documents without creating a disbursement when action is VERIFY', async () => {
+      const enrollment = makeEnrollment();
+      prisma.termEnrollment.findUnique.mockResolvedValue(enrollment);
+      tx.termEnrollment.update.mockResolvedValue({
+        enrollment_id: 44,
+        status: 'VERIFIED',
+      });
+
+      const result = await service.reviewEnrollment(5, 44, {
+        action: EnrollmentReviewAction.VERIFY,
+        coordinator_notes: 'Docs clear',
+      });
+
+      expect(tx.disbursement.create).not.toHaveBeenCalled();
+      expect(tx.prospectusSubject.update).not.toHaveBeenCalled();
+      expect(tx.termEnrollment.update).toHaveBeenCalledWith({
+        where: { enrollment_id: 44 },
+        data: {
+          status: 'VERIFIED',
+          reviewed_by_employee_id: 9,
+          reviewed_at: anyArg(Date),
+          coordinator_notes: 'Docs clear',
+          total_assessment: 15000,
+          enrolled_subjects: enrollment.enrolled_subjects,
+        },
+      });
+      expect(tx.scholarDocument.update).toHaveBeenCalledTimes(2);
+      expect(events.emitToUser).toHaveBeenCalledWith(3, 'enrollment:verified', {
+        enrollment_id: 44,
+        scholar_id: 10,
+        status: 'VERIFIED',
+      });
+      expect(events.emitToStaff).toHaveBeenCalledWith('enrollment:verified', {
+        enrollment_id: 44,
+        scholar_id: 10,
+        status: 'VERIFIED',
+      });
+      expect(result).toEqual({
+        message: 'Term enrollment verified and ready for Grantor endorsement.',
+        enrollment: { enrollment_id: 44, status: 'VERIFIED' },
+      });
+    });
+  });
+
+  describe('batchEndorseEnrollments', () => {
+    it('rejects batch endorsement when any enrollment is not in VERIFIED status', async () => {
+      prisma.termEnrollment.findMany.mockResolvedValue([
+        makeEnrollment({ enrollment_id: 44, status: 'PENDING_REVIEW' }),
+      ]);
+
+      await expect(
+        service.batchEndorseEnrollments(5, { enrollment_ids: [44] }),
+      ).rejects.toThrow(BadRequestException);
+      expect(tx.disbursement.create).not.toHaveBeenCalled();
+    });
+
+    it('atomically creates pending disbursements, approves VERIFIED enrollments, and emits notifications', async () => {
+      const verified = makeEnrollment({ enrollment_id: 44, status: 'VERIFIED' });
+      prisma.termEnrollment.findMany.mockResolvedValue([verified]);
+
+      const result = await service.batchEndorseEnrollments(5, {
+        enrollment_ids: [44],
+        coordinator_notes: 'Batch #1',
+      });
+
+      expect(tx.disbursement.create).toHaveBeenCalledWith({
+        data: {
+          scholar_profile_id: 10,
+          academic_year: '2026-2027',
+          semester: '1st Semester',
+          amount: 15000,
+          status: 'PENDING',
+          approved_by_employee_id: 9,
+          remarks:
+            'Tuition & fees disbursement endorsed from Start-of-Term Enrollment Audit. Batch #1',
+        },
+      });
+      expect(tx.termEnrollment.update).toHaveBeenCalledWith({
+        where: { enrollment_id: 44 },
+        data: {
+          status: 'APPROVED',
+          reviewed_by_employee_id: 9,
+          reviewed_at: anyArg(Date),
+          coordinator_notes: 'Batch #1',
+          disbursement_id: 500,
+          enrolled_subjects: verified.enrolled_subjects,
+        },
+      });
+      expect(events.emitToUser).toHaveBeenCalledWith(3, 'enrollment:approved', {
+        enrollment_id: 44,
+        scholar_id: 10,
+        disbursement_id: 500,
+      });
+      expect(events.emitToStaff).toHaveBeenCalledWith('enrollment:approved', {
+        enrollment_id: 44,
+        disbursement_id: 500,
+        scholar_id: 10,
+      });
+      expect(result).toEqual({
+        message: 'Endorsed 1 verified enrollment to Grantor.',
+        endorsed_count: 1,
+        total_amount: 15000,
+        enrollments: [{ enrollment_id: 44, status: 'APPROVED' }],
+        disbursements: [{ disbursement_id: 500, amount: 15000 }],
+      });
+    });
   });
 
   describe('grantorAuthorizeDisbursement', () => {

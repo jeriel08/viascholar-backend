@@ -122,12 +122,14 @@ export class DeadlinesController {
     @Query('semester') semester?: string,
     @Query('requirement_type') requirement_type?: string,
     @Query('only_active') only_active?: string,
+    @Query('include_summary') include_summary?: string,
   ) {
     return this.deadlinesService.listDeadlines({
       academic_year,
       semester,
       requirement_type,
       only_active: only_active === 'true',
+      include_summary: include_summary === 'true',
     });
   }
 
@@ -139,6 +141,25 @@ export class DeadlinesController {
     @Body() dto: CreateDeadlineDto,
   ) {
     return this.deadlinesService.createDeadline(req.user.user_id, dto);
+  }
+
+  @Get(':id/compliance')
+  @Roles(Role.ADMIN, Role.GRANTOR, Role.COORDINATOR)
+  @ApiOperation({
+    summary:
+      'Get details and covered scholars compliance roster for a specific submission deadline',
+  })
+  getDeadlineDetailCompliance(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('status') status?: string,
+    @Query('school_id') school_id?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.deadlinesService.getDeadlineDetailCompliance(id, {
+      status,
+      school_id: school_id ? Number(school_id) : undefined,
+      search,
+    });
   }
 
   @Patch(':id')

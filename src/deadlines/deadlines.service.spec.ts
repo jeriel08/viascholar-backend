@@ -411,7 +411,7 @@ describe('DeadlinesService', () => {
           school_name: 'Ateneo de Davao University',
           school_code: 'ADDU',
         },
-        due_date: new Date('2026-10-20T23:59:59.999+08:00'),
+        due_date: new Date('2026-10-15T23:59:59.999+08:00'),
         grace_period_days: 0,
       });
 
@@ -513,6 +513,239 @@ describe('DeadlinesService', () => {
       expect(result.available_academic_years).toEqual(
         expect.arrayContaining(['2026-2027', '2024-2025', '2023-2024']),
       );
+    });
+  });
+
+  describe('listDeadlines with include_summary & getDeadlineDetailCompliance', () => {
+    it('attaches covered scholar summary counts per deadline while excluding school-overridden scholars from global deadlines', async () => {
+      const globalDeadline = makeDeadlineRow({
+        deadline_id: 1,
+        requirement_type: 'ENROLLMENT',
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+        school_id: null,
+        due_date: new Date('2026-10-01T23:59:59.999+08:00'),
+      });
+      const ateneoOverride = makeDeadlineRow({
+        deadline_id: 2,
+        requirement_type: 'ENROLLMENT',
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+        school_id: 3,
+        school: {
+          school_id: 3,
+          school_name: 'Ateneo de Davao University',
+          school_code: 'ADDU',
+        },
+        due_date: new Date('2026-10-15T23:59:59.999+08:00'),
+      });
+
+      prisma.submissionDeadline.findMany
+        .mockResolvedValueOnce([globalDeadline, ateneoOverride])
+        .mockResolvedValueOnce([globalDeadline, ateneoOverride]);
+      prisma.scholarProfile.findMany.mockResolvedValue([
+        makeScholarRow({ profile_id: 10, school_id: 2, school_name: 'University of Mindanao' }),
+        makeScholarRow({
+          profile_id: 20,
+          user_id: 200,
+          school_id: 3,
+          school_name: 'Ateneo de Davao University',
+          school: {
+            school_id: 3,
+            school_name: 'Ateneo de Davao University',
+            school_code: 'ADDU',
+          },
+        }),
+      ]);
+
+      const rows = (await service.listDeadlines({ include_summary: true })) as Array<any>;
+
+      expect(rows).toHaveLength(2);
+      expect(rows[0].summary.total_in_scope).toBe(1);
+      expect(rows[0].summary.overdue_count).toBe(1);
+      expect(rows[1].summary.total_in_scope).toBe(1);
+      expect(rows[1].summary.upcoming_count).toBe(1);
+    });
+
+    it('returns selected deadline details, overridden schools, and only its covered scholars', async () => {
+      const globalDeadline = makeDeadlineRow({
+        deadline_id: 1,
+        requirement_type: 'ENROLLMENT',
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+        school_id: null,
+        due_date: new Date('2026-10-01T23:59:59.999+08:00'),
+      });
+      const ateneoOverride = makeDeadlineRow({
+        deadline_id: 2,
+        requirement_type: 'ENROLLMENT',
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+        school_id: 3,
+        school: {
+          school_id: 3,
+          school_name: 'Ateneo de Davao University',
+          school_code: 'ADDU',
+        },
+      });
+
+      prisma.submissionDeadline.findUnique.mockResolvedValueOnce(globalDeadline);
+      prisma.submissionDeadline.findMany.mockResolvedValueOnce([
+        globalDeadline,
+        ateneoOverride,
+      ]);
+      prisma.scholarProfile.findMany.mockResolvedValueOnce([
+        makeScholarRow({ profile_id: 10, school_id: 2, school_name: 'University of Mindanao' }),
+        makeScholarRow({
+          profile_id: 20,
+          user_id: 200,
+          first_name: 'Ateneo',
+          last_name: 'Scholar',
+          school_id: 3,
+          school_name: 'Ateneo de Davao University',
+          school: {
+            school_id: 3,
+            school_name: 'Ateneo de Davao University',
+            school_code: 'ADDU',
+          },
+        }),
+      ]);
+
+      const detail = await service.getDeadlineDetailCompliance(1, {});
+
+      expect(detail.deadline.deadline_id).toBe(1);
+      expect(detail.overridden_schools).toEqual([
+        {
+          deadline_id: 2,
+          school_id: 3,
+          school_name: 'Ateneo de Davao University',
+        },
+      ]);
+      expect(detail.items).toHaveLength(1);
+      expect(detail.items[0].scholar.profile_id).toBe(10);
+      expect(detail.summary.covered_count).toBe(1);
+
+      prisma.submissionDeadline.findUnique.mockResolvedValueOnce(null);
+      await expect(service.getDeadlineDetailCompliance(999, {})).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('tracks VERIFIED_READY counts, total verified assessment, and pending CCG document_id', async () => {
+      const enrollmentDeadline = makeDeadlineRow({
+        deadline_id: 1,
+        requirement_type: 'ENROLLMENT',
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+      });
+      const verifiedScholar = makeScholarRow({
+        profile_id: 10,
+        user_id: 101,
+        first_name: 'Maria',
+        last_name: 'Santos',
+        enrollments: [
+          {
+            enrollment_id: 51,
+            academic_year: '2026-2027',
+            semester: '1st Semester',
+            status: 'VERIFIED',
+            total_assessment: 18500,
+            total_units: 21,
+            cor_document_id: 71,
+            soa_document_id: 72,
+            audit_flags: [],
+            created_at: new Date('2026-10-02T08:00:00Z'),
+            updated_at: new Date('2026-10-03T08:00:00Z'),
+          },
+        ],
+      });
+      const pendingScholar = makeScholarRow({
+        profile_id: 20,
+        user_id: 102,
+        first_name: 'Jose',
+        last_name: 'Reyes',
+        enrollments: [
+          {
+            enrollment_id: 52,
+            academic_year: '2026-2027',
+            semester: '1st Semester',
+            status: 'PENDING_REVIEW',
+            total_assessment: 12000,
+            total_units: 18,
+            cor_document_id: 73,
+            soa_document_id: 74,
+            audit_flags: ['UNIT_MISMATCH'],
+            created_at: new Date('2026-10-04T08:00:00Z'),
+            updated_at: new Date('2026-10-04T08:00:00Z'),
+          },
+        ],
+      });
+
+      prisma.submissionDeadline.findUnique.mockResolvedValueOnce(enrollmentDeadline);
+      prisma.submissionDeadline.findMany.mockResolvedValueOnce([enrollmentDeadline]);
+      prisma.scholarProfile.findMany.mockResolvedValueOnce([
+        verifiedScholar,
+        pendingScholar,
+      ]);
+
+      const detail = await service.getDeadlineDetailCompliance(1, {});
+      expect(detail.summary.verified_ready_count).toBe(1);
+      expect(detail.summary.pending_audit_count).toBe(1);
+      expect(detail.summary.verified_total_amount).toBe(18500);
+
+      const verifiedRow = detail.items.find((i) => i.scholar.profile_id === 10);
+      const pendingRow = detail.items.find((i) => i.scholar.profile_id === 20);
+      expect(verifiedRow?.submission?.review_stage).toBe('VERIFIED_READY');
+      expect(verifiedRow?.submission?.total_assessment).toBe(18500);
+      expect(pendingRow?.submission?.review_stage).toBe('PENDING_AUDIT');
+      expect(pendingRow?.submission?.audit_flags_count).toBe(1);
+
+      const gradesDeadline = makeDeadlineRow({
+        deadline_id: 2,
+        requirement_type: 'GRADES',
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+      });
+      const ccgScholar = makeScholarRow({
+        profile_id: 30,
+        user_id: 103,
+        enrollments: [
+          {
+            enrollment_id: 53,
+            academic_year: '2026-2027',
+            semester: '1st Semester',
+            status: 'APPROVED',
+          },
+        ],
+        grade_reports: [],
+        documents: [
+          {
+            document_id: 88,
+            document_type: 'CCG',
+            status: 'STUDENT_CONFIRMED',
+            confirmed_data: {
+              academic_year: '2026-2027',
+              semester: '1st Semester',
+            },
+            extracted_data: null,
+            uploaded_at: new Date('2026-10-10T09:00:00Z'),
+            verified_at: null,
+          },
+        ],
+      });
+
+      prisma.submissionDeadline.findUnique.mockResolvedValueOnce(gradesDeadline);
+      prisma.submissionDeadline.findMany.mockResolvedValueOnce([gradesDeadline]);
+      prisma.scholarProfile.findMany.mockResolvedValueOnce([ccgScholar]);
+
+      const gradeDetail = await service.getDeadlineDetailCompliance(2, {
+        status: 'PENDING_AUDIT',
+      });
+      expect(gradeDetail.summary.pending_audit_count).toBe(1);
+      expect(gradeDetail.items).toHaveLength(1);
+      expect(gradeDetail.items[0].status).toBe('SUBMITTED');
+      expect(gradeDetail.items[0].submission?.review_stage).toBe('PENDING_AUDIT');
+      expect(gradeDetail.items[0].submission?.grade_document_id).toBe(88);
     });
   });
 

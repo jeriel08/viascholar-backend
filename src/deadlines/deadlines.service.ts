@@ -29,6 +29,7 @@ import {
 } from './dto/deadline.dto.js';
 import {
   type DeadlineComplianceStatus,
+  type EvaluationResult,
   evaluateScholarRequirementStatus,
   getRequirementActionPath,
   getRequirementLabel,
@@ -36,6 +37,7 @@ import {
   normalizeSchoolName,
   resolveEffectiveDeadline,
   resolveScholarSchoolName,
+  scholarMatchesDeadlineSchool,
 } from './utils/deadline-compliance.util.js';
 
 const STATUS_SORT_PRIORITY: Record<DeadlineComplianceStatus, number> = {
@@ -87,7 +89,9 @@ export class DeadlinesService {
       addIfAy(ay);
     }
 
-    const anchorNorm = normalizeAcademicYear(activeTerm.effective_academic_year);
+    const anchorNorm = normalizeAcademicYear(
+      activeTerm.effective_academic_year,
+    );
     const startYear = Number.parseInt((anchorNorm || '').split('-')[0], 10);
     if (Number.isFinite(startYear)) {
       for (let offset = 1; offset >= -3; offset--) {
@@ -127,10 +131,377 @@ export class DeadlinesService {
       created_by_user_id: d.created_by_user_id ?? null,
       created_by_name: creatorName || d.created_by?.email || null,
       created_at:
-        d.created_at instanceof Date ? d.created_at.toISOString() : d.created_at,
+        d.created_at instanceof Date
+          ? d.created_at.toISOString()
+          : d.created_at,
       updated_at:
-        d.updated_at instanceof Date ? d.updated_at.toISOString() : d.updated_at,
+        d.updated_at instanceof Date
+          ? d.updated_at.toISOString()
+          : d.updated_at,
     };
+  }
+
+  private async fetchComplianceScholars(deadlineIds: number[]) {
+    return this.prisma.scholarProfile.findMany({
+      where: {
+        archived_at: null,
+        user: { role: Role.SCHOLAR, is_active: true },
+      },
+      include: {
+        user: { select: { user_id: true, email: true } },
+        school: {
+          select: { school_id: true, school_name: true, school_code: true },
+        },
+        school_grading_system: {
+          select: { school_id: true, school_name: true },
+        },
+        prospectus: {
+          include: {
+            subjects: {
+              select: { year_level: true, semester: true, status: true },
+            },
+          },
+        },
+        enrollments: {
+          select: {
+            enrollment_id: true,
+            academic_year: true,
+            semester: true,
+            status: true,
+            cor_document_id: true,
+            soa_document_id: true,
+            total_assessment: true,
+            total_units: true,
+            audit_flags: true,
+            created_at: true,
+            updated_at: true,
+          },
+        },
+        grade_reports: {
+          select: {
+            report_id: true,
+            document_id: true,
+            academic_year: true,
+            semester: true,
+            status: true,
+            submitted_at: true,
+          },
+        },
+        documents: {
+          where: { document_type: 'CCG' },
+          select: {
+            document_id: true,
+            document_type: true,
+            status: true,
+            confirmed_data: true,
+            extracted_data: true,
+            uploaded_at: true,
+            verified_at: true,
+          },
+          orderBy: { uploaded_at: 'desc' },
+        },
+        ...(deadlineIds.length > 0
+          ? {
+              deadline_exemptions: {
+                where: { deadline_id: { in: deadlineIds } },
+              },
+              deadline_follow_ups: {
+                where: { deadline_id: { in: deadlineIds } },
+                include: {
+                  sent_by: {
+                    select: {
+                      user_id: true,
+                      email: true,
+                      employee: {
+                        select: { first_name: true, last_name: true },
+                      },
+                    },
+                  },
+                },
+                orderBy: { created_at: 'desc' },
+              },
+            }
+          : {}),
+      },
+      orderBy: [{ last_name: 'asc' }, { first_name: 'asc' }],
+    });
+  }
+
+  private async buildSchoolIdByNameMap(): Promise<Map<string, number>> {
+    const schoolsList =
+      typeof (this.prisma as any).school?.findMany === 'function'
+        ? await this.prisma.school.findMany({
+            select: { school_id: true, school_name: true },
+          })
+        : [];
+    const schoolIdByName = new Map<string, number>();
+    for (const s of schoolsList) {
+      const norm = normalizeSchoolName(s.school_name);
+      if (norm) schoolIdByName.set(norm, s.school_id);
+    }
+    return schoolIdByName;
+  }
+
+  private createEmptyDetailSummary(totalInScope = 0) {
+    return {
+      total_in_scope: totalInScope,
+      covered_count: 0,
+      submitted_count: 0,
+      pending_audit_count: 0,
+      verified_ready_count: 0,
+      endorsed_count: 0,
+      verified_total_amount: 0,
+      currently_enrolled_count: 0,
+      missing_count: 0,
+      overdue_count: 0,
+      needs_action_count: 0,
+      upcoming_count: 0,
+      exempt_count: 0,
+      not_applicable_count: 0,
+      contacted_count: 0,
+    };
+  }
+
+  private accumulateComplianceSummary(
+    summary: {
+      covered_count?: number;
+      submitted_count: number;
+      pending_audit_count?: number;
+      verified_ready_count?: number;
+      endorsed_count?: number;
+      verified_total_amount?: number;
+      currently_enrolled_count: number;
+      missing_count: number;
+      overdue_count: number;
+      needs_action_count: number;
+      upcoming_count: number;
+      exempt_count: number;
+      not_applicable_count: number;
+      contacted_count: number;
+    },
+    evaluation: EvaluationResult,
+    hasFollowUp: boolean,
+  ) {
+    const status = evaluation.status;
+    if (
+      status !== 'NOT_APPLICABLE' &&
+      typeof summary.covered_count === 'number'
+    ) {
+      summary.covered_count++;
+    }
+    switch (status) {
+      case 'SUBMITTED':
+        summary.submitted_count++;
+        if (evaluation.submission?.review_stage === 'PENDING_AUDIT') {
+          summary.pending_audit_count = (summary.pending_audit_count ?? 0) + 1;
+        } else if (evaluation.submission?.review_stage === 'VERIFIED_READY') {
+          summary.verified_ready_count =
+            (summary.verified_ready_count ?? 0) + 1;
+          summary.verified_total_amount =
+            (summary.verified_total_amount ?? 0) +
+            (Number(evaluation.submission.total_assessment) || 0);
+        } else if (evaluation.submission?.review_stage === 'ENDORSED') {
+          summary.endorsed_count = (summary.endorsed_count ?? 0) + 1;
+        }
+        break;
+      case 'CURRENTLY_ENROLLED':
+        summary.currently_enrolled_count++;
+        break;
+      case 'OVERDUE':
+        summary.overdue_count++;
+        summary.missing_count++;
+        break;
+      case 'NEEDS_ACTION':
+        summary.needs_action_count++;
+        summary.missing_count++;
+        break;
+      case 'UPCOMING':
+        summary.upcoming_count++;
+        summary.missing_count++;
+        break;
+      case 'NOT_SUBMITTED':
+        summary.missing_count++;
+        break;
+      case 'EXEMPT':
+        summary.exempt_count++;
+        break;
+      case 'NOT_APPLICABLE':
+        summary.not_applicable_count++;
+        break;
+    }
+    if (hasFollowUp) {
+      summary.contacted_count++;
+    }
+  }
+
+  private isScholarCoveredByDeadline(
+    scholar: any,
+    targetDeadline: any,
+    sameTermActiveDeadlines: any[],
+  ): boolean {
+    const reqType = targetDeadline.requirement_type as DeadlineRequirementType;
+    if (targetDeadline.is_active) {
+      const effective = resolveEffectiveDeadline(
+        sameTermActiveDeadlines,
+        reqType,
+        scholar,
+      );
+      return effective?.deadline_id === targetDeadline.deadline_id;
+    }
+    if (
+      targetDeadline.school_id !== null &&
+      targetDeadline.school_id !== undefined
+    ) {
+      return scholarMatchesDeadlineSchool(scholar, targetDeadline);
+    }
+    return !sameTermActiveDeadlines.some(
+      (d) =>
+        d.is_active &&
+        d.school_id !== null &&
+        d.school_id !== undefined &&
+        scholarMatchesDeadlineSchool(scholar, d),
+    );
+  }
+
+  private buildComplianceItemRow(
+    deadline: any,
+    scholar: any,
+    evaluation: EvaluationResult,
+    exemption: any,
+    followUps: any[],
+    schoolIdByName: Map<string, number>,
+  ) {
+    const latestFollowUp = followUps[0] ?? null;
+    const reqType = deadline.requirement_type as DeadlineRequirementType;
+    const scholarSchoolName = resolveScholarSchoolName(scholar);
+    const resolvedSchoolId =
+      schoolIdByName.get(normalizeSchoolName(scholarSchoolName)) ??
+      scholar.school_id ??
+      null;
+
+    return {
+      row_key: `${deadline.deadline_id}-${scholar.profile_id}`,
+      deadline_id: deadline.deadline_id,
+      requirement_type: reqType,
+      requirement_label: getRequirementLabel(reqType),
+      is_school_override: deadline.school_id !== null,
+      due_date:
+        deadline.due_date instanceof Date
+          ? deadline.due_date.toISOString()
+          : deadline.due_date,
+      effective_due_date: evaluation.effective_due_date,
+      grace_period_days: deadline.grace_period_days,
+      status: evaluation.status,
+      status_detail: evaluation.status_detail,
+      days_remaining: evaluation.days_remaining,
+      days_overdue: evaluation.days_overdue,
+      submission: evaluation.submission ?? null,
+      scholar: {
+        profile_id: scholar.profile_id,
+        user_id: scholar.user_id,
+        name: `${scholar.first_name} ${scholar.last_name}`.trim(),
+        email: scholar.user?.email || '',
+        phone_number: scholar.phone_number || null,
+        student_number: scholar.student_number || null,
+        course_of_study: scholar.course_of_study || null,
+        year_level: scholar.current_year_level ?? null,
+        school_id: resolvedSchoolId,
+        school_name: scholarSchoolName,
+      },
+      exemption: exemption
+        ? {
+            reason: exemption.reason ?? null,
+            created_at:
+              exemption.created_at instanceof Date
+                ? exemption.created_at.toISOString()
+                : exemption.created_at,
+          }
+        : null,
+      follow_up_count: followUps.length,
+      last_follow_up: latestFollowUp
+        ? {
+            follow_up_id: latestFollowUp.follow_up_id,
+            channels: Array.isArray(latestFollowUp.channels)
+              ? latestFollowUp.channels
+              : [],
+            conversation_id: latestFollowUp.conversation_id ?? null,
+            message_text: latestFollowUp.message_text,
+            sent_by_name: latestFollowUp.sent_by?.employee
+              ? `${latestFollowUp.sent_by.employee.first_name || ''} ${latestFollowUp.sent_by.employee.last_name || ''}`.trim()
+              : latestFollowUp.sent_by?.email || 'Coordinator',
+            created_at:
+              latestFollowUp.created_at instanceof Date
+                ? latestFollowUp.created_at.toISOString()
+                : latestFollowUp.created_at,
+          }
+        : null,
+    };
+  }
+
+  private filterAndSortComplianceItems(
+    items: Array<Record<string, any>>,
+    query: { status?: string; school_id?: number; search?: string },
+  ) {
+    const searchQ = (query.search || '').trim().toLowerCase();
+    return items
+      .filter((item) => {
+        if (
+          query.school_id &&
+          item.scholar.school_id !== Number(query.school_id)
+        ) {
+          return false;
+        }
+        if (query.status && query.status !== 'ALL') {
+          if (query.status === 'COVERED_ALL') {
+            if (item.status === 'NOT_APPLICABLE') return false;
+          } else if (query.status === 'MISSING_ALL') {
+            if (
+              ![
+                'OVERDUE',
+                'NEEDS_ACTION',
+                'UPCOMING',
+                'NOT_SUBMITTED',
+              ].includes(item.status)
+            ) {
+              return false;
+            }
+          } else if (
+            ['PENDING_AUDIT', 'VERIFIED_READY', 'ENDORSED'].includes(
+              query.status,
+            )
+          ) {
+            if (item.submission?.review_stage !== query.status) {
+              return false;
+            }
+          } else if (item.status !== query.status) {
+            return false;
+          }
+        }
+        if (searchQ) {
+          const hay = [
+            item.scholar.name,
+            item.scholar.email,
+            item.scholar.school_name,
+            item.scholar.course_of_study,
+            item.scholar.student_number,
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase();
+          if (!hay.includes(searchQ)) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const pDiff =
+          (STATUS_SORT_PRIORITY[a.status as DeadlineComplianceStatus] ?? 99) -
+          (STATUS_SORT_PRIORITY[b.status as DeadlineComplianceStatus] ?? 99);
+        if (pDiff !== 0) return pDiff;
+        if (b.days_overdue !== a.days_overdue) {
+          return b.days_overdue - a.days_overdue;
+        }
+        return a.scholar.name.localeCompare(b.scholar.name);
+      });
   }
 
   async listDeadlines(query: {
@@ -138,6 +509,7 @@ export class DeadlinesService {
     semester?: string;
     requirement_type?: string;
     only_active?: boolean;
+    include_summary?: boolean;
   }) {
     const normAy = query.academic_year
       ? normalizeAcademicYear(query.academic_year) || query.academic_year.trim()
@@ -168,13 +540,76 @@ export class DeadlinesService {
         },
       },
       orderBy: [
+        { is_active: 'desc' },
         { academic_year: 'desc' },
         { semester: 'asc' },
         { due_date: 'asc' },
       ],
     });
 
-    return rows.map((r) => this.formatDeadline(r));
+    if (!query.include_summary || rows.length === 0) {
+      return rows.map((r) => this.formatDeadline(r));
+    }
+
+    const deadlineIds = rows.map((r) => r.deadline_id);
+    const [activeSiblingDeadlines, scholars] = await Promise.all([
+      this.prisma.submissionDeadline.findMany({
+        where: { is_active: true },
+        include: {
+          school: {
+            select: { school_id: true, school_name: true, school_code: true },
+          },
+        },
+      }),
+      this.fetchComplianceScholars(deadlineIds),
+    ]);
+
+    const siblingsByBucket = new Map<string, any[]>();
+    for (const d of activeSiblingDeadlines) {
+      const key = `${normalizeAcademicYear(d.academic_year) || d.academic_year}||${normalizeSemester(d.semester) || d.semester}||${d.requirement_type}`;
+      const list = siblingsByBucket.get(key) ?? [];
+      list.push(d);
+      siblingsByBucket.set(key, list);
+    }
+
+    const now = new Date();
+    return rows.map((row) => {
+      const bucketKey = `${normalizeAcademicYear(row.academic_year) || row.academic_year}||${normalizeSemester(row.semester) || row.semester}||${row.requirement_type}`;
+      const siblings = siblingsByBucket.get(bucketKey) ?? [];
+      const siblingList =
+        siblings.length > 0 ? siblings : row.is_active ? [row] : [];
+      const covered = scholars.filter((s) =>
+        this.isScholarCoveredByDeadline(s, row, siblingList),
+      );
+
+      const summary = this.createEmptyDetailSummary(covered.length);
+      for (const scholar of covered) {
+        const exemption =
+          (scholar as any).deadline_exemptions?.find(
+            (e: any) => e.deadline_id === row.deadline_id,
+          ) ?? null;
+        const followUps =
+          (scholar as any).deadline_follow_ups?.filter(
+            (f: any) => f.deadline_id === row.deadline_id,
+          ) ?? [];
+        const evaluation = evaluateScholarRequirementStatus({
+          deadline: row,
+          scholar,
+          exemption,
+          now,
+        });
+        this.accumulateComplianceSummary(
+          summary,
+          evaluation,
+          followUps.length > 0,
+        );
+      }
+
+      return {
+        ...this.formatDeadline(row),
+        summary,
+      };
+    });
   }
 
   async createDeadline(userId: number, dto: CreateDeadlineDto) {
@@ -284,7 +719,11 @@ export class DeadlinesService {
     is_optional_term: boolean;
     is_active: boolean;
     school_id: number | null;
-    school?: { school_id?: number; school_name: string; school_code?: string | null } | null;
+    school?: {
+      school_id?: number;
+      school_name: string;
+      school_code?: string | null;
+    } | null;
   }) {
     try {
       const [activeDeadlines, scholars] = await Promise.all([
@@ -298,7 +737,11 @@ export class DeadlinesService {
               },
               include: {
                 school: {
-                  select: { school_id: true, school_name: true, school_code: true },
+                  select: {
+                    school_id: true,
+                    school_name: true,
+                    school_code: true,
+                  },
                 },
               },
             })
@@ -335,16 +778,35 @@ export class DeadlinesService {
                 status: true,
                 cor_document_id: true,
                 soa_document_id: true,
+                total_assessment: true,
+                total_units: true,
+                audit_flags: true,
+                created_at: true,
+                updated_at: true,
               },
             },
             grade_reports: {
               select: {
                 report_id: true,
+                document_id: true,
                 academic_year: true,
                 semester: true,
                 status: true,
                 submitted_at: true,
               },
+            },
+            documents: {
+              where: { document_type: 'CCG' },
+              select: {
+                document_id: true,
+                document_type: true,
+                status: true,
+                confirmed_data: true,
+                extracted_data: true,
+                uploaded_at: true,
+                verified_at: true,
+              },
+              orderBy: { uploaded_at: 'desc' },
             },
           },
         }),
@@ -365,11 +827,7 @@ export class DeadlinesService {
 
       const now = new Date();
       const targets = scholars.filter((s) => {
-        const effective = resolveEffectiveDeadline(
-          scopedDeadlines,
-          reqType,
-          s,
-        );
+        const effective = resolveEffectiveDeadline(scopedDeadlines, reqType, s);
         if (!effective || effective.deadline_id !== deadline.deadline_id) {
           return false;
         }
@@ -432,9 +890,7 @@ export class DeadlinesService {
         ...(dto.is_optional_term !== undefined
           ? { is_optional_term: dto.is_optional_term }
           : {}),
-        ...(dto.title !== undefined
-          ? { title: dto.title.trim() || null }
-          : {}),
+        ...(dto.title !== undefined ? { title: dto.title.trim() || null } : {}),
         ...(dto.instructions !== undefined
           ? { instructions: dto.instructions.trim() || null }
           : {}),
@@ -541,75 +997,9 @@ export class DeadlinesService {
     const formattedDeadlines = deadlines.map((d) => this.formatDeadline(d));
     const deadlineIds = deadlines.map((d) => d.deadline_id);
 
-    const scholars = await this.prisma.scholarProfile.findMany({
-      where: {
-        archived_at: null,
-        user: { role: Role.SCHOLAR, is_active: true },
-      },
-      include: {
-        user: { select: { user_id: true, email: true } },
-        school: {
-          select: { school_id: true, school_name: true, school_code: true },
-        },
-        school_grading_system: {
-          select: { school_id: true, school_name: true },
-        },
-        prospectus: {
-          include: {
-            subjects: {
-              select: { year_level: true, semester: true, status: true },
-            },
-          },
-        },
-        enrollments: {
-          select: {
-            enrollment_id: true,
-            academic_year: true,
-            semester: true,
-            status: true,
-            cor_document_id: true,
-            soa_document_id: true,
-          },
-        },
-        grade_reports: {
-          select: {
-            report_id: true,
-            academic_year: true,
-            semester: true,
-            status: true,
-            submitted_at: true,
-          },
-        },
-        ...(deadlineIds.length > 0
-          ? {
-              deadline_exemptions: {
-                where: { deadline_id: { in: deadlineIds } },
-              },
-              deadline_follow_ups: {
-                where: { deadline_id: { in: deadlineIds } },
-                include: {
-                  sent_by: {
-                    select: {
-                      user_id: true,
-                      email: true,
-                      employee: { select: { first_name: true, last_name: true } },
-                    },
-                  },
-                },
-                orderBy: { created_at: 'desc' },
-              },
-            }
-          : {}),
-      },
-      orderBy: [{ last_name: 'asc' }, { first_name: 'asc' }],
-    });
-
-    const [schoolsList, allDeadlineTerms] = await Promise.all([
-      typeof (this.prisma as any).school?.findMany === 'function'
-        ? this.prisma.school.findMany({
-            select: { school_id: true, school_name: true },
-          })
-        : Promise.resolve([]),
+    const [scholars, schoolIdByName, allDeadlineTerms] = await Promise.all([
+      this.fetchComplianceScholars(deadlineIds),
+      this.buildSchoolIdByNameMap(),
       typeof (this.prisma as any).submissionDeadline?.findMany === 'function'
         ? this.prisma.submissionDeadline.findMany({
             select: { academic_year: true },
@@ -617,21 +1007,19 @@ export class DeadlinesService {
           })
         : Promise.resolve([]),
     ]);
-    const schoolIdByName = new Map<string, number>();
-    for (const s of schoolsList) {
-      const norm = normalizeSchoolName(s.school_name);
-      if (norm) schoolIdByName.set(norm, s.school_id);
-    }
 
-    const availableAcademicYears = this.buildAvailableAcademicYears(activeTerm, [
-      academicYear,
-      ...scholars.flatMap((s) =>
-        (s.enrollments || []).map((e) => e.academic_year),
-      ),
-      ...(Array.isArray(allDeadlineTerms)
-        ? allDeadlineTerms.map((d: any) => d?.academic_year)
-        : []),
-    ]);
+    const availableAcademicYears = this.buildAvailableAcademicYears(
+      activeTerm,
+      [
+        academicYear,
+        ...scholars.flatMap((s) =>
+          (s.enrollments || []).map((e) => e.academic_year),
+        ),
+        ...(Array.isArray(allDeadlineTerms)
+          ? allDeadlineTerms.map((d: any) => d?.academic_year)
+          : []),
+      ],
+    );
 
     const requirementTypesToCheck =
       query.requirement_type && query.requirement_type !== 'ALL'
@@ -645,6 +1033,10 @@ export class DeadlinesService {
       total_entries: 0,
       submitted_count: 0,
       currently_enrolled_count: 0,
+      pending_audit_count: 0,
+      verified_ready_count: 0,
+      endorsed_count: 0,
+      verified_total_amount: 0,
       missing_count: 0,
       overdue_count: 0,
       needs_action_count: 0,
@@ -667,10 +1059,10 @@ export class DeadlinesService {
           (scholar as any).deadline_exemptions?.find(
             (e: any) => e.deadline_id === effectiveDeadline.deadline_id,
           ) ?? null;
-        const followUps = (scholar as any).deadline_follow_ups?.filter(
-          (f: any) => f.deadline_id === effectiveDeadline.deadline_id,
-        ) ?? [];
-        const latestFollowUp = followUps[0] ?? null;
+        const followUps =
+          (scholar as any).deadline_follow_ups?.filter(
+            (f: any) => f.deadline_id === effectiveDeadline.deadline_id,
+          ) ?? [];
 
         const evaluation = evaluateScholarRequirementStatus({
           deadline: effectiveDeadline,
@@ -680,146 +1072,26 @@ export class DeadlinesService {
         });
 
         summary.total_entries++;
-        switch (evaluation.status) {
-          case 'SUBMITTED':
-            summary.submitted_count++;
-            break;
-          case 'CURRENTLY_ENROLLED':
-            summary.currently_enrolled_count++;
-            break;
-          case 'OVERDUE':
-            summary.overdue_count++;
-            summary.missing_count++;
-            break;
-          case 'NEEDS_ACTION':
-            summary.needs_action_count++;
-            summary.missing_count++;
-            break;
-          case 'UPCOMING':
-            summary.upcoming_count++;
-            summary.missing_count++;
-            break;
-          case 'NOT_SUBMITTED':
-            summary.missing_count++;
-            break;
-          case 'EXEMPT':
-            summary.exempt_count++;
-            break;
-          case 'NOT_APPLICABLE':
-            summary.not_applicable_count++;
-            break;
-        }
+        this.accumulateComplianceSummary(
+          summary,
+          evaluation,
+          followUps.length > 0,
+        );
 
-        if (latestFollowUp) {
-          summary.contacted_count++;
-        }
-
-        const scholarSchoolName = resolveScholarSchoolName(scholar);
-        const resolvedSchoolId =
-          schoolIdByName.get(normalizeSchoolName(scholarSchoolName)) ??
-          scholar.school_id ??
-          null;
-
-        allItems.push({
-          row_key: `${effectiveDeadline.deadline_id}-${scholar.profile_id}`,
-          deadline_id: effectiveDeadline.deadline_id,
-          requirement_type: reqType,
-          requirement_label: getRequirementLabel(reqType),
-          is_school_override: effectiveDeadline.school_id !== null,
-          due_date: effectiveDeadline.due_date.toISOString(),
-          effective_due_date: evaluation.effective_due_date,
-          grace_period_days: effectiveDeadline.grace_period_days,
-          status: evaluation.status,
-          status_detail: evaluation.status_detail,
-          days_remaining: evaluation.days_remaining,
-          days_overdue: evaluation.days_overdue,
-          scholar: {
-            profile_id: scholar.profile_id,
-            user_id: scholar.user_id,
-            name: `${scholar.first_name} ${scholar.last_name}`.trim(),
-            email: scholar.user?.email || '',
-            phone_number: scholar.phone_number || null,
-            student_number: scholar.student_number || null,
-            course_of_study: scholar.course_of_study || null,
-            year_level: scholar.current_year_level ?? null,
-            school_id: resolvedSchoolId,
-            school_name: scholarSchoolName,
-          },
-          exemption: exemption
-            ? {
-                reason: exemption.reason ?? null,
-                created_at:
-                  exemption.created_at instanceof Date
-                    ? exemption.created_at.toISOString()
-                    : exemption.created_at,
-              }
-            : null,
-          follow_up_count: followUps.length,
-          last_follow_up: latestFollowUp
-            ? {
-                follow_up_id: latestFollowUp.follow_up_id,
-                channels: Array.isArray(latestFollowUp.channels)
-                  ? latestFollowUp.channels
-                  : [],
-                conversation_id: latestFollowUp.conversation_id ?? null,
-                message_text: latestFollowUp.message_text,
-                sent_by_name: latestFollowUp.sent_by?.employee
-                  ? `${latestFollowUp.sent_by.employee.first_name || ''} ${latestFollowUp.sent_by.employee.last_name || ''}`.trim()
-                  : latestFollowUp.sent_by?.email || 'Coordinator',
-                created_at:
-                  latestFollowUp.created_at instanceof Date
-                    ? latestFollowUp.created_at.toISOString()
-                    : latestFollowUp.created_at,
-              }
-            : null,
-        });
+        allItems.push(
+          this.buildComplianceItemRow(
+            effectiveDeadline,
+            scholar,
+            evaluation,
+            exemption,
+            followUps,
+            schoolIdByName,
+          ),
+        );
       }
     }
 
-    const searchQ = (query.search || '').trim().toLowerCase();
-    const filteredItems = allItems
-      .filter((item) => {
-        if (query.school_id && item.scholar.school_id !== Number(query.school_id)) {
-          return false;
-        }
-        if (query.status && query.status !== 'ALL') {
-          if (query.status === 'MISSING_ALL') {
-            if (
-              !['OVERDUE', 'NEEDS_ACTION', 'UPCOMING', 'NOT_SUBMITTED'].includes(
-                item.status,
-              )
-            ) {
-              return false;
-            }
-          } else if (item.status !== query.status) {
-            return false;
-          }
-        }
-        if (searchQ) {
-          const hay = [
-            item.scholar.name,
-            item.scholar.email,
-            item.scholar.school_name,
-            item.scholar.course_of_study,
-            item.scholar.student_number,
-          ]
-            .filter(Boolean)
-            .join(' ')
-            .toLowerCase();
-          if (!hay.includes(searchQ)) return false;
-        }
-        return true;
-      })
-      .sort((a, b) => {
-        const pDiff =
-          (STATUS_SORT_PRIORITY[a.status as DeadlineComplianceStatus] ?? 99) -
-          (STATUS_SORT_PRIORITY[b.status as DeadlineComplianceStatus] ?? 99);
-        if (pDiff !== 0) return pDiff;
-        if (b.days_overdue !== a.days_overdue) {
-          return b.days_overdue - a.days_overdue;
-        }
-        return a.scholar.name.localeCompare(b.scholar.name);
-      });
+    const filteredItems = this.filterAndSortComplianceItems(allItems, query);
 
     return {
       academic_year: academicYear,
@@ -827,6 +1099,122 @@ export class DeadlinesService {
       available_academic_years: availableAcademicYears,
       active_term: activeTerm,
       deadlines: formattedDeadlines,
+      summary,
+      items: filteredItems,
+    };
+  }
+
+  async getDeadlineDetailCompliance(
+    deadlineId: number,
+    query: { status?: string; school_id?: number; search?: string },
+  ) {
+    const target = await this.prisma.submissionDeadline.findUnique({
+      where: { deadline_id: deadlineId },
+      include: {
+        school: {
+          select: { school_id: true, school_name: true, school_code: true },
+        },
+        created_by: {
+          select: {
+            user_id: true,
+            email: true,
+            employee: { select: { first_name: true, last_name: true } },
+          },
+        },
+      },
+    });
+    if (!target) {
+      throw new NotFoundException(`Deadline ID ${deadlineId} not found.`);
+    }
+
+    const [siblingActiveDeadlines, scholars, schoolIdByName] =
+      await Promise.all([
+        this.prisma.submissionDeadline.findMany({
+          where: {
+            academic_year: target.academic_year,
+            semester: target.semester,
+            requirement_type: target.requirement_type,
+            is_active: true,
+          },
+          include: {
+            school: {
+              select: { school_id: true, school_name: true, school_code: true },
+            },
+          },
+        }),
+        this.fetchComplianceScholars([deadlineId]),
+        this.buildSchoolIdByNameMap(),
+      ]);
+
+    const effectiveSiblings =
+      siblingActiveDeadlines.length > 0
+        ? siblingActiveDeadlines
+        : target.is_active
+          ? [target]
+          : [];
+
+    const overriddenSchools =
+      target.school_id === null
+        ? effectiveSiblings
+            .filter(
+              (d) =>
+                d.school_id !== null &&
+                d.school_id !== undefined &&
+                d.deadline_id !== target.deadline_id,
+            )
+            .map((d) => ({
+              deadline_id: d.deadline_id,
+              school_id: d.school_id as number,
+              school_name: d.school?.school_name || `School #${d.school_id}`,
+            }))
+        : [];
+
+    const coveredScholars = scholars.filter((scholar) =>
+      this.isScholarCoveredByDeadline(scholar, target, effectiveSiblings),
+    );
+
+    const now = new Date();
+    const summary = this.createEmptyDetailSummary(coveredScholars.length);
+    const allItems: Array<Record<string, any>> = [];
+
+    for (const scholar of coveredScholars) {
+      const exemption =
+        (scholar as any).deadline_exemptions?.find(
+          (e: any) => e.deadline_id === target.deadline_id,
+        ) ?? null;
+      const followUps =
+        (scholar as any).deadline_follow_ups?.filter(
+          (f: any) => f.deadline_id === target.deadline_id,
+        ) ?? [];
+      const evaluation = evaluateScholarRequirementStatus({
+        deadline: target,
+        scholar,
+        exemption,
+        now,
+      });
+
+      this.accumulateComplianceSummary(
+        summary,
+        evaluation,
+        followUps.length > 0,
+      );
+      allItems.push(
+        this.buildComplianceItemRow(
+          target,
+          scholar,
+          evaluation,
+          exemption,
+          followUps,
+          schoolIdByName,
+        ),
+      );
+    }
+
+    const filteredItems = this.filterAndSortComplianceItems(allItems, query);
+
+    return {
+      deadline: this.formatDeadline(target),
+      overridden_schools: overriddenSchools,
       summary,
       items: filteredItems,
     };
@@ -1105,16 +1493,35 @@ export class DeadlinesService {
             status: true,
             cor_document_id: true,
             soa_document_id: true,
+            total_assessment: true,
+            total_units: true,
+            audit_flags: true,
+            created_at: true,
+            updated_at: true,
           },
         },
         grade_reports: {
           select: {
             report_id: true,
+            document_id: true,
             academic_year: true,
             semester: true,
             status: true,
             submitted_at: true,
           },
+        },
+        documents: {
+          where: { document_type: 'CCG' },
+          select: {
+            document_id: true,
+            document_type: true,
+            status: true,
+            confirmed_data: true,
+            extracted_data: true,
+            uploaded_at: true,
+            verified_at: true,
+          },
+          orderBy: { uploaded_at: 'desc' },
         },
       },
     });
@@ -1145,6 +1552,9 @@ export class DeadlinesService {
 
     for (const e of scholar.enrollments || []) {
       if (!['APPROVED', 'PENDING_REVIEW'].includes(e.status)) continue;
+      if (!['APPROVED', 'VERIFIED', 'PENDING_REVIEW'].includes(e.status)) {
+        continue;
+      }
       const eAy = normalizeAcademicYear(e.academic_year) || e.academic_year;
       const eSem = normalizeSemester(e.semester) || e.semester;
       if (!eAy || !eSem) continue;
@@ -1206,7 +1616,11 @@ export class DeadlinesService {
       const scopedDeadlines = deadlines.filter(
         (d) =>
           normalizeSemester(d.semester) === tp.semester &&
-          academicYearsMatchForTerm(d.academic_year, tp.academic_year, tp.semester),
+          academicYearsMatchForTerm(
+            d.academic_year,
+            tp.academic_year,
+            tp.semester,
+          ),
       );
 
       for (const reqType of DEADLINE_REQUIREMENT_TYPES) {
@@ -1259,6 +1673,7 @@ export class DeadlinesService {
           status_detail: evaluation.status_detail,
           days_remaining: evaluation.days_remaining,
           days_overdue: evaluation.days_overdue,
+          submission: evaluation.submission ?? null,
         });
       }
     }

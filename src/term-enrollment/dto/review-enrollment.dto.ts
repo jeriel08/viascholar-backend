@@ -1,6 +1,8 @@
 import {
+  ArrayNotEmpty,
   IsArray,
   IsEnum,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
@@ -10,6 +12,7 @@ import { Type } from 'class-transformer';
 import { EnrolledSubjectItemDto } from './submit-enrollment.dto.js';
 
 export enum EnrollmentReviewAction {
+  VERIFY = 'VERIFY',
   APPROVE = 'APPROVE',
   REQUEST_CHANGES = 'REQUEST_CHANGES',
   REJECT = 'REJECT',
@@ -32,4 +35,16 @@ export class ReviewEnrollmentDto {
   @ValidateNested({ each: true })
   @Type(() => EnrolledSubjectItemDto)
   adjusted_subjects?: EnrolledSubjectItemDto[];
+}
+
+export class BatchEndorseEnrollmentsDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsInt({ each: true })
+  @Type(() => Number)
+  enrollment_ids: number[];
+
+  @IsOptional()
+  @IsString()
+  coordinator_notes?: string;
 }

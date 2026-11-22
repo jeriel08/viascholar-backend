@@ -8,7 +8,10 @@ import { CoordinatorEnrollmentService } from './services/coordinator-enrollment.
 import { ROLES_KEY } from '../auth/decorators/roles.decorator.js';
 import { Role } from '../generated/prisma/enums.js';
 import type { SubmitEnrollmentDto } from './dto/submit-enrollment.dto.js';
-import type { ReviewEnrollmentDto } from './dto/review-enrollment.dto.js';
+import type {
+  BatchEndorseEnrollmentsDto,
+  ReviewEnrollmentDto,
+} from './dto/review-enrollment.dto.js';
 
 const makeRequest = (userId = 7, role: Role = Role.SCHOLAR) => ({
   user: { user_id: userId, role },
@@ -62,6 +65,7 @@ describe('TermEnrollmentController', () => {
       getPendingEnrollments: vi.fn(),
       getEnrollmentDetails: vi.fn(),
       reviewEnrollment: vi.fn(),
+      batchEndorseEnrollments: vi.fn(),
       grantorAuthorizeDisbursement: vi.fn(),
     };
 
@@ -216,6 +220,23 @@ describe('TermEnrollmentController', () => {
       );
 
       expect(coordinatorMock.reviewEnrollment).toHaveBeenCalledWith(9, 55, dto);
+    });
+
+    it('delegates batch endorsement with the user and dto', () => {
+      const dto: BatchEndorseEnrollmentsDto = {
+        enrollment_ids: [10, 11],
+        coordinator_notes: 'Batch 1',
+      };
+
+      void controller.batchEndorseEnrollments(
+        makeRequest(9, Role.COORDINATOR),
+        dto,
+      );
+
+      expect(coordinatorMock.batchEndorseEnrollments).toHaveBeenCalledWith(
+        9,
+        dto,
+      );
     });
 
     it('delegates grantor disbursement authorization with the user, id, and dto', () => {
@@ -420,8 +441,12 @@ describe('TermEnrollmentController', () => {
       ]);
     });
 
-    it('gates review decisions to coordinators and admins', () => {
+    it('gates review decisions and batch endorsement to coordinators and admins', () => {
       expect(rolesFor(handlerFor('reviewEnrollment'))).toEqual([
+        Role.COORDINATOR,
+        Role.ADMIN,
+      ]);
+      expect(rolesFor(handlerFor('batchEndorseEnrollments'))).toEqual([
         Role.COORDINATOR,
         Role.ADMIN,
       ]);
