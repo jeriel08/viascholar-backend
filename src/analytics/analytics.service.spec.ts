@@ -1187,6 +1187,276 @@ describe('AnalyticsService', () => {
     expect(fullYearQuery.financialAspect.totalDisbursedAmount).toBe(25000);
   });
 
+  it('scopes each school year cohort to scholars active in that term plus unarchived scholars in the latest non-summer term', async () => {
+    prisma.termEnrollment.findMany.mockResolvedValue([
+      {
+        academic_year: '2020-2021',
+        semester: '1st Semester',
+        total_assessment: '20000',
+        status: 'COMPLETED',
+      },
+      {
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+        total_assessment: '26000',
+        status: 'APPROVED',
+      },
+    ]);
+    prisma.disbursement.findMany.mockResolvedValue([
+      {
+        academic_year: '2020-2021',
+        semester: '1st Semester',
+        amount: '20000',
+        status: 'SETTLED',
+      },
+      {
+        academic_year: '2026-2027',
+        semester: '1st Semester',
+        amount: '26000',
+        status: 'SETTLED',
+      },
+    ]);
+    prisma.scholarProfile.findMany.mockResolvedValue([
+      makeScholar({
+        profile_id: 1,
+        first_name: 'Graduated',
+        last_name: 'Scholar',
+        current_year_level: 4,
+        archived_at: new Date('2024-04-30T00:00:00.000Z'),
+        archive_reason: 'GRADUATED',
+        enrollments: [
+          makeEnrollment({
+            academic_year: '2020-2021',
+            semester: '1st Semester',
+            year_level: 1,
+            total_assessment: '20000',
+            status: 'COMPLETED',
+          }),
+        ],
+        disbursements: [
+          makeDisbursement({
+            academic_year: '2020-2021',
+            semester: '1st Semester',
+            amount: '20000',
+            status: 'SETTLED',
+          }),
+        ],
+        grade_reports: [
+          makeGradeReport({
+            academic_year: '2020-2021',
+            semester: '1st Semester',
+            gpa: '3.6',
+          }),
+        ],
+      }),
+      makeScholar({
+        profile_id: 2,
+        first_name: 'Current',
+        last_name: 'Enrolled',
+        current_year_level: 3,
+        archived_at: null,
+        enrollments: [
+          makeEnrollment({
+            academic_year: '2026-2027',
+            semester: '1st Semester',
+            year_level: 3,
+            total_assessment: '26000',
+            status: 'APPROVED',
+          }),
+        ],
+        disbursements: [
+          makeDisbursement({
+            disbursement_id: 2,
+            academic_year: '2026-2027',
+            semester: '1st Semester',
+            amount: '26000',
+            status: 'SETTLED',
+          }),
+        ],
+        grade_reports: [
+          makeGradeReport({
+            academic_year: '2026-2027',
+            semester: '1st Semester',
+            gpa: '3.7',
+          }),
+        ],
+      }),
+      makeScholar({
+        profile_id: 3,
+        first_name: 'Current',
+        last_name: 'Pending',
+        current_year_level: 2,
+        archived_at: null,
+        enrollments: [],
+        disbursements: [],
+        grade_reports: [],
+      }),
+    ]);
+
+    const latestRes = await loadAnalytics({
+      academicYear: '2026-2027',
+      semester: '1st Semester',
+    });
+    expect(latestRes.scholars.map((s) => s.id)).toEqual([2, 3]);
+    expect(latestRes.scholars.map((s) => s.enrollmentStatus)).toEqual([
+      'ENROLLED',
+      'NOT_ENROLLED',
+    ]);
+    expect(latestRes.financialAspect.totalScholarsCount).toBe(2);
+
+    const historicalRes = await loadAnalytics({
+      academicYear: '2020-2021',
+      semester: '1st Semester',
+    });
+    expect(historicalRes.scholars.map((s) => s.id)).toEqual([1]);
+    expect(historicalRes.financialAspect.totalScholarsCount).toBe(1);
+    expect(historicalRes.financialAspect.totalDisbursedAmount).toBe(20000);
+  });
+
+  it('scopes optional Summer terms strictly to scholars with Summer activity', async () => {
+    prisma.termEnrollment.findMany.mockResolvedValue([
+      {
+        academic_year: '2025-2026',
+        semester: '1st Semester',
+        total_assessment: '24000',
+        status: 'APPROVED',
+      },
+      {
+        academic_year: '2025-2026',
+        semester: 'Summer',
+        total_assessment: '6500',
+        status: 'COMPLETED',
+      },
+    ]);
+    prisma.disbursement.findMany.mockResolvedValue([
+      {
+        academic_year: '2025-2026',
+        semester: 'Summer',
+        amount: '6500',
+        status: 'SETTLED',
+      },
+    ]);
+    prisma.scholarProfile.findMany.mockResolvedValue([
+      makeScholar({
+        profile_id: 1,
+        first_name: 'Summer',
+        last_name: 'Enrollee',
+        archived_at: null,
+        enrollments: [
+          makeEnrollment({
+            academic_year: '2025-2026',
+            semester: 'Summer',
+            year_level: 2,
+            total_assessment: '6500',
+            status: 'COMPLETED',
+          }),
+        ],
+        disbursements: [
+          makeDisbursement({
+            academic_year: '2025-2026',
+            semester: 'Summer',
+            amount: '6500',
+            status: 'SETTLED',
+          }),
+        ],
+        grade_reports: [
+          makeGradeReport({
+            academic_year: '2025-2026',
+            semester: 'Summer',
+            gpa: '3.5',
+          }),
+        ],
+      }),
+      makeScholar({
+        profile_id: 2,
+        first_name: 'Regular',
+        last_name: 'Only',
+        archived_at: null,
+        enrollments: [
+          makeEnrollment({
+            academic_year: '2025-2026',
+            semester: '1st Semester',
+            year_level: 2,
+            total_assessment: '24000',
+            status: 'APPROVED',
+          }),
+        ],
+        disbursements: [],
+        grade_reports: [],
+      }),
+    ]);
+
+    const summerRes = await loadAnalytics({
+      academicYear: '2025-2026',
+      semester: 'Summer',
+    });
+
+    expect(summerRes.scholars.map((s) => s.id)).toEqual([1]);
+    expect(summerRes.academicAspect.notEnrolledCount).toBe(0);
+    expect(summerRes.financialAspect.totalDisbursedAmount).toBe(6500);
+  });
+
+  it('uses historical term enrollment year_level instead of current profile year level when available', async () => {
+    prisma.termEnrollment.findMany.mockResolvedValue([
+      {
+        academic_year: '2020-2021',
+        semester: '1st Semester',
+        total_assessment: '16000',
+        status: 'COMPLETED',
+      },
+      {
+        academic_year: '2023-2024',
+        semester: '2nd Semester',
+        total_assessment: '19000',
+        status: 'COMPLETED',
+      },
+    ]);
+    prisma.disbursement.findMany.mockResolvedValue([]);
+    prisma.scholarProfile.findMany.mockResolvedValue([
+      makeScholar({
+        profile_id: 10,
+        current_year_level: 4,
+        archived_at: new Date('2024-04-30T00:00:00.000Z'),
+        enrollments: [
+          makeEnrollment({
+            academic_year: '2020-2021',
+            semester: '1st Semester',
+            year_level: 1,
+            total_assessment: '16000',
+            status: 'COMPLETED',
+          }),
+          makeEnrollment({
+            academic_year: '2023-2024',
+            semester: '2nd Semester',
+            year_level: 4,
+            total_assessment: '19000',
+            status: 'COMPLETED',
+          }),
+        ],
+        disbursements: [],
+        grade_reports: [],
+      }),
+    ]);
+
+    const firstYearRes = await loadAnalytics({
+      academicYear: '2020-2021',
+      semester: '1st Semester',
+    });
+    expect(firstYearRes.scholars[0]).toMatchObject({
+      yearLevel: 1,
+      isGraduating: false,
+    });
+
+    const fourthYearRes = await loadAnalytics({
+      academicYear: '2023-2024',
+      semester: '2nd Semester',
+    });
+    expect(fourthYearRes.scholars[0]).toMatchObject({
+      yearLevel: 4,
+      isGraduating: true,
+    });
+  });
+
   describe('explainChartWithAi', () => {
     const metrics = {
       disbursedPercent: 65,

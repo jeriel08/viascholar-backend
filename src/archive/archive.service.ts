@@ -63,6 +63,8 @@ export class ArchiveService {
     const entity: ArchiveEntity = query.entity ?? 'scholar';
 
     switch (entity) {
+      case 'graduate':
+        return this.listGraduatedScholars(query, page, limit);
       case 'school':
         return this.listArchivedSchools(query, page, limit);
       case 'program':
@@ -95,6 +97,10 @@ export class ArchiveService {
     page: number,
     limit: number,
   ) {
+    if (query.reason === 'GRADUATED') {
+      return this.buildPaginatedResult([], 0, page, limit);
+    }
+
     const where: Prisma.ScholarProfileWhereInput = {
       archived_at: { not: null },
       user: { role: 'SCHOLAR' },
@@ -102,6 +108,15 @@ export class ArchiveService {
 
     if (query.reason) {
       where.archive_reason = query.reason;
+    } else {
+      where.AND = [
+        {
+          OR: [
+            { archive_reason: null },
+            { archive_reason: { not: 'GRADUATED' } },
+          ],
+        },
+      ];
     }
 
     if (query.search) {
@@ -137,6 +152,184 @@ export class ArchiveService {
     ]);
 
     return this.buildPaginatedResult(data, total, page, limit);
+  }
+
+  private computeActiveYearsSpan(
+    enrollments: Array<{ academic_year: string | null }>,
+    disbursements: Array<{ academic_year: string | null }>,
+  ): string | null {
+    const years: number[] = [];
+    for (const item of [...enrollments, ...disbursements]) {
+      if (!item.academic_year) continue;
+      const matches = item.academic_year.match(/\d{4}/g);
+      if (matches) {
+        for (const m of matches) {
+          years.push(Number(m));
+        }
+      }
+    }
+    if (years.length === 0) return null;
+    const minYear = Math.min(...years);
+    const maxYear = Math.max(...years);
+    return minYear === maxYear ? `${minYear}` : `${minYear}-${maxYear}`;
+  }
+
+  private async listGraduatedScholars(
+    query: QueryArchiveDto,
+    page: number,
+    limit: number,
+  ) {
+    const baseWhere: Prisma.ScholarProfileWhereInput = {
+      archived_at: { not: null },
+      archive_reason: 'GRADUATED',
+      user: { role: 'SCHOLAR' },
+    };
+
+    const where: Prisma.ScholarProfileWhereInput = { ...baseWhere };
+
+    const yearStr = query.year?.trim();
+    if (yearStr && /^\d{4}$/.test(yearStr)) {
+      const y = Number(yearStr);
+      where.archived_at = {
+        gte: new Date(`${y}-01-01T00:00:00.000Z`),
+        lt: new Date(`${y + 1}-01-01T00:00:00.000Z`),
+      };
+    }
+
+    if (query.search) {
+      where.OR = [
+        { first_name: { contains: query.search, mode: 'insensitive' } },
+        { last_name: { contains: query.search, mode: 'insensitive' } },
+        { student_number: { contains: query.search, mode: 'insensitive' } },
+        { course_of_study: { contains: query.search, mode: 'insensitive' } },
+        { school_name: { contains: query.search, mode: 'insensitive' } },
+        { scholarship_track: { contains: query.search, mode: 'insensitive' } },
+        { user: { email: { contains: query.search, mode: 'insensitive' } } },
+      ];
+    }
+
+    const [rows, total, allGraduates] = await Promise.all([
+      this.prisma.scholarProfile.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { archived_at: 'desc' },
+        include: {
+          user: {
+            select: {
+              user_id: true,
+              email: true,
+              role: true,
+              is_active: true,
+            },
+          },
+          school: true,
+          school_grading_system: {
+            select: {
+              school_id: true,
+              school_name: true,
+              grading_scale: true,
+            },
+          },
+          disbursements: {
+            where: {
+              status: {
+                in: ['SETTLED', 'CLAIMED', 'RELEASED', 'CHECK_ISSUED'],
+              },
+            },
+            select: { amount: true, academic_year: true },
+          },
+          enrollments: {
+            where: { status: { in: ['APPROVED', 'COMPLETED'] } },
+            select: { academic_year: true, semester: true },
+          },
+          grade_reports: {
+            orderBy: { submitted_at: 'desc' },
+            take: 1,
+            select: { gpa: true, academic_year: true, semester: true },
+          },
+        },
+      }),
+      this.prisma.scholarProfile.count({ where }),
+      this.prisma.scholarProfile.findMany({
+        where: baseWhere,
+        select: {
+          archived_at: true,
+          school_name: true,
+          school: { select: { school_name: true } },
+          disbursements: {
+            where: {
+              status: {
+                in: ['SETTLED', 'CLAIMED', 'RELEASED', 'CHECK_ISSUED'],
+              },
+            },
+            select: { amount: true },
+          },
+        },
+      }),
+    ]);
+
+    const mappedData = rows.map((row) => {
+      const totalDisbursed = Number(
+        row.disbursements
+          .reduce((sum, d) => sum + Number(d.amount || 0), 0)
+          .toFixed(2),
+      );
+      const latestGpa =
+        row.grade_reports[0]?.gpa != null
+          ? Number(row.grade_reports[0].gpa)
+          : null;
+      const graduationYear = row.archived_at
+        ? new Date(row.archived_at).getUTCFullYear()
+        : null;
+      const activeYearsSpan = this.computeActiveYearsSpan(
+        row.enrollments,
+        row.disbursements,
+      );
+
+      return {
+        ...row,
+        graduation_year: graduationYear,
+        total_disbursed: totalDisbursed,
+        terms_completed: row.enrollments.length,
+        latest_gpa: latestGpa,
+        active_years_span: activeYearsSpan,
+      };
+    });
+
+    const yearSet = new Set<string>();
+    const schoolSet = new Set<string>();
+    let totalSupportAmount = 0;
+
+    for (const grad of allGraduates) {
+      if (grad.archived_at) {
+        yearSet.add(String(new Date(grad.archived_at).getUTCFullYear()));
+      }
+      const sName = (grad.school_name || grad.school?.school_name || '').trim();
+      if (sName) {
+        schoolSet.add(sName);
+      }
+      for (const d of grad.disbursements) {
+        totalSupportAmount += Number(d.amount || 0);
+      }
+    }
+
+    const availableYears = Array.from(yearSet).sort((a, b) =>
+      b.localeCompare(a),
+    );
+
+    return {
+      ...this.buildPaginatedResult(mappedData, total, page, limit),
+      availableYears,
+      summary: {
+        totalGraduates: allGraduates.length,
+        totalSupportAmount: Number(totalSupportAmount.toFixed(2)),
+        uniqueSchoolsCount: schoolSet.size,
+        latestGraduationYear: availableYears[0]
+          ? Number(availableYears[0])
+          : null,
+      },
+    };
   }
 
   private async listArchivedApplicants(
@@ -285,7 +478,14 @@ export class ArchiveService {
       outdatedPrograms,
     ] = await Promise.all([
       this.prisma.scholarProfile.count({
-        where: { archived_at: { not: null }, user: { role: 'SCHOLAR' } },
+        where: {
+          archived_at: { not: null },
+          user: { role: 'SCHOLAR' },
+          OR: [
+            { archive_reason: null },
+            { archive_reason: { not: 'GRADUATED' } },
+          ],
+        },
       }),
       this.prisma.scholarProfile.count({
         where: { archived_at: { not: null }, user: { role: 'APPLICANT' } },
@@ -295,7 +495,11 @@ export class ArchiveService {
         where: { archived_at: { not: null } },
       }),
       this.prisma.scholarProfile.count({
-        where: { archive_reason: 'GRADUATED' },
+        where: {
+          archived_at: { not: null },
+          user: { role: 'SCHOLAR' },
+          archive_reason: 'GRADUATED',
+        },
       }),
       this.prisma.scholarProfile.count({
         where: { archive_reason: 'FAILED_SECOND_CHANCE' },
@@ -322,6 +526,7 @@ export class ArchiveService {
     return {
       totals: {
         scholars,
+        graduates: graduated,
         applicants,
         schools,
         programs,

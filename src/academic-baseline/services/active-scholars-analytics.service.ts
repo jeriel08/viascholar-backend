@@ -561,6 +561,7 @@ export class ActiveScholarsAnalyticsService {
         avatar_url: scholar.avatar_url,
         banner_url: scholar.banner_url,
         archived_at: scholar.archived_at,
+        archive_reason: scholar.archive_reason,
         created_at: scholar.user.created_at,
       },
       school_grading_system: scholar.school_grading_system

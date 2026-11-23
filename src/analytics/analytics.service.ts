@@ -601,7 +601,53 @@ export class AnalyticsService {
         let totalDisbursedAmount = 0;
         let totalPendingAmount = 0;
 
+        const latestAcademicYear = availableAcademicYears[0];
+        const isSummerSelected =
+          normalizeSemester(selectedSemester) === 'Summer';
+
         for (const scholar of scholarProfiles) {
+          // Term Enrollments matching filter (strictly excluding drafts, pending prechecks, and rejected rows)
+          const matchingEnrollments = scholar.enrollments.filter(
+            (e) =>
+              this.isOfficialEnrollmentForAnalytics(e) &&
+              isMatchTerm(e.academic_year, e.semester),
+          );
+          const activeEnrollment = matchingEnrollments[0] || null;
+
+          // Disbursements matching filter
+          const matchingDisbursements = scholar.disbursements.filter((d) =>
+            isMatchTerm(d.academic_year, d.semester),
+          );
+
+          // Grade Reports matching filter (strictly excluding application-phase Form 9 / Form 138 and unverified/precheck docs)
+          const validScholarReports = scholar.grade_reports.filter(
+            (g) =>
+              !this.isForm9OrApplicationGrade(g) &&
+              !this.isUnverifiedDocStatus(g.document?.status),
+          );
+          const matchingGrades = validScholarReports.filter((g) =>
+            isMatchTerm(g.academic_year, g.semester),
+          );
+
+          if (selectedAcademicYear !== 'ALL') {
+            const hasTermActivity =
+              matchingEnrollments.length > 0 ||
+              matchingDisbursements.length > 0 ||
+              matchingGrades.length > 0;
+            const isArchivedScholar = Boolean(scholar.archived_at);
+            const isLatestAcademicYear =
+              normalizeAy(selectedAcademicYear) ===
+              normalizeAy(latestAcademicYear);
+
+            const belongsToTermCohort =
+              hasTermActivity ||
+              (!isArchivedScholar && isLatestAcademicYear && !isSummerSelected);
+
+            if (!belongsToTermCohort) {
+              continue;
+            }
+          }
+
           const name =
             `${scholar.first_name || ''} ${scholar.last_name || ''}`.trim() ||
             scholar.user.email.split('@')[0];
@@ -612,22 +658,15 @@ export class AnalyticsService {
             'Unassigned School';
           const course = scholar.course_of_study || 'General Track';
           const track = scholar.scholarship_track || 'Academic Track';
-          const yearLevel = scholar.current_year_level || 1;
+          const enrollmentYearLevel = Number(activeEnrollment?.year_level);
+          const yearLevel =
+            Number.isFinite(enrollmentYearLevel) && enrollmentYearLevel > 0
+              ? enrollmentYearLevel
+              : scholar.current_year_level || 1;
           const isGraduating = yearLevel >= 4;
 
-          // Term Enrollments matching filter (strictly excluding drafts, pending prechecks, and rejected rows)
-          const matchingEnrollments = scholar.enrollments.filter(
-            (e) =>
-              this.isOfficialEnrollmentForAnalytics(e) &&
-              isMatchTerm(e.academic_year, e.semester),
-          );
-          const activeEnrollment = matchingEnrollments[0] || null;
           const hasEnrolled = Boolean(activeEnrollment);
 
-          // Disbursements matching filter
-          const matchingDisbursements = scholar.disbursements.filter((d) =>
-            isMatchTerm(d.academic_year, d.semester),
-          );
           const releasedDisbursement = matchingDisbursements.find((d) =>
             ['RELEASED', 'CLAIMED', 'SETTLED', 'CHECK_ISSUED'].includes(
               d.status,
@@ -675,15 +714,6 @@ export class AnalyticsService {
           totalDisbursedAmount += disbursedAmount;
           totalPendingAmount += scholarPendingAmount;
 
-          // Grade Reports matching filter (strictly excluding application-phase Form 9 / Form 138 and unverified/precheck docs)
-          const validScholarReports = scholar.grade_reports.filter(
-            (g) =>
-              !this.isForm9OrApplicationGrade(g) &&
-              !this.isUnverifiedDocStatus(g.document?.status),
-          );
-          const matchingGrades = validScholarReports.filter((g) =>
-            isMatchTerm(g.academic_year, g.semester),
-          );
           const latestReport = matchingGrades[0] || validScholarReports[0];
           const hasSubmittedGrade = matchingGrades.length > 0;
 

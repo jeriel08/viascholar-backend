@@ -4,6 +4,7 @@ import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export const ARCHIVE_ENTITIES = [
   'scholar',
+  'graduate',
   'applicant',
   'school',
   'program',
@@ -15,7 +16,7 @@ export class QueryArchiveDto {
   @ApiPropertyOptional({
     enum: ARCHIVE_ENTITIES,
     default: 'scholar',
-    description: 'Which archived record type to list',
+    description: 'Which archived or graduated record type to list',
   })
   @IsIn(ARCHIVE_ENTITIES as unknown as string[])
   @IsOptional()
@@ -28,6 +29,14 @@ export class QueryArchiveDto {
   @IsString()
   @IsOptional()
   reason?: string;
+
+  @ApiPropertyOptional({
+    example: '2024',
+    description: 'Filter graduated scholars by 4-digit graduation year',
+  })
+  @IsString()
+  @IsOptional()
+  year?: string;
 
   @ApiPropertyOptional({
     example: 'donna',
