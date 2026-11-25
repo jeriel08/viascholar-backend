@@ -85,6 +85,21 @@ export class UsersController {
     );
   }
 
+  @Get('sidebar-badges')
+  @Roles(
+    Role.ADMIN,
+    Role.COORDINATOR,
+    Role.GRANTOR,
+    Role.SCHOLAR,
+    Role.APPLICANT,
+  )
+  @ApiOperation({
+    summary: 'Get aggregated sidebar badge counts for the authenticated user',
+  })
+  getSidebarBadges(@Request() req, @Query('refresh') refresh?: string) {
+    return this.usersService.getSidebarBadges(req.user, refresh === 'true');
+  }
+
   @Get(':id')
   @Roles(Role.ADMIN, Role.COORDINATOR)
   @ApiOperation({ summary: 'Get user details by ID' })

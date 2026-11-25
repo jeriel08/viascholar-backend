@@ -172,4 +172,69 @@ describe('JwtStrategy', () => {
       banner_url: null,
     });
   });
+
+  it('returns cached user without querying Prisma on subsequent validations', async () => {
+    const user = makeStaffUser();
+    prisma.user.findUnique.mockResolvedValue(user);
+    const store = new Map<string, unknown>();
+    const cacheMock = {
+      get: vi.fn(async (key: string) => store.get(key)),
+      set: vi.fn(async (key: string, val: unknown) => {
+        store.set(key, val);
+      }),
+    };
+
+    const cachedStrategy = new JwtStrategy(
+      prisma as unknown as PrismaService,
+      cacheMock as unknown as import('../../common/cache/app-cache.service.js').AppCacheService,
+    );
+    const payload: JwtPayload = {
+      sub: 2,
+      email: 'coordinator@example.com',
+      role: Role.COORDINATOR,
+    };
+
+    const first = await cachedStrategy.validate(payload);
+    const second = await cachedStrategy.validate(payload);
+
+    expect(prisma.user.findUnique).toHaveBeenCalledTimes(1);
+    expect(cacheMock.set).toHaveBeenCalledWith(
+      'auth:jwt-user:2',
+      first,
+      3 * 60 * 1000,
+    );
+    expect(second).toBe(first);
+  });
+
+  it('coalesces concurrent cache-miss validations for the same user into one DB query', async () => {
+    const user = makeStaffUser();
+    prisma.user.findUnique.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve(user), 10)),
+    );
+    const store = new Map<string, unknown>();
+    const cacheMock = {
+      get: vi.fn(async (key: string) => store.get(key)),
+      set: vi.fn(async (key: string, val: unknown) => {
+        store.set(key, val);
+      }),
+    };
+
+    const cachedStrategy = new JwtStrategy(
+      prisma as unknown as PrismaService,
+      cacheMock as unknown as import('../../common/cache/app-cache.service.js').AppCacheService,
+    );
+    const payload: JwtPayload = {
+      sub: 2,
+      email: 'coordinator@example.com',
+      role: Role.COORDINATOR,
+    };
+
+    const [a, b] = await Promise.all([
+      cachedStrategy.validate(payload),
+      cachedStrategy.validate(payload),
+    ]);
+
+    expect(prisma.user.findUnique).toHaveBeenCalledTimes(1);
+    expect(a).toBe(b);
+  });
 });

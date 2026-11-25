@@ -2,6 +2,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { EventsGateway } from '../events/events.gateway.js';
@@ -12,6 +13,7 @@ import { UpdateCommentDto } from './dto/update-comment.dto.js';
 import { QueryPostsDto } from './dto/query-posts.dto.js';
 import { Prisma, Role } from '../generated/prisma/client.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { AppCacheService } from '../common/cache/app-cache.service.js';
 import {
   USER_SETTINGS_AUDIT_ACTION,
   parseUserSettings,
@@ -32,11 +34,13 @@ export interface ForumTaggedUser {
 export class ForumService {
   private static readonly TAG_MARKER_REGEX =
     /\n?<!--\s*forum-tags:\[([0-9,\s]*)\]\s*-->$/;
+  private static readonly TAGGABLE_STAFF_TTL_MS = 60_000;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly eventsGateway: EventsGateway,
     private readonly notificationsService: NotificationsService,
+    @Optional() private readonly cache?: AppCacheService,
   ) {}
 
   private parseContentAndTagIds(rawContent: string): {
@@ -74,19 +78,17 @@ export class ForumService {
   }
 
   async getTaggableStaff(excludeUserId?: number): Promise<ForumTaggedUser[]> {
-    const staff = await this.prisma.user.findMany({
-      where: {
-        role: { in: [Role.COORDINATOR, Role.GRANTOR] },
-        is_active: true,
-        ...(excludeUserId ? { user_id: { not: excludeUserId } } : {}),
-      },
-      include: { employee: true },
-      orderBy: [{ role: 'asc' }, { email: 'asc' }],
-    });
+    const loadAllStaff = async (): Promise<ForumTaggedUser[]> => {
+      const staff = await this.prisma.user.findMany({
+        where: {
+          role: { in: [Role.COORDINATOR, Role.GRANTOR] },
+          is_active: true,
+        },
+        include: { employee: true },
+        orderBy: [{ role: 'asc' }, { email: 'asc' }],
+      });
 
-    return staff
-      .filter((user) => user.user_id !== excludeUserId)
-      .map((user) => {
+      return staff.map((user) => {
         const firstName = user.employee?.first_name?.trim() || '';
         const lastName = user.employee?.last_name?.trim() || '';
         const fullName =
@@ -105,6 +107,19 @@ export class ForumService {
           avatar_url: user.employee?.avatar_url || null,
         };
       });
+    };
+
+    const allStaff = this.cache
+      ? await this.cache.wrap(
+          'forum:taggable-staff',
+          loadAllStaff,
+          ForumService.TAGGABLE_STAFF_TTL_MS,
+        )
+      : await loadAllStaff();
+
+    return excludeUserId
+      ? allStaff.filter((user) => user.user_id !== excludeUserId)
+      : allStaff;
   }
 
   private resolveTaggedUsers(
@@ -447,22 +462,21 @@ export class ForumService {
       throw new NotFoundException(`Forum post ID ${postId} not found.`);
     }
 
-    // Increment view count
-    const [updatedPost, staffList] = await Promise.all([
+    // Increment view count and resolve staff + privacy flags in parallel
+    const [updatedPost, staffList, publicProfileMap] = await Promise.all([
       this.prisma.forumPost.update({
         where: { post_id: postId },
         data: { views_count: { increment: 1 } },
         select: { views_count: true },
       }),
       this.getTaggableStaff(),
+      this.resolvePublicProfileFlags([
+        post.author,
+        ...post.comments.map((c) => c.author),
+      ]),
     ]);
 
-    const publicProfileMap = await this.resolvePublicProfileFlags([
-      post.author,
-      ...post.comments.map((c) => c.author),
-    ]);
     const isPublicProfile = publicProfileMap.get(post.author.user_id) ?? true;
-
     let activityCounts = { postsCount: 0, commentsCount: 0 };
     if (
       isPublicProfile &&

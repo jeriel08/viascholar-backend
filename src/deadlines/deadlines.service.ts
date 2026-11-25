@@ -4,8 +4,10 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service.js';
+import { AppCacheService } from '../common/cache/app-cache.service.js';
 import { ChatMessagesService } from '../chat/services/chat-messages.service.js';
 import { ChatService } from '../chat/chat.service.js';
 import {
@@ -67,7 +69,12 @@ export class DeadlinesService {
     private readonly notificationsService: NotificationsService,
     private readonly auditService: AuditService,
     private readonly eventsGateway: EventsGateway,
+    @Optional() private readonly cacheService?: AppCacheService,
   ) {}
+
+  private async invalidateDeadlineCaches(): Promise<void> {
+    await this.cacheService?.delPattern('deadlines:');
+  }
 
   private buildAvailableAcademicYears(
     activeTerm: {
@@ -590,105 +597,118 @@ export class DeadlinesService {
     only_active?: boolean;
     include_summary?: boolean;
   }) {
-    const normAy = query.academic_year
-      ? normalizeAcademicYear(query.academic_year) || query.academic_year.trim()
-      : undefined;
-    const normSem = query.semester
-      ? normalizeSemester(query.semester)
-      : undefined;
+    const compute = async () => {
+      const normAy = query.academic_year
+        ? normalizeAcademicYear(query.academic_year) ||
+          query.academic_year.trim()
+        : undefined;
+      const normSem = query.semester
+        ? normalizeSemester(query.semester)
+        : undefined;
 
-    const rows = await this.prisma.submissionDeadline.findMany({
-      where: {
-        ...(normAy ? { academic_year: normAy } : {}),
-        ...(normSem ? { semester: normSem } : {}),
-        ...(query.requirement_type
-          ? { requirement_type: query.requirement_type }
-          : {}),
-        ...(query.only_active ? { is_active: true } : {}),
-      },
-      include: {
-        school: {
-          select: { school_id: true, school_name: true, school_code: true },
+      const rows = await this.prisma.submissionDeadline.findMany({
+        where: {
+          ...(normAy ? { academic_year: normAy } : {}),
+          ...(normSem ? { semester: normSem } : {}),
+          ...(query.requirement_type
+            ? { requirement_type: query.requirement_type }
+            : {}),
+          ...(query.only_active ? { is_active: true } : {}),
         },
-        created_by: {
-          select: {
-            user_id: true,
-            email: true,
-            employee: { select: { first_name: true, last_name: true } },
-          },
-        },
-      },
-      orderBy: [
-        { is_active: 'desc' },
-        { academic_year: 'desc' },
-        { semester: 'asc' },
-        { due_date: 'asc' },
-      ],
-    });
-
-    if (!query.include_summary || rows.length === 0) {
-      return rows.map((r) => this.formatDeadline(r));
-    }
-
-    const deadlineIds = rows.map((r) => r.deadline_id);
-    const [activeSiblingDeadlines, scholars] = await Promise.all([
-      this.prisma.submissionDeadline.findMany({
-        where: { is_active: true },
         include: {
           school: {
             select: { school_id: true, school_name: true, school_code: true },
           },
+          created_by: {
+            select: {
+              user_id: true,
+              email: true,
+              employee: { select: { first_name: true, last_name: true } },
+            },
+          },
         },
-      }),
-      this.fetchComplianceScholars(deadlineIds),
-    ]);
+        orderBy: [
+          { is_active: 'desc' },
+          { academic_year: 'desc' },
+          { semester: 'asc' },
+          { due_date: 'asc' },
+        ],
+      });
 
-    const siblingsByBucket = new Map<string, any[]>();
-    for (const d of activeSiblingDeadlines) {
-      const key = `${normalizeAcademicYear(d.academic_year) || d.academic_year}||${normalizeSemester(d.semester) || d.semester}||${d.requirement_type}`;
-      const list = siblingsByBucket.get(key) ?? [];
-      list.push(d);
-      siblingsByBucket.set(key, list);
-    }
-
-    const now = new Date();
-    return rows.map((row) => {
-      const bucketKey = `${normalizeAcademicYear(row.academic_year) || row.academic_year}||${normalizeSemester(row.semester) || row.semester}||${row.requirement_type}`;
-      const siblings = siblingsByBucket.get(bucketKey) ?? [];
-      const siblingList =
-        siblings.length > 0 ? siblings : row.is_active ? [row] : [];
-      const covered = scholars.filter((s) =>
-        this.isScholarCoveredByDeadline(s, row, siblingList),
-      );
-
-      const summary = this.createEmptyDetailSummary(covered.length);
-      for (const scholar of covered) {
-        const exemption =
-          (scholar as any).deadline_exemptions?.find(
-            (e: any) => e.deadline_id === row.deadline_id,
-          ) ?? null;
-        const followUps =
-          (scholar as any).deadline_follow_ups?.filter(
-            (f: any) => f.deadline_id === row.deadline_id,
-          ) ?? [];
-        const evaluation = evaluateScholarRequirementStatus({
-          deadline: row,
-          scholar,
-          exemption,
-          now,
-        });
-        this.accumulateComplianceSummary(
-          summary,
-          evaluation,
-          followUps.length > 0,
-        );
+      if (!query.include_summary || rows.length === 0) {
+        return rows.map((r) => this.formatDeadline(r));
       }
 
-      return {
-        ...this.formatDeadline(row),
-        summary,
-      };
-    });
+      const deadlineIds = rows.map((r) => r.deadline_id);
+      const [activeSiblingDeadlines, scholars] = await Promise.all([
+        this.prisma.submissionDeadline.findMany({
+          where: { is_active: true },
+          include: {
+            school: {
+              select: { school_id: true, school_name: true, school_code: true },
+            },
+          },
+        }),
+        this.fetchComplianceScholars(deadlineIds),
+      ]);
+
+      const siblingsByBucket = new Map<string, any[]>();
+      for (const d of activeSiblingDeadlines) {
+        const key = `${normalizeAcademicYear(d.academic_year) || d.academic_year}||${normalizeSemester(d.semester) || d.semester}||${d.requirement_type}`;
+        const list = siblingsByBucket.get(key) ?? [];
+        list.push(d);
+        siblingsByBucket.set(key, list);
+      }
+
+      const now = new Date();
+      return rows.map((row) => {
+        const bucketKey = `${normalizeAcademicYear(row.academic_year) || row.academic_year}||${normalizeSemester(row.semester) || row.semester}||${row.requirement_type}`;
+        const siblings = siblingsByBucket.get(bucketKey) ?? [];
+        const siblingList =
+          siblings.length > 0 ? siblings : row.is_active ? [row] : [];
+        const covered = scholars.filter((s) =>
+          this.isScholarCoveredByDeadline(s, row, siblingList),
+        );
+
+        const summary = this.createEmptyDetailSummary(covered.length);
+        for (const scholar of covered) {
+          const exemption =
+            (scholar as any).deadline_exemptions?.find(
+              (e: any) => e.deadline_id === row.deadline_id,
+            ) ?? null;
+          const followUps =
+            (scholar as any).deadline_follow_ups?.filter(
+              (f: any) => f.deadline_id === row.deadline_id,
+            ) ?? [];
+          const evaluation = evaluateScholarRequirementStatus({
+            deadline: row,
+            scholar,
+            exemption,
+            now,
+          });
+          this.accumulateComplianceSummary(
+            summary,
+            evaluation,
+            followUps.length > 0,
+          );
+        }
+
+        return {
+          ...this.formatDeadline(row),
+          summary,
+        };
+      });
+    };
+
+    if (query.include_summary && this.cacheService) {
+      return this.cacheService.wrap(
+        `deadlines:list:${JSON.stringify(query)}`,
+        compute,
+        30 * 1000,
+      );
+    }
+
+    return compute();
   }
 
   async createDeadline(userId: number, dto: CreateDeadlineDto) {
@@ -780,6 +800,7 @@ export class DeadlinesService {
       await this.broadcastNewDeadlineNotification(created);
     }
 
+    await this.invalidateDeadlineCaches();
     this.eventsGateway.emitToAll('deadline:updated', {
       action: 'CREATED',
       deadline: formatted,
@@ -1024,6 +1045,7 @@ export class DeadlinesService {
       `Updated ${updated.requirement_type} deadline ID ${deadlineId} (Due: ${updated.due_date.toISOString().slice(0, 10)}, Active: ${updated.is_active})`,
     );
 
+    await this.invalidateDeadlineCaches();
     this.eventsGateway.emitToAll('deadline:updated', {
       action: 'UPDATED',
       deadline: formatted,
@@ -1050,6 +1072,7 @@ export class DeadlinesService {
       `Deleted ${existing.requirement_type} deadline ID ${deadlineId} (${existing.academic_year} ${existing.semester})`,
     );
 
+    await this.invalidateDeadlineCaches();
     this.eventsGateway.emitToAll('deadline:updated', {
       action: 'DELETED',
       deadlineId,
@@ -1069,128 +1092,265 @@ export class DeadlinesService {
     school_id?: number;
     search?: string;
   }) {
-    const activeTerm = await this.settingsService.getAcademicTermStatus();
-    const academicYear =
-      (query.academic_year && normalizeAcademicYear(query.academic_year)) ||
-      activeTerm.effective_academic_year;
-    const semester =
-      (query.semester && normalizeSemester(query.semester)) ||
-      activeTerm.effective_semester;
+    const compute = async () => {
+      const activeTerm = await this.settingsService.getAcademicTermStatus();
+      const academicYear =
+        (query.academic_year && normalizeAcademicYear(query.academic_year)) ||
+        activeTerm.effective_academic_year;
+      const semester =
+        (query.semester && normalizeSemester(query.semester)) ||
+        activeTerm.effective_semester;
 
-    const deadlines = await this.prisma.submissionDeadline.findMany({
-      where: {
-        academic_year: academicYear,
-        semester,
-        is_active: true,
-        ...(query.requirement_type && query.requirement_type !== 'ALL'
-          ? { requirement_type: query.requirement_type }
-          : {}),
-      },
-      include: {
-        school: {
-          select: { school_id: true, school_name: true, school_code: true },
+      const deadlines = await this.prisma.submissionDeadline.findMany({
+        where: {
+          academic_year: academicYear,
+          semester,
+          is_active: true,
+          ...(query.requirement_type && query.requirement_type !== 'ALL'
+            ? { requirement_type: query.requirement_type }
+            : {}),
         },
-        created_by: {
-          select: {
-            user_id: true,
-            email: true,
-            employee: { select: { first_name: true, last_name: true } },
+        include: {
+          school: {
+            select: { school_id: true, school_name: true, school_code: true },
+          },
+          created_by: {
+            select: {
+              user_id: true,
+              email: true,
+              employee: { select: { first_name: true, last_name: true } },
+            },
           },
         },
-      },
-      orderBy: [{ requirement_type: 'asc' }, { due_date: 'asc' }],
-    });
+        orderBy: [{ requirement_type: 'asc' }, { due_date: 'asc' }],
+      });
 
-    const formattedDeadlines = deadlines.map((d) => this.formatDeadline(d));
-    const deadlineIds = deadlines.map((d) => d.deadline_id);
+      const formattedDeadlines = deadlines.map((d) => this.formatDeadline(d));
+      const deadlineIds = deadlines.map((d) => d.deadline_id);
 
-    const [scholars, schoolIdByName, allDeadlineTerms] = await Promise.all([
-      this.fetchComplianceScholars(deadlineIds),
-      this.buildSchoolIdByNameMap(),
-      typeof (this.prisma as any).submissionDeadline?.findMany === 'function'
-        ? this.prisma.submissionDeadline.findMany({
-            select: { academic_year: true },
-            distinct: ['academic_year'],
-          })
-        : Promise.resolve([]),
-    ]);
+      const [scholars, schoolIdByName, allDeadlineTerms] = await Promise.all([
+        this.fetchComplianceScholars(deadlineIds),
+        this.buildSchoolIdByNameMap(),
+        typeof (this.prisma as any).submissionDeadline?.findMany === 'function'
+          ? this.prisma.submissionDeadline.findMany({
+              select: { academic_year: true },
+              distinct: ['academic_year'],
+            })
+          : Promise.resolve([]),
+      ]);
 
-    const availableAcademicYears = this.buildAvailableAcademicYears(
-      activeTerm,
-      [
-        academicYear,
-        ...scholars.flatMap((s) =>
-          (s.enrollments || []).map((e) => e.academic_year),
-        ),
-        ...(Array.isArray(allDeadlineTerms)
-          ? allDeadlineTerms.map((d: any) => d?.academic_year)
-          : []),
-      ],
-    );
+      const availableAcademicYears = this.buildAvailableAcademicYears(
+        activeTerm,
+        [
+          academicYear,
+          ...scholars.flatMap((s) =>
+            (s.enrollments || []).map((e) => e.academic_year),
+          ),
+          ...(Array.isArray(allDeadlineTerms)
+            ? allDeadlineTerms.map((d: any) => d?.academic_year)
+            : []),
+        ],
+      );
 
-    const requirementTypesToCheck =
-      query.requirement_type && query.requirement_type !== 'ALL'
-        ? ([query.requirement_type] as DeadlineRequirementType[])
-        : [...DEADLINE_REQUIREMENT_TYPES];
+      const requirementTypesToCheck =
+        query.requirement_type && query.requirement_type !== 'ALL'
+          ? ([query.requirement_type] as DeadlineRequirementType[])
+          : [...DEADLINE_REQUIREMENT_TYPES];
 
-    const now = new Date();
-    const allItems: Array<Record<string, any>> = [];
-    const summary = {
-      total_scholars: scholars.length,
-      total_entries: 0,
-      submitted_count: 0,
-      submitted_late_count: 0,
-      currently_enrolled_count: 0,
-      on_hold_count: 0,
-      pending_audit_count: 0,
-      verified_ready_count: 0,
-      endorsed_count: 0,
-      verified_total_amount: 0,
-      missing_count: 0,
-      overdue_count: 0,
-      needs_action_count: 0,
-      stalled_revisions_count: 0,
-      upcoming_count: 0,
-      exempt_count: 0,
-      not_applicable_count: 0,
-      contacted_count: 0,
+      const now = new Date();
+      const allItems: Array<Record<string, any>> = [];
+      const summary = {
+        total_scholars: scholars.length,
+        total_entries: 0,
+        submitted_count: 0,
+        submitted_late_count: 0,
+        currently_enrolled_count: 0,
+        on_hold_count: 0,
+        pending_audit_count: 0,
+        verified_ready_count: 0,
+        endorsed_count: 0,
+        verified_total_amount: 0,
+        missing_count: 0,
+        overdue_count: 0,
+        needs_action_count: 0,
+        stalled_revisions_count: 0,
+        upcoming_count: 0,
+        exempt_count: 0,
+        not_applicable_count: 0,
+        contacted_count: 0,
+      };
+
+      for (const scholar of scholars) {
+        for (const reqType of requirementTypesToCheck) {
+          const effectiveDeadline = resolveEffectiveDeadline(
+            deadlines,
+            reqType,
+            scholar,
+          );
+          if (!effectiveDeadline) continue;
+
+          const exemption =
+            (scholar as any).deadline_exemptions?.find(
+              (e: any) => e.deadline_id === effectiveDeadline.deadline_id,
+            ) ?? null;
+          const followUps =
+            (scholar as any).deadline_follow_ups?.filter(
+              (f: any) => f.deadline_id === effectiveDeadline.deadline_id,
+            ) ?? [];
+
+          const evaluation = evaluateScholarRequirementStatus({
+            deadline: effectiveDeadline,
+            scholar,
+            exemption,
+            now,
+          });
+
+          summary.total_entries++;
+          this.accumulateComplianceSummary(
+            summary,
+            evaluation,
+            followUps.length > 0,
+          );
+
+          allItems.push(
+            this.buildComplianceItemRow(
+              effectiveDeadline,
+              scholar,
+              evaluation,
+              exemption,
+              followUps,
+              schoolIdByName,
+            ),
+          );
+        }
+      }
+
+      const filteredItems = this.filterAndSortComplianceItems(allItems, query);
+
+      return {
+        academic_year: academicYear,
+        semester,
+        available_academic_years: availableAcademicYears,
+        active_term: activeTerm,
+        deadlines: formattedDeadlines,
+        summary,
+        items: filteredItems,
+      };
     };
 
-    for (const scholar of scholars) {
-      for (const reqType of requirementTypesToCheck) {
-        const effectiveDeadline = resolveEffectiveDeadline(
-          deadlines,
-          reqType,
-          scholar,
-        );
-        if (!effectiveDeadline) continue;
+    if (this.cacheService) {
+      return this.cacheService.wrap(
+        `deadlines:compliance:${JSON.stringify(query)}`,
+        compute,
+        30 * 1000,
+      );
+    }
 
+    return compute();
+  }
+
+  async getDeadlineDetailCompliance(
+    deadlineId: number,
+    query: { status?: string; school_id?: number; search?: string },
+  ) {
+    const compute = async () => {
+      const target = await this.prisma.submissionDeadline.findUnique({
+        where: { deadline_id: deadlineId },
+        include: {
+          school: {
+            select: { school_id: true, school_name: true, school_code: true },
+          },
+          created_by: {
+            select: {
+              user_id: true,
+              email: true,
+              employee: { select: { first_name: true, last_name: true } },
+            },
+          },
+        },
+      });
+      if (!target) {
+        throw new NotFoundException(`Deadline ID ${deadlineId} not found.`);
+      }
+
+      const [siblingActiveDeadlines, scholars, schoolIdByName] =
+        await Promise.all([
+          this.prisma.submissionDeadline.findMany({
+            where: {
+              academic_year: target.academic_year,
+              semester: target.semester,
+              requirement_type: target.requirement_type,
+              is_active: true,
+            },
+            include: {
+              school: {
+                select: {
+                  school_id: true,
+                  school_name: true,
+                  school_code: true,
+                },
+              },
+            },
+          }),
+          this.fetchComplianceScholars([deadlineId]),
+          this.buildSchoolIdByNameMap(),
+        ]);
+
+      const effectiveSiblings =
+        siblingActiveDeadlines.length > 0
+          ? siblingActiveDeadlines
+          : target.is_active
+            ? [target]
+            : [];
+
+      const overriddenSchools =
+        target.school_id === null
+          ? effectiveSiblings
+              .filter(
+                (d) =>
+                  d.school_id !== null &&
+                  d.school_id !== undefined &&
+                  d.deadline_id !== target.deadline_id,
+              )
+              .map((d) => ({
+                deadline_id: d.deadline_id,
+                school_id: d.school_id as number,
+                school_name: d.school?.school_name || `School #${d.school_id}`,
+              }))
+          : [];
+
+      const coveredScholars = scholars.filter((scholar) =>
+        this.isScholarCoveredByDeadline(scholar, target, effectiveSiblings),
+      );
+
+      const now = new Date();
+      const summary = this.createEmptyDetailSummary(coveredScholars.length);
+      const allItems: Array<Record<string, any>> = [];
+
+      for (const scholar of coveredScholars) {
         const exemption =
           (scholar as any).deadline_exemptions?.find(
-            (e: any) => e.deadline_id === effectiveDeadline.deadline_id,
+            (e: any) => e.deadline_id === target.deadline_id,
           ) ?? null;
         const followUps =
           (scholar as any).deadline_follow_ups?.filter(
-            (f: any) => f.deadline_id === effectiveDeadline.deadline_id,
+            (f: any) => f.deadline_id === target.deadline_id,
           ) ?? [];
-
         const evaluation = evaluateScholarRequirementStatus({
-          deadline: effectiveDeadline,
+          deadline: target,
           scholar,
           exemption,
           now,
         });
 
-        summary.total_entries++;
         this.accumulateComplianceSummary(
           summary,
           evaluation,
           followUps.length > 0,
         );
-
         allItems.push(
           this.buildComplianceItemRow(
-            effectiveDeadline,
+            target,
             scholar,
             evaluation,
             exemption,
@@ -1199,135 +1359,26 @@ export class DeadlinesService {
           ),
         );
       }
-    }
 
-    const filteredItems = this.filterAndSortComplianceItems(allItems, query);
+      const filteredItems = this.filterAndSortComplianceItems(allItems, query);
 
-    return {
-      academic_year: academicYear,
-      semester,
-      available_academic_years: availableAcademicYears,
-      active_term: activeTerm,
-      deadlines: formattedDeadlines,
-      summary,
-      items: filteredItems,
-    };
-  }
-
-  async getDeadlineDetailCompliance(
-    deadlineId: number,
-    query: { status?: string; school_id?: number; search?: string },
-  ) {
-    const target = await this.prisma.submissionDeadline.findUnique({
-      where: { deadline_id: deadlineId },
-      include: {
-        school: {
-          select: { school_id: true, school_name: true, school_code: true },
-        },
-        created_by: {
-          select: {
-            user_id: true,
-            email: true,
-            employee: { select: { first_name: true, last_name: true } },
-          },
-        },
-      },
-    });
-    if (!target) {
-      throw new NotFoundException(`Deadline ID ${deadlineId} not found.`);
-    }
-
-    const [siblingActiveDeadlines, scholars, schoolIdByName] =
-      await Promise.all([
-        this.prisma.submissionDeadline.findMany({
-          where: {
-            academic_year: target.academic_year,
-            semester: target.semester,
-            requirement_type: target.requirement_type,
-            is_active: true,
-          },
-          include: {
-            school: {
-              select: { school_id: true, school_name: true, school_code: true },
-            },
-          },
-        }),
-        this.fetchComplianceScholars([deadlineId]),
-        this.buildSchoolIdByNameMap(),
-      ]);
-
-    const effectiveSiblings =
-      siblingActiveDeadlines.length > 0
-        ? siblingActiveDeadlines
-        : target.is_active
-          ? [target]
-          : [];
-
-    const overriddenSchools =
-      target.school_id === null
-        ? effectiveSiblings
-            .filter(
-              (d) =>
-                d.school_id !== null &&
-                d.school_id !== undefined &&
-                d.deadline_id !== target.deadline_id,
-            )
-            .map((d) => ({
-              deadline_id: d.deadline_id,
-              school_id: d.school_id as number,
-              school_name: d.school?.school_name || `School #${d.school_id}`,
-            }))
-        : [];
-
-    const coveredScholars = scholars.filter((scholar) =>
-      this.isScholarCoveredByDeadline(scholar, target, effectiveSiblings),
-    );
-
-    const now = new Date();
-    const summary = this.createEmptyDetailSummary(coveredScholars.length);
-    const allItems: Array<Record<string, any>> = [];
-
-    for (const scholar of coveredScholars) {
-      const exemption =
-        (scholar as any).deadline_exemptions?.find(
-          (e: any) => e.deadline_id === target.deadline_id,
-        ) ?? null;
-      const followUps =
-        (scholar as any).deadline_follow_ups?.filter(
-          (f: any) => f.deadline_id === target.deadline_id,
-        ) ?? [];
-      const evaluation = evaluateScholarRequirementStatus({
-        deadline: target,
-        scholar,
-        exemption,
-        now,
-      });
-
-      this.accumulateComplianceSummary(
+      return {
+        deadline: this.formatDeadline(target),
+        overridden_schools: overriddenSchools,
         summary,
-        evaluation,
-        followUps.length > 0,
-      );
-      allItems.push(
-        this.buildComplianceItemRow(
-          target,
-          scholar,
-          evaluation,
-          exemption,
-          followUps,
-          schoolIdByName,
-        ),
+        items: filteredItems,
+      };
+    };
+
+    if (this.cacheService) {
+      return this.cacheService.wrap(
+        `deadlines:detail:${deadlineId}:${JSON.stringify(query)}`,
+        compute,
+        30 * 1000,
       );
     }
 
-    const filteredItems = this.filterAndSortComplianceItems(allItems, query);
-
-    return {
-      deadline: this.formatDeadline(target),
-      overridden_schools: overriddenSchools,
-      summary,
-      items: filteredItems,
-    };
+    return compute();
   }
 
   async sendFollowUp(staffUserId: number, dto: SendDeadlineFollowUpDto) {
@@ -1484,6 +1535,7 @@ export class DeadlinesService {
       `Sent follow-up for ${deadline.requirement_type} deadline #${deadline.deadline_id} (${deadline.academic_year} ${deadline.semester}) to ${scholars.length} scholar(s).`,
     );
 
+    await this.invalidateDeadlineCaches();
     this.eventsGateway.emitToStaff('deadline:followup_sent', {
       deadlineId: deadline.deadline_id,
       count: results.length,
@@ -1541,6 +1593,7 @@ export class DeadlinesService {
       `Marked ${scholar.first_name} ${scholar.last_name} exempt for deadline #${dto.deadline_id}${dto.reason ? ` (${dto.reason.trim()})` : ''}.`,
     );
 
+    await this.invalidateDeadlineCaches();
     this.eventsGateway.emitToAll('deadline:updated', {
       action: 'EXEMPTED',
       deadlineId: dto.deadline_id,
@@ -1568,6 +1621,7 @@ export class DeadlinesService {
       `Removed exemption for scholar profile #${scholarProfileId} on deadline #${deadlineId}.`,
     );
 
+    await this.invalidateDeadlineCaches();
     this.eventsGateway.emitToAll('deadline:updated', {
       action: 'EXEMPTION_REMOVED',
       deadlineId,
@@ -1578,250 +1632,264 @@ export class DeadlinesService {
   }
 
   async getMyDeadlines(userId: number) {
-    const scholar = await this.prisma.scholarProfile.findUnique({
-      where: { user_id: userId },
-      include: {
-        user: { select: { email: true } },
-        school: {
-          select: { school_id: true, school_name: true },
-        },
-        school_grading_system: {
-          select: { school_id: true, school_name: true },
-        },
-        prospectus: {
+    const compute = async () => {
+      const [scholar, activeTerm] = await Promise.all([
+        this.prisma.scholarProfile.findUnique({
+          where: { user_id: userId },
           include: {
-            subjects: {
-              select: { year_level: true, semester: true, status: true },
+            user: { select: { email: true } },
+            school: {
+              select: { school_id: true, school_name: true },
+            },
+            school_grading_system: {
+              select: { school_id: true, school_name: true },
+            },
+            prospectus: {
+              include: {
+                subjects: {
+                  select: { year_level: true, semester: true, status: true },
+                },
+              },
+            },
+            enrollments: {
+              select: {
+                enrollment_id: true,
+                academic_year: true,
+                semester: true,
+                status: true,
+                cor_document_id: true,
+                soa_document_id: true,
+                total_assessment: true,
+                total_units: true,
+                audit_flags: true,
+                coordinator_notes: true,
+                reviewed_at: true,
+                created_at: true,
+                updated_at: true,
+                cor_document: { select: { uploaded_at: true } },
+                soa_document: { select: { uploaded_at: true } },
+              },
+            },
+            grade_reports: {
+              select: {
+                report_id: true,
+                document_id: true,
+                academic_year: true,
+                semester: true,
+                status: true,
+                appeal_status: true,
+                evaluation_flag: true,
+                gpa: true,
+                reviewed_at: true,
+                submitted_at: true,
+                document: { select: { uploaded_at: true } },
+              },
+              orderBy: { submitted_at: 'desc' },
+            },
+            documents: {
+              where: { document_type: 'CCG' },
+              select: {
+                document_id: true,
+                document_type: true,
+                status: true,
+                rejection_reason: true,
+                confirmed_data: true,
+                extracted_data: true,
+                uploaded_at: true,
+                verified_at: true,
+              },
+              orderBy: { uploaded_at: 'desc' },
+            },
+            academic_change_requests: {
+              where: { status: { in: ['PENDING_GRANTOR', 'APPROVED'] } },
+              select: {
+                request_id: true,
+                change_type: true,
+                status: true,
+                requested_course_of_study: true,
+                requested_school_name: true,
+                created_at: true,
+                reviewed_at: true,
+              },
+              orderBy: { created_at: 'desc' },
             },
           },
-        },
-        enrollments: {
-          select: {
-            enrollment_id: true,
-            academic_year: true,
-            semester: true,
-            status: true,
-            cor_document_id: true,
-            soa_document_id: true,
-            total_assessment: true,
-            total_units: true,
-            audit_flags: true,
-            coordinator_notes: true,
-            reviewed_at: true,
-            created_at: true,
-            updated_at: true,
-            cor_document: { select: { uploaded_at: true } },
-            soa_document: { select: { uploaded_at: true } },
-          },
-        },
-        grade_reports: {
-          select: {
-            report_id: true,
-            document_id: true,
-            academic_year: true,
-            semester: true,
-            status: true,
-            appeal_status: true,
-            evaluation_flag: true,
-            gpa: true,
-            reviewed_at: true,
-            submitted_at: true,
-            document: { select: { uploaded_at: true } },
-          },
-          orderBy: { submitted_at: 'desc' },
-        },
-        documents: {
-          where: { document_type: 'CCG' },
-          select: {
-            document_id: true,
-            document_type: true,
-            status: true,
-            rejection_reason: true,
-            confirmed_data: true,
-            extracted_data: true,
-            uploaded_at: true,
-            verified_at: true,
-          },
-          orderBy: { uploaded_at: 'desc' },
-        },
-        academic_change_requests: {
-          where: { status: { in: ['PENDING_GRANTOR', 'APPROVED'] } },
-          select: {
-            request_id: true,
-            change_type: true,
-            status: true,
-            requested_course_of_study: true,
-            requested_school_name: true,
-            created_at: true,
-            reviewed_at: true,
-          },
-          orderBy: { created_at: 'desc' },
-        },
-      },
-    });
+        }),
+        this.settingsService.getAcademicTermStatus(),
+      ]);
 
-    if (!scholar) {
-      throw new NotFoundException('Scholar profile not found.');
-    }
-
-    const activeTerm = await this.settingsService.getAcademicTermStatus();
-    const activeAy =
-      normalizeAcademicYear(activeTerm.effective_academic_year) ||
-      activeTerm.effective_academic_year;
-    const activeSem =
-      normalizeSemester(activeTerm.effective_semester) ||
-      activeTerm.effective_semester;
-
-    const termPairs: Array<{
-      academic_year: string;
-      semester: string;
-      isSystemActiveTerm: boolean;
-    }> = [
-      {
-        academic_year: activeAy,
-        semester: activeSem,
-        isSystemActiveTerm: true,
-      },
-    ];
-
-    for (const e of scholar.enrollments || []) {
-      if (!['APPROVED', 'VERIFIED', 'PENDING_REVIEW'].includes(e.status)) {
-        continue;
+      if (!scholar) {
+        throw new NotFoundException('Scholar profile not found.');
       }
-      const eAy = normalizeAcademicYear(e.academic_year) || e.academic_year;
-      const eSem = normalizeSemester(e.semester) || e.semester;
-      if (!eAy || !eSem) continue;
 
-      const hasSubmittedGrade = (scholar.grade_reports || []).some(
-        (r) =>
-          normalizeSemester(r.semester) === eSem &&
-          academicYearsMatchForTerm(r.academic_year, eAy, eSem) &&
-          r.status !== 'REJECTED',
-      );
-      if (hasSubmittedGrade) continue;
+      const activeAy =
+        normalizeAcademicYear(activeTerm.effective_academic_year) ||
+        activeTerm.effective_academic_year;
+      const activeSem =
+        normalizeSemester(activeTerm.effective_semester) ||
+        activeTerm.effective_semester;
 
-      const alreadyIncluded = termPairs.some(
-        (tp) =>
-          tp.semester === eSem &&
-          academicYearsMatchForTerm(tp.academic_year, eAy, eSem),
-      );
-      if (!alreadyIncluded) {
-        termPairs.push({
-          academic_year: eAy,
-          semester: eSem,
-          isSystemActiveTerm: false,
-        });
-      }
-    }
-
-    const deadlines = await this.prisma.submissionDeadline.findMany({
-      where: {
-        is_active: true,
-        OR: termPairs.map((tp) => ({
-          academic_year: tp.academic_year,
-          semester: tp.semester,
-        })),
-      },
-      include: {
-        school: {
-          select: { school_id: true, school_name: true, school_code: true },
+      const termPairs: Array<{
+        academic_year: string;
+        semester: string;
+        isSystemActiveTerm: boolean;
+      }> = [
+        {
+          academic_year: activeAy,
+          semester: activeSem,
+          isSystemActiveTerm: true,
         },
-      },
-      orderBy: { due_date: 'asc' },
-    });
+      ];
 
-    const deadlineIds = deadlines.map((d) => d.deadline_id);
-    const exemptions =
-      deadlineIds.length > 0
-        ? await this.prisma.deadlineExemption.findMany({
-            where: {
-              scholar_profile_id: scholar.profile_id,
-              deadline_id: { in: deadlineIds },
-            },
-          })
-        : [];
+      for (const e of scholar.enrollments || []) {
+        if (!['APPROVED', 'VERIFIED', 'PENDING_REVIEW'].includes(e.status)) {
+          continue;
+        }
+        const eAy = normalizeAcademicYear(e.academic_year) || e.academic_year;
+        const eSem = normalizeSemester(e.semester) || e.semester;
+        if (!eAy || !eSem) continue;
 
-    const now = new Date();
-    const items: Array<Record<string, any>> = [];
-    const seenDeadlineIds = new Set<number>();
-
-    for (const tp of termPairs) {
-      const scopedDeadlines = deadlines.filter(
-        (d) =>
-          normalizeSemester(d.semester) === tp.semester &&
-          academicYearsMatchForTerm(
-            d.academic_year,
-            tp.academic_year,
-            tp.semester,
-          ),
-      );
-
-      for (const reqType of DEADLINE_REQUIREMENT_TYPES) {
-        const effectiveDeadline = resolveEffectiveDeadline(
-          scopedDeadlines,
-          reqType,
-          scholar,
+        const hasSubmittedGrade = (scholar.grade_reports || []).some(
+          (r) =>
+            normalizeSemester(r.semester) === eSem &&
+            academicYearsMatchForTerm(r.academic_year, eAy, eSem) &&
+            r.status !== 'REJECTED',
         );
-        if (
-          !effectiveDeadline ||
-          seenDeadlineIds.has(effectiveDeadline.deadline_id)
-        ) {
-          continue;
+        if (hasSubmittedGrade) continue;
+
+        const alreadyIncluded = termPairs.some(
+          (tp) =>
+            tp.semester === eSem &&
+            academicYearsMatchForTerm(tp.academic_year, eAy, eSem),
+        );
+        if (!alreadyIncluded) {
+          termPairs.push({
+            academic_year: eAy,
+            semester: eSem,
+            isSystemActiveTerm: false,
+          });
         }
-
-        const exemption =
-          exemptions.find(
-            (e) => e.deadline_id === effectiveDeadline.deadline_id,
-          ) ?? null;
-
-        const evaluation = evaluateScholarRequirementStatus({
-          deadline: effectiveDeadline,
-          scholar,
-          exemption,
-          now,
-        });
-
-        if (
-          !tp.isSystemActiveTerm &&
-          ['NOT_APPLICABLE', 'CURRENTLY_ENROLLED', 'ON_HOLD'].includes(
-            evaluation.status,
-          )
-        ) {
-          continue;
-        }
-
-        seenDeadlineIds.add(effectiveDeadline.deadline_id);
-        items.push({
-          deadline_id: effectiveDeadline.deadline_id,
-          requirement_type: reqType,
-          requirement_label: getRequirementLabel(reqType),
-          action_path: getRequirementActionPath(reqType),
-          academic_year: effectiveDeadline.academic_year,
-          semester: effectiveDeadline.semester,
-          due_date: effectiveDeadline.due_date.toISOString(),
-          effective_due_date: evaluation.effective_due_date,
-          grace_period_days: effectiveDeadline.grace_period_days,
-          is_optional_term: effectiveDeadline.is_optional_term,
-          title: effectiveDeadline.title ?? null,
-          instructions: effectiveDeadline.instructions ?? null,
-          status: evaluation.status,
-          status_detail: evaluation.status_detail,
-          days_remaining: evaluation.days_remaining,
-          days_overdue: evaluation.days_overdue,
-          is_late: evaluation.is_late ?? false,
-          days_late: evaluation.days_late ?? 0,
-          lock: evaluation.lock ?? null,
-          revision: evaluation.revision ?? null,
-          submission: evaluation.submission ?? null,
-        });
       }
+
+      const deadlines = await this.prisma.submissionDeadline.findMany({
+        where: {
+          is_active: true,
+          OR: termPairs.map((tp) => ({
+            academic_year: tp.academic_year,
+            semester: tp.semester,
+          })),
+        },
+        include: {
+          school: {
+            select: { school_id: true, school_name: true, school_code: true },
+          },
+        },
+        orderBy: { due_date: 'asc' },
+      });
+
+      const deadlineIds = deadlines.map((d) => d.deadline_id);
+      const exemptions =
+        deadlineIds.length > 0
+          ? await this.prisma.deadlineExemption.findMany({
+              where: {
+                scholar_profile_id: scholar.profile_id,
+                deadline_id: { in: deadlineIds },
+              },
+            })
+          : [];
+
+      const now = new Date();
+      const items: Array<Record<string, any>> = [];
+      const seenDeadlineIds = new Set<number>();
+
+      for (const tp of termPairs) {
+        const scopedDeadlines = deadlines.filter(
+          (d) =>
+            normalizeSemester(d.semester) === tp.semester &&
+            academicYearsMatchForTerm(
+              d.academic_year,
+              tp.academic_year,
+              tp.semester,
+            ),
+        );
+
+        for (const reqType of DEADLINE_REQUIREMENT_TYPES) {
+          const effectiveDeadline = resolveEffectiveDeadline(
+            scopedDeadlines,
+            reqType,
+            scholar,
+          );
+          if (
+            !effectiveDeadline ||
+            seenDeadlineIds.has(effectiveDeadline.deadline_id)
+          ) {
+            continue;
+          }
+
+          const exemption =
+            exemptions.find(
+              (e) => e.deadline_id === effectiveDeadline.deadline_id,
+            ) ?? null;
+
+          const evaluation = evaluateScholarRequirementStatus({
+            deadline: effectiveDeadline,
+            scholar,
+            exemption,
+            now,
+          });
+
+          if (
+            !tp.isSystemActiveTerm &&
+            ['NOT_APPLICABLE', 'CURRENTLY_ENROLLED', 'ON_HOLD'].includes(
+              evaluation.status,
+            )
+          ) {
+            continue;
+          }
+
+          seenDeadlineIds.add(effectiveDeadline.deadline_id);
+          items.push({
+            deadline_id: effectiveDeadline.deadline_id,
+            requirement_type: reqType,
+            requirement_label: getRequirementLabel(reqType),
+            action_path: getRequirementActionPath(reqType),
+            academic_year: effectiveDeadline.academic_year,
+            semester: effectiveDeadline.semester,
+            due_date: effectiveDeadline.due_date.toISOString(),
+            effective_due_date: evaluation.effective_due_date,
+            grace_period_days: effectiveDeadline.grace_period_days,
+            is_optional_term: effectiveDeadline.is_optional_term,
+            title: effectiveDeadline.title ?? null,
+            instructions: effectiveDeadline.instructions ?? null,
+            status: evaluation.status,
+            status_detail: evaluation.status_detail,
+            days_remaining: evaluation.days_remaining,
+            days_overdue: evaluation.days_overdue,
+            is_late: evaluation.is_late ?? false,
+            days_late: evaluation.days_late ?? 0,
+            lock: evaluation.lock ?? null,
+            revision: evaluation.revision ?? null,
+            submission: evaluation.submission ?? null,
+          });
+        }
+      }
+
+      return {
+        academic_year: activeTerm.effective_academic_year,
+        semester: activeTerm.effective_semester,
+        deadlines: items,
+      };
+    };
+
+    if (this.cacheService) {
+      return this.cacheService.wrap(
+        `deadlines:me:${userId}`,
+        compute,
+        30 * 1000,
+      );
     }
 
-    return {
-      academic_year: activeTerm.effective_academic_year,
-      semester: activeTerm.effective_semester,
-      deadlines: items,
-    };
+    return compute();
   }
 
   async processScheduledReminders(
@@ -2011,7 +2079,8 @@ export class DeadlinesService {
     }
 
     if (sentCount > 0) {
-      this.eventsGateway.emitToStaff('deadline:followup_sent', {
+      await this.invalidateDeadlineCaches();
+    this.eventsGateway.emitToStaff('deadline:followup_sent', {
         automated: true,
         sent_count: sentCount,
       });

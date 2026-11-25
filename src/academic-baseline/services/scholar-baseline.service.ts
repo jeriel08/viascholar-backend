@@ -994,82 +994,162 @@ export class ScholarBaselineService {
     return this.cacheService.wrap(
       cacheKey,
       async () => {
-        const scholar = await this.prisma.scholarProfile.findUnique({
-          where: { user_id: userId },
-          include: {
-            user: {
-              select: {
-                user_id: true,
-                email: true,
-                role: true,
-                is_active: true,
-              },
-            },
-            school_grading_system: true,
-            prospectus: {
-              include: {
-                subjects: {
-                  orderBy: [
-                    { year_level: 'asc' },
-                    { semester: 'asc' },
-                    { subject_code: 'asc' },
-                  ],
+        const hasUserFindFirst =
+          typeof (this.prisma as any).user?.findFirst === 'function';
+        const hasSystemSettingFindFirst =
+          typeof (this.prisma as any).systemSetting?.findFirst === 'function';
+        const hasConversationFindFirst =
+          typeof (this.prisma as any).conversation?.findFirst === 'function';
+        const hasForumPostFindMany =
+          typeof (this.prisma as any).forumPost?.findMany === 'function';
+
+        const [
+          scholar,
+          systemSettings,
+          grantorUser,
+          coordinatorUser,
+          conversation,
+          announcements,
+        ] = await Promise.all([
+          this.prisma.scholarProfile.findUnique({
+            where: { user_id: userId },
+            include: {
+              user: {
+                select: {
+                  user_id: true,
+                  email: true,
+                  role: true,
+                  is_active: true,
                 },
-                frozen_by_employee: {
-                  select: {
-                    first_name: true,
-                    last_name: true,
-                    title: true,
+              },
+              school_grading_system: true,
+              prospectus: {
+                include: {
+                  subjects: {
+                    orderBy: [
+                      { year_level: 'asc' },
+                      { semester: 'asc' },
+                      { subject_code: 'asc' },
+                    ],
+                  },
+                  frozen_by_employee: {
+                    select: {
+                      first_name: true,
+                      last_name: true,
+                      title: true,
+                    },
+                  },
+                },
+              },
+              grade_reports: {
+                orderBy: { submitted_at: 'desc' },
+                take: 5,
+                include: {
+                  grade_items: true,
+                },
+              },
+              enrollments: {
+                orderBy: { created_at: 'desc' },
+                take: 3,
+              },
+              disbursements: {
+                orderBy: { disbursement_id: 'desc' },
+                take: 5,
+              },
+              documents: {
+                orderBy: { uploaded_at: 'desc' },
+                take: 5,
+              },
+              meetings: {
+                where: {
+                  meeting_date: {
+                    gte: new Date(new Date().setHours(0, 0, 0, 0)),
+                  },
+                },
+                orderBy: { meeting_date: 'asc' },
+                take: 3,
+                include: {
+                  employee: {
+                    select: {
+                      first_name: true,
+                      last_name: true,
+                      title: true,
+                    },
                   },
                 },
               },
             },
-            grade_reports: {
-              orderBy: { submitted_at: 'desc' },
-              take: 5,
-              include: {
-                grade_items: true,
-              },
-            },
-            enrollments: {
-              orderBy: { created_at: 'desc' },
-              take: 3,
-            },
-            disbursements: {
-              orderBy: { disbursement_id: 'desc' },
-              take: 5,
-            },
-            documents: {
-              orderBy: { uploaded_at: 'desc' },
-              take: 5,
-            },
-            meetings: {
-              where: {
-                meeting_date: {
-                  gte: new Date(new Date().setHours(0, 0, 0, 0)),
-                },
-              },
-              orderBy: { meeting_date: 'asc' },
-              take: 3,
-              include: {
-                employee: {
-                  select: {
-                    first_name: true,
-                    last_name: true,
-                    title: true,
+          }),
+          hasSystemSettingFindFirst
+            ? this.prisma.systemSetting.findFirst()
+            : Promise.resolve(null),
+          hasUserFindFirst
+            ? (this.prisma as any).user.findFirst({
+                where: { role: 'GRANTOR', is_active: true },
+                orderBy: { user_id: 'asc' },
+                select: { email: true },
+              })
+            : Promise.resolve(null),
+          hasUserFindFirst
+            ? (this.prisma as any).user.findFirst({
+                where: { role: 'COORDINATOR', is_active: true },
+                orderBy: { user_id: 'asc' },
+                select: { email: true },
+              })
+            : Promise.resolve(null),
+          hasConversationFindFirst
+            ? this.prisma.conversation.findFirst({
+                where: { scholar_user_id: userId },
+                include: {
+                  coordinator: {
+                    include: {
+                      employee: {
+                        select: {
+                          first_name: true,
+                          last_name: true,
+                          title: true,
+                        },
+                      },
+                    },
+                  },
+                  messages: {
+                    orderBy: { sent_at: 'desc' },
+                    take: 5,
                   },
                 },
-              },
-            },
-          },
-        });
+              })
+            : Promise.resolve(null),
+          hasForumPostFindMany
+            ? this.prisma.forumPost.findMany({
+                where: {
+                  OR: [{ is_pinned: true }, { category: 'ANNOUNCEMENT' }],
+                },
+                orderBy: { created_at: 'desc' },
+                take: 3,
+                include: {
+                  author: {
+                    select: {
+                      email: true,
+                      role: true,
+                      employee: {
+                        select: {
+                          first_name: true,
+                          last_name: true,
+                          title: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              })
+            : Promise.resolve([]),
+        ]);
 
         if (!scholar) {
           throw new NotFoundException('Scholar profile not found.');
         }
 
         // Settings for grade threshold
-        const systemSettings = await this.prisma.systemSetting.findFirst();
         const threshold = systemSettings?.grade_threshold
           ? Number(systemSettings.grade_threshold)
           : 90.0;
@@ -1243,22 +1323,6 @@ export class ScholarBaselineService {
           standingType = 'ACTION_REQUIRED';
         }
 
-        const [grantorUser, coordinatorUser] =
-          typeof (this.prisma as any).user?.findFirst === 'function'
-            ? await Promise.all([
-                (this.prisma as any).user.findFirst({
-                  where: { role: 'GRANTOR', is_active: true },
-                  orderBy: { user_id: 'asc' },
-                  select: { email: true },
-                }),
-                (this.prisma as any).user.findFirst({
-                  where: { role: 'COORDINATOR', is_active: true },
-                  orderBy: { user_id: 'asc' },
-                  select: { email: true },
-                }),
-              ])
-            : [null, null];
-
         // 4. Term Enrollment
         const latestEnrollment = scholar.enrollments[0] || null;
 
@@ -1277,28 +1341,7 @@ export class ScholarBaselineService {
             !d.or_document_id,
         ).length;
 
-        // 6. Unread Messages & Active Conversation
-        const conversation = await this.prisma.conversation.findFirst({
-          where: { scholar_user_id: userId },
-          include: {
-            coordinator: {
-              include: {
-                employee: {
-                  select: {
-                    first_name: true,
-                    last_name: true,
-                    title: true,
-                  },
-                },
-              },
-            },
-            messages: {
-              orderBy: { sent_at: 'desc' },
-              take: 5,
-            },
-          },
-        });
-
+        // 6. Unread Messages
         const unreadMessagesCount = conversation
           ? await this.prisma.message.count({
               where: {
@@ -1308,30 +1351,6 @@ export class ScholarBaselineService {
               },
             })
           : 0;
-
-        // 7. Pinned Forum Announcements
-        const announcements = await this.prisma.forumPost.findMany({
-          where: {
-            OR: [{ is_pinned: true }, { category: 'ANNOUNCEMENT' }],
-          },
-          orderBy: { created_at: 'desc' },
-          take: 3,
-          include: {
-            author: {
-              select: {
-                email: true,
-                role: true,
-                employee: {
-                  select: {
-                    first_name: true,
-                    last_name: true,
-                    title: true,
-                  },
-                },
-              },
-            },
-          },
-        });
 
         return {
           profile: {

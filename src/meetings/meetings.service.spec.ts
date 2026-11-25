@@ -94,7 +94,6 @@ describe('MeetingsService', () => {
         role: Role.COORDINATOR,
       });
 
-      expect(prisma.$transaction).toHaveBeenCalled();
       expect(prisma.meeting.count).toHaveBeenCalledWith({ where: {} });
       expect(prisma.meeting.findMany).toHaveBeenCalledWith(
         objectMatching({

@@ -3,38 +3,58 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { EventsGateway } from '../../events/events.gateway.js';
 import { RequestGrantorDto } from '../dto/request-grantor.dto.js';
 import { RespondRequestDto } from '../dto/respond-request.dto.js';
 import { NotificationsService } from '../../notifications/notifications.service.js';
+import { AppCacheService } from '../../common/cache/app-cache.service.js';
 
 @Injectable()
 export class ChatRequestsService {
+  private static readonly STAFF_DIRECTORY_TTL_MS = 60_000;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly eventsGateway: EventsGateway,
     private readonly notificationsService: NotificationsService,
+    @Optional() private readonly cache?: AppCacheService,
   ) {}
+
+  private async getCachedStaffByRole(role: 'COORDINATOR' | 'GRANTOR') {
+    const load = () =>
+      this.prisma.user.findMany({
+        where: {
+          role,
+          is_active: true,
+        },
+        include: { employee: true },
+        orderBy: { employee: { first_name: 'asc' } },
+      });
+
+    if (!this.cache) {
+      return load();
+    }
+
+    return this.cache.wrap(
+      `chat:staff:${role}`,
+      load,
+      ChatRequestsService.STAFF_DIRECTORY_TTL_MS,
+    );
+  }
 
   // Get all available coordinators for scholar directory
   async getCoordinators(currentUserId: number) {
-    const coordinators = await this.prisma.user.findMany({
-      where: {
-        role: 'COORDINATOR',
-        is_active: true,
-      },
-      include: { employee: true },
-      orderBy: { employee: { first_name: 'asc' } },
-    });
-
-    const existingConvos = await this.prisma.conversation.findMany({
-      where: {
-        scholar_user_id: currentUserId,
-        coordinator_user_id: { in: coordinators.map((c) => c.user_id) },
-      },
-    });
+    const [coordinators, existingConvos] = await Promise.all([
+      this.getCachedStaffByRole('COORDINATOR'),
+      this.prisma.conversation.findMany({
+        where: {
+          scholar_user_id: currentUserId,
+        },
+      }),
+    ]);
 
     const convMap = new Map(
       existingConvos.map((c) => [c.coordinator_user_id, c]),
@@ -59,21 +79,14 @@ export class ChatRequestsService {
 
   // Get all available grantors with scholar request status
   async getGrantors(currentUserId: number) {
-    const grantors = await this.prisma.user.findMany({
-      where: {
-        role: 'GRANTOR',
-        is_active: true,
-      },
-      include: { employee: true },
-      orderBy: { employee: { first_name: 'asc' } },
-    });
-
-    const existingConvos = await this.prisma.conversation.findMany({
-      where: {
-        scholar_user_id: currentUserId,
-        coordinator_user_id: { in: grantors.map((g) => g.user_id) },
-      },
-    });
+    const [grantors, existingConvos] = await Promise.all([
+      this.getCachedStaffByRole('GRANTOR'),
+      this.prisma.conversation.findMany({
+        where: {
+          scholar_user_id: currentUserId,
+        },
+      }),
+    ]);
 
     const convMap = new Map(
       existingConvos.map((c) => [c.coordinator_user_id, c]),

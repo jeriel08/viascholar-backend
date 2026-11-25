@@ -44,7 +44,7 @@ export class ChatMessagesService {
     const limit = query.limit || 50;
     const skip = (page - 1) * limit;
 
-    const [total, messages] = await Promise.all([
+    const [total, messages, unreadUpdated] = await Promise.all([
       this.prisma.message.count({
         where: { conversation_id: conversationId },
       }),
@@ -59,20 +59,19 @@ export class ChatMessagesService {
           },
         },
       }),
+      // Automatically mark incoming unread messages as read
+      this.prisma.message.updateMany({
+        where: {
+          conversation_id: conversationId,
+          sender_user_id: { not: userId },
+          is_read: false,
+        },
+        data: {
+          is_read: true,
+          read_at: new Date(),
+        },
+      }),
     ]);
-
-    // Automatically mark incoming unread messages as read
-    const unreadUpdated = await this.prisma.message.updateMany({
-      where: {
-        conversation_id: conversationId,
-        sender_user_id: { not: userId },
-        is_read: false,
-      },
-      data: {
-        is_read: true,
-        read_at: new Date(),
-      },
-    });
 
     if (unreadUpdated.count > 0) {
       const partnerUserId =

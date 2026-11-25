@@ -11,10 +11,12 @@ import * as bcrypt from 'bcrypt';
 import * as QRCode from 'qrcode';
 import { Role } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { AppCacheService } from '../common/cache/app-cache.service.js';
 import { CloudinaryService } from '../cloudinary/cloudinary.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { MailService } from '../mail/mail.service.js';
 import { SmsService } from '../sms/sms.service.js';
+import { jwtUserCacheKey } from './strategies/jwt.strategy.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
 import { UpdateUserSettingsDto } from './dto/update-user-settings.dto.js';
 import { SetupTwoFactorDto, VerifyTwoFactorDto } from './dto/two-factor.dto.js';
@@ -94,6 +96,7 @@ export class ProfileService {
     private auditService: AuditService,
     private mailService: MailService,
     @Optional() private smsService?: SmsService,
+    @Optional() private cacheService?: AppCacheService,
   ) {}
 
   // Method to handle Avatar upload
@@ -269,6 +272,8 @@ export class ProfileService {
       'PROFILE_UPDATED',
       `User (ID: ${userId}) updated their profile`,
     );
+
+    await this.cacheService?.del?.(jwtUserCacheKey(userId));
 
     const sanitizedUser: Partial<typeof updatedUser> = { ...updatedUser };
     delete sanitizedUser.password_hash;
@@ -919,6 +924,7 @@ export class ProfileService {
       : `User (ID: ${userId}) deactivated their account`;
 
     await this.auditService.log(userId, 'ACCOUNT_DEACTIVATED', details);
+    await this.cacheService?.del?.(jwtUserCacheKey(userId));
 
     return {
       message: 'Your account has been deactivated.',

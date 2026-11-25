@@ -37,6 +37,7 @@ export class CoordinatorDashboardService {
           meetings,
           conversations,
           systemSetting,
+          unreadMessagesCount,
         ] = await Promise.all([
           // 1. Applications with scholar profile details (Genuine prospective applicants)
           this.prisma.application.findMany({
@@ -192,6 +193,17 @@ export class CoordinatorDashboardService {
 
           // 7. System Setting for grade threshold
           this.prisma.systemSetting.findFirst(),
+
+          // 8. Total Unread Messages for Coordinator
+          this.prisma.message.count({
+            where: {
+              conversation: {
+                coordinator_user_id: coordinatorUserId,
+              },
+              sender_user_id: { not: coordinatorUserId },
+              is_read: false,
+            },
+          }),
         ]);
 
         const gradeThreshold = systemSetting?.grade_threshold
@@ -302,17 +314,6 @@ export class CoordinatorDashboardService {
               d.status === 'SETTLED',
           )
           .reduce((acc, d) => acc + Number(d.amount), 0);
-
-        // E. Total Unread Messages for Coordinator
-        const unreadMessagesCount = await this.prisma.message.count({
-          where: {
-            conversation: {
-              coordinator_user_id: coordinatorUserId,
-            },
-            sender_user_id: { not: coordinatorUserId },
-            is_read: false,
-          },
-        });
 
         return {
           kpis: {

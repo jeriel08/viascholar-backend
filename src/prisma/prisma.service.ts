@@ -8,8 +8,10 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
     const adapter = new PrismaPg({
       connectionString: process.env.DATABASE_URL as string,
       max: 20,
-      idleTimeoutMillis: 30000,
+      idleTimeoutMillis: 300000,
       connectionTimeoutMillis: 20000,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10000,
     });
     super({ adapter });
   }

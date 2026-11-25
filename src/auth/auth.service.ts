@@ -111,59 +111,70 @@ export class AuthService {
       phoneVerifiedAt?: Date | null;
     },
   ): Promise<void> {
+    const tasks: Promise<unknown>[] = [];
+
     if (typeof this.prisma.user?.update === 'function') {
-      await this.prisma.user.update({
-        where: { user_id: userId },
-        data: {
-          is_email_verified: next.emailVerified,
-          ...(timestamps?.emailVerifiedAt !== undefined
-            ? { email_verified_at: timestamps.emailVerifiedAt }
-            : {}),
-          two_factor_enabled: next.twoFactor,
-          two_factor_method: next.twoFactor ? next.twoFactorMethod : null,
-          two_factor_secret: next.twoFactorSecret ?? null,
-          email_notifs: next.emailNotifs,
-          sms_notifs: next.smsNotifs,
-          forum_digest: next.forumDigest,
-          public_profile: next.publicProfile,
-          password_changed_at: next.passwordChangedAt
-            ? new Date(next.passwordChangedAt)
-            : null,
-        },
-      });
+      tasks.push(
+        this.prisma.user.update({
+          where: { user_id: userId },
+          data: {
+            is_email_verified: next.emailVerified,
+            ...(timestamps?.emailVerifiedAt !== undefined
+              ? { email_verified_at: timestamps.emailVerifiedAt }
+              : {}),
+            two_factor_enabled: next.twoFactor,
+            two_factor_method: next.twoFactor ? next.twoFactorMethod : null,
+            two_factor_secret: next.twoFactorSecret ?? null,
+            email_notifs: next.emailNotifs,
+            sms_notifs: next.smsNotifs,
+            forum_digest: next.forumDigest,
+            public_profile: next.publicProfile,
+            password_changed_at: next.passwordChangedAt
+              ? new Date(next.passwordChangedAt)
+              : null,
+          },
+        }),
+      );
     }
 
     if (typeof this.prisma.scholarProfile?.updateMany === 'function') {
-      await this.prisma.scholarProfile.updateMany({
-        where: { user_id: userId },
-        data: {
-          is_phone_verified: next.phoneVerified,
-          ...(timestamps?.phoneVerifiedAt !== undefined
-            ? { phone_verified_at: timestamps.phoneVerifiedAt }
-            : {}),
-        },
-      });
+      tasks.push(
+        this.prisma.scholarProfile.updateMany({
+          where: { user_id: userId },
+          data: {
+            is_phone_verified: next.phoneVerified,
+            ...(timestamps?.phoneVerifiedAt !== undefined
+              ? { phone_verified_at: timestamps.phoneVerifiedAt }
+              : {}),
+          },
+        }),
+      );
     }
 
-    if (!this.prisma.auditLog) return;
-
-    const serialized = JSON.stringify(next);
-    if (logId && this.prisma.auditLog.update) {
-      await this.prisma.auditLog.update({
-        where: { log_id: logId },
-        data: { details: serialized },
-      });
-      return;
+    if (this.prisma.auditLog) {
+      const serialized = JSON.stringify(next);
+      if (logId && this.prisma.auditLog.update) {
+        tasks.push(
+          this.prisma.auditLog.update({
+            where: { log_id: logId },
+            data: { details: serialized },
+          }),
+        );
+      } else if (this.prisma.auditLog.create) {
+        tasks.push(
+          this.prisma.auditLog.create({
+            data: {
+              user_id: userId,
+              action: USER_SETTINGS_AUDIT_ACTION,
+              details: serialized,
+            },
+          }),
+        );
+      }
     }
 
-    if (this.prisma.auditLog.create) {
-      await this.prisma.auditLog.create({
-        data: {
-          user_id: userId,
-          action: USER_SETTINGS_AUDIT_ACTION,
-          details: serialized,
-        },
-      });
+    if (tasks.length > 0) {
+      await Promise.all(tasks);
     }
   }
 
@@ -410,43 +421,41 @@ export class AuthService {
       method === 'EMAIL_OTP' && !settings.emailVerified;
     const phoneNewlyVerified = method === 'SMS_OTP' && !settings.phoneVerified;
 
-    await this.persistStoredUserSettings(
-      user.user_id,
-      {
-        ...settings,
-        emailVerified: method === 'EMAIL_OTP' ? true : settings.emailVerified,
-        phoneVerified: method === 'SMS_OTP' ? true : settings.phoneVerified,
-        pendingTwoFactor: null,
-      },
-      logId,
-      {
-        ...(emailNewlyVerified ? { emailVerifiedAt: new Date() } : {}),
-        ...(phoneNewlyVerified ? { phoneVerifiedAt: new Date() } : {}),
-      },
-    );
-
-    if (payload.purpose === 'REGISTER') {
-      await this.auditService.log(
+    const [, , tokenPayload] = await Promise.all([
+      this.persistStoredUserSettings(
         user.user_id,
-        'SCHOLAR_MFA_VERIFIED',
-        `Scholar verified registration MFA (${method}) (User ID: ${user.user_id}, Email: ${user.email})`,
-      );
-    } else {
-      await this.auditService.log(
+        {
+          ...settings,
+          emailVerified: method === 'EMAIL_OTP' ? true : settings.emailVerified,
+          phoneVerified: method === 'SMS_OTP' ? true : settings.phoneVerified,
+          pendingTwoFactor: null,
+        },
+        logId,
+        {
+          ...(emailNewlyVerified ? { emailVerifiedAt: new Date() } : {}),
+          ...(phoneNewlyVerified ? { phoneVerifiedAt: new Date() } : {}),
+        },
+      ),
+      payload.purpose === 'REGISTER'
+        ? this.auditService.log(
+            user.user_id,
+            'SCHOLAR_MFA_VERIFIED',
+            `Scholar verified registration MFA (${method}) (User ID: ${user.user_id}, Email: ${user.email})`,
+          )
+        : this.auditService.log(
+            user.user_id,
+            'USER_LOGIN',
+            `User logged in via MFA (${method}) (ID: ${user.user_id}, Email: ${user.email}, Role: ${user.role})`,
+          ),
+      this.generateToken(
         user.user_id,
-        'USER_LOGIN',
-        `User logged in via MFA (${method}) (ID: ${user.user_id}, Email: ${user.email}, Role: ${user.role})`,
-      );
-    }
-
-    const tokenPayload = await this.generateToken(
-      user.user_id,
-      user.email,
-      user.role,
-      user.scholar_profile,
-      user.employee,
-      user.created_at,
-    );
+        user.email,
+        user.role,
+        user.scholar_profile,
+        user.employee,
+        user.created_at,
+      ),
+    ]);
 
     const trustedDeviceToken = dto.remember_device
       ? signTrustedDeviceToken(user.user_id, jwtSecret)
@@ -642,16 +651,6 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials.');
     }
 
-    // Update last login timestamp
-    await this.prisma.user.update({
-      where: { user_id: user.user_id },
-      data: { last_login_at: new Date() },
-    });
-
-    const { logId, settings } = await this.getStoredUserSettings(
-      user.user_id,
-      user,
-    );
     const jwtSecret = this.configService.get<string>('JWT_SECRET');
     const isTrustedDevice = verifyTrustedDeviceToken(
       dto.trusted_device_token,
@@ -659,14 +658,22 @@ export class AuthService {
       jwtSecret,
     );
 
-    const tokenPayload = await this.generateToken(
-      user.user_id,
-      user.email,
-      user.role,
-      user.scholar_profile,
-      user.employee,
-      user.created_at,
-    );
+    // Run independent login timestamp update, settings read, and JWT signing in parallel
+    const [, { logId, settings }, tokenPayload] = await Promise.all([
+      this.prisma.user.update({
+        where: { user_id: user.user_id },
+        data: { last_login_at: new Date() },
+      }),
+      this.getStoredUserSettings(user.user_id, user),
+      this.generateToken(
+        user.user_id,
+        user.email,
+        user.role,
+        user.scholar_profile,
+        user.employee,
+        user.created_at,
+      ),
+    ]);
 
     const needsAccountVerification =
       user.is_email_verified === false &&
@@ -680,21 +687,22 @@ export class AuthService {
         ? 'REGISTER'
         : 'LOGIN';
 
-      await this.auditService.log(
-        user.user_id,
-        'USER_LOGIN_MFA_REQUIRED',
-        needsAccountVerification
-          ? `Account verification OTP required on login (ID: ${user.user_id}, Email: ${user.email}, Role: ${user.role})`
-          : `MFA verification required for login (ID: ${user.user_id}, Email: ${user.email}, Role: ${user.role})`,
-      );
-
-      const mfaChallenge = await this.createMfaChallengeForUser({
-        user,
-        purpose: challengePurpose,
-        rememberSession: false,
-        settings,
-        logId,
-      });
+      const [, mfaChallenge] = await Promise.all([
+        this.auditService.log(
+          user.user_id,
+          'USER_LOGIN_MFA_REQUIRED',
+          needsAccountVerification
+            ? `Account verification OTP required on login (ID: ${user.user_id}, Email: ${user.email}, Role: ${user.role})`
+            : `MFA verification required for login (ID: ${user.user_id}, Email: ${user.email}, Role: ${user.role})`,
+        ),
+        this.createMfaChallengeForUser({
+          user,
+          purpose: challengePurpose,
+          rememberSession: false,
+          settings,
+          logId,
+        }),
+      ]);
 
       return {
         ...tokenPayload,
@@ -930,6 +938,8 @@ export class AuthService {
     });
 
     let authenticatedUser: NonNullable<typeof existingUser>;
+    let logId: number | undefined;
+    let loadedSettings: StoredUserSettingsRecord;
 
     if (existingUser) {
       if (!existingUser.is_active) {
@@ -949,17 +959,22 @@ export class AuthService {
         }
       }
 
-      authenticatedUser = await this.prisma.user.update({
-        where: { user_id: existingUser.user_id },
-        data: { last_login_at: new Date() },
-        include: { scholar_profile: true, employee: true },
-      });
-
-      await this.auditService.log(
-        authenticatedUser.user_id,
-        'GOOGLE_LOGIN',
-        `User ${authenticatedUser.email} logged in via Google OAuth`,
-      );
+      const [updatedUser, , storedSettings] = await Promise.all([
+        this.prisma.user.update({
+          where: { user_id: existingUser.user_id },
+          data: { last_login_at: new Date() },
+          include: { scholar_profile: true, employee: true },
+        }),
+        this.auditService.log(
+          existingUser.user_id,
+          'GOOGLE_LOGIN',
+          `User ${existingUser.email} logged in via Google OAuth`,
+        ),
+        this.getStoredUserSettings(existingUser.user_id, existingUser),
+      ]);
+      authenticatedUser = updatedUser;
+      logId = storedSettings.logId;
+      loadedSettings = storedSettings.settings;
     } else {
       // Auto-register as APPLICANT with verified email
       const randomPassword = await bcrypt.hash(
@@ -985,37 +1000,28 @@ export class AuthService {
         include: { scholar_profile: true, employee: true },
       });
 
-      await this.auditService.log(
-        authenticatedUser.user_id,
-        'GOOGLE_REGISTER',
-        `New applicant registered via Google OAuth (${authenticatedUser.email})`,
-      );
-
       this.eventsGateway.emitToAdmin('user:created', {
         userId: authenticatedUser.user_id,
         email: authenticatedUser.email,
         role: authenticatedUser.role,
       });
+
+      const [, storedSettings] = await Promise.all([
+        this.auditService.log(
+          authenticatedUser.user_id,
+          'GOOGLE_REGISTER',
+          `New applicant registered via Google OAuth (${authenticatedUser.email})`,
+        ),
+        this.getStoredUserSettings(
+          authenticatedUser.user_id,
+          authenticatedUser,
+        ),
+      ]);
+      logId = storedSettings.logId;
+      loadedSettings = storedSettings.settings;
     }
 
-    const { logId, settings: loadedSettings } =
-      await this.getStoredUserSettings(
-        authenticatedUser.user_id,
-        authenticatedUser,
-      );
     let settings = loadedSettings;
-    if (!settings.emailVerified) {
-      settings = {
-        ...settings,
-        emailVerified: true,
-      };
-      await this.persistStoredUserSettings(
-        authenticatedUser.user_id,
-        settings,
-        logId,
-        { emailVerifiedAt: new Date() },
-      );
-    }
     const jwtSecret = this.configService.get<string>('JWT_SECRET');
     const isTrustedDevice = verifyTrustedDeviceToken(
       dto.trusted_device_token,
@@ -1023,7 +1029,7 @@ export class AuthService {
       jwtSecret,
     );
 
-    const tokenPayload = await this.generateToken(
+    const tokenPromise = this.generateToken(
       authenticatedUser.user_id,
       authenticatedUser.email,
       authenticatedUser.role,
@@ -1031,6 +1037,26 @@ export class AuthService {
       authenticatedUser.employee,
       authenticatedUser.created_at,
     );
+
+    let tokenPayload: Awaited<typeof tokenPromise>;
+    if (!settings.emailVerified) {
+      settings = {
+        ...settings,
+        emailVerified: true,
+      };
+      const [generated] = await Promise.all([
+        tokenPromise,
+        this.persistStoredUserSettings(
+          authenticatedUser.user_id,
+          settings,
+          logId,
+          { emailVerifiedAt: new Date() },
+        ),
+      ]);
+      tokenPayload = generated;
+    } else {
+      tokenPayload = await tokenPromise;
+    }
 
     const requiresAdditionalMfa =
       settings.twoFactor &&

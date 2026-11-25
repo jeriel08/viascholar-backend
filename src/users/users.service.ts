@@ -1,11 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { EventsGateway } from '../events/events.gateway.js';
 import { AppCacheService } from '../common/cache/app-cache.service.js';
+import { jwtUserCacheKey } from '../auth/strategies/jwt.strategy.js';
 import { AdminDashboardService } from './services/admin-dashboard.service.js';
 import { CoordinatorDashboardService } from './services/coordinator-dashboard.service.js';
 import { GrantorDashboardService } from './services/grantor-dashboard.service.js';
+import { SidebarBadgesService } from './services/sidebar-badges.service.js';
 import {
   evaluateGwaThreshold,
   evaluateScholarHealth,
@@ -25,6 +27,7 @@ export class UsersService {
     private readonly adminDashboardService: AdminDashboardService,
     private readonly coordinatorDashboardService: CoordinatorDashboardService,
     private readonly grantorDashboardService: GrantorDashboardService,
+    @Optional() private readonly sidebarBadgesService?: SidebarBadgesService,
   ) {}
 
   // Get all users (Filtered by Role or Name search)
@@ -188,8 +191,9 @@ export class UsersService {
       `Admin (ID: ${adminUserId}) updated User status (ID: ${targetUserId}) to ${dto.is_active ? 'ACTIVE' : 'INACTIVE'}`,
     );
 
-    // Invalidate cached dashboard metrics on staff or scholar status change
+    // Invalidate cached dashboard metrics and JWT user cache on staff or scholar status change
     await this.cacheService.delPattern('dashboard:');
+    await this.cacheService.del?.(jwtUserCacheKey(targetUserId));
 
     this.eventsGateway.emitToAdmin('user:status_updated', {
       userId: targetUserId,
@@ -223,6 +227,8 @@ export class UsersService {
       where: { user_id: targetUserId },
       data: { password_hash: hashedPassword },
     });
+
+    await this.cacheService.del?.(jwtUserCacheKey(targetUserId));
 
     // 🚀 Audit log the password reset
     await this.auditService.log(
@@ -268,6 +274,17 @@ export class UsersService {
       grantorUserId,
       forceRefresh,
     );
+  }
+
+  async getSidebarBadges(
+    user: {
+      user_id: number;
+      role: string;
+      scholar_profile?: { profile_id?: number } | null;
+    },
+    forceRefresh = false,
+  ) {
+    return this.sidebarBadgesService?.getSidebarBadges(user, forceRefresh);
   }
 
   evaluateGwaThreshold(

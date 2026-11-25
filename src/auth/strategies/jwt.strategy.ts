@@ -1,7 +1,11 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Optional, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
+import { AppCacheService } from '../../common/cache/app-cache.service.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
+
+export const JWT_USER_CACHE_TTL_MS = 3 * 60 * 1000;
+export const jwtUserCacheKey = (userId: number) => `auth:jwt-user:${userId}`;
 
 export interface JwtPayload {
   sub: number;
@@ -11,7 +15,15 @@ export interface JwtPayload {
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(private prisma: PrismaService) {
+  private readonly inFlight = new Map<
+    number,
+    Promise<Record<string, unknown>>
+  >();
+
+  constructor(
+    private prisma: PrismaService,
+    @Optional() private readonly cacheService?: AppCacheService,
+  ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
@@ -19,7 +31,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: JwtPayload) {
+  private async loadAndValidateUser(
+    payload: JwtPayload,
+  ): Promise<Record<string, unknown>> {
     const user = await this.prisma.user.findUnique({
       where: { user_id: payload.sub },
       include: {
@@ -54,12 +68,17 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     // Recover any pre-fix shifted scholar profile that was left in onboarding statuses
     if (
       user.scholar_profile &&
-      ['PENDING_SCHOOL_SELECTION', 'PENDING_PROSPECTUS', 'PENDING_HISTORICAL_CCG'].includes(
-        user.scholar_profile.academic_baseline_status,
-      ) &&
-      typeof (this.prisma as any).academicChangeRequest?.findFirst === 'function'
+      [
+        'PENDING_SCHOOL_SELECTION',
+        'PENDING_PROSPECTUS',
+        'PENDING_HISTORICAL_CCG',
+      ].includes(user.scholar_profile.academic_baseline_status) &&
+      typeof (this.prisma as any).academicChangeRequest?.findFirst ===
+        'function'
     ) {
-      const approvedShift = await (this.prisma as any).academicChangeRequest.findFirst({
+      const approvedShift = await (
+        this.prisma as any
+      ).academicChangeRequest.findFirst({
         where: {
           scholar_profile_id: user.scholar_profile.profile_id,
           status: 'APPROVED',
@@ -72,7 +91,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           where: { profile_id: user.scholar_profile.profile_id },
           data: { academic_baseline_status: 'PENDING_SHIFT_PROSPECTUS' },
         });
-        user.scholar_profile.academic_baseline_status = 'PENDING_SHIFT_PROSPECTUS';
+        user.scholar_profile.academic_baseline_status =
+          'PENDING_SHIFT_PROSPECTUS';
       }
     }
 
@@ -90,7 +110,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         banner_url?: string;
       }) || {};
 
-    return {
+    const validatedUser = {
       ...result,
       first_name: profile.first_name || '',
       middle_name: profile.middle_name ?? null,
@@ -101,5 +121,39 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       avatar_url: profile.avatar_url ?? null,
       banner_url: profile.banner_url ?? null,
     };
+
+    if (this.cacheService) {
+      await this.cacheService.set(
+        jwtUserCacheKey(payload.sub),
+        validatedUser,
+        JWT_USER_CACHE_TTL_MS,
+      );
+    }
+
+    return validatedUser;
+  }
+
+  async validate(payload: JwtPayload) {
+    if (this.cacheService) {
+      const cached = await this.cacheService.get<Record<string, unknown>>(
+        jwtUserCacheKey(payload.sub),
+      );
+      if (cached) {
+        return cached;
+      }
+
+      const existing = this.inFlight.get(payload.sub);
+      if (existing) {
+        return existing;
+      }
+
+      const promise = this.loadAndValidateUser(payload).finally(() => {
+        this.inFlight.delete(payload.sub);
+      });
+      this.inFlight.set(payload.sub, promise);
+      return promise;
+    }
+
+    return this.loadAndValidateUser(payload);
   }
 }

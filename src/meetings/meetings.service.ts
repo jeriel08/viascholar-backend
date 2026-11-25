@@ -83,7 +83,7 @@ export class MeetingsService {
     const page = query.page ?? 1;
     const limit = Math.min(query.limit ?? 50, 200);
 
-    const [total, meetings] = await this.prisma.$transaction([
+    const [total, meetings] = await Promise.all([
       this.prisma.meeting.count({ where }),
       this.prisma.meeting.findMany({
         where,

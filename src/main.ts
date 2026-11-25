@@ -2,10 +2,22 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module.js';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ValidationPipe } from '@nestjs/common';
+import type { NextFunction, Request, Response } from 'express';
 import { JwtExceptionFilter } from './auth/filters/jwt-exception.filter.js';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  app.use(
+    (
+      req: Request & { __perfStart?: number },
+      _res: Response,
+      next: NextFunction,
+    ) => {
+      req.__perfStart = performance.now();
+      next();
+    },
+  );
 
   const allowedOrigins = [
     'http://localhost:3000',
@@ -35,6 +47,13 @@ async function bootstrap() {
       }
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    exposedHeaders: [
+      'X-Response-Time',
+      'X-Handler-Time',
+      'X-Auth-Guard-Time',
+      'X-Cache',
+      'Server-Timing',
+    ],
     credentials: true,
   });
   app.useGlobalFilters(new JwtExceptionFilter());

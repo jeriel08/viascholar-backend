@@ -452,11 +452,6 @@ export class ScholarEnrollmentService {
   ) {
     const scholar = await this.getScholarProfile(userId);
 
-    const academicLock = await this.getAcademicStandingLock(
-      scholar.profile_id,
-      scholar,
-    );
-
     const whereClause: any = { scholar_profile_id: scholar.profile_id };
     if (academicYear && semester) {
       whereClause.academic_year = academicYear;
@@ -465,15 +460,32 @@ export class ScholarEnrollmentService {
       whereClause.status = { not: 'COMPLETED' };
     }
 
-    let enrollment = await this.prisma.termEnrollment.findFirst({
-      where: whereClause,
-      orderBy: { created_at: 'desc' },
-      include: {
-        cor_document: true,
-        soa_document: true,
-        disbursement: true,
-      },
-    });
+    const [academicLock, activeEnrollment, initialCompletedEnrollment] =
+      await Promise.all([
+        this.getAcademicStandingLock(scholar.profile_id, scholar),
+        this.prisma.termEnrollment.findFirst({
+          where: whereClause,
+          orderBy: { created_at: 'desc' },
+          include: {
+            cor_document: true,
+            soa_document: true,
+            disbursement: true,
+          },
+        }),
+        this.prisma.termEnrollment.findFirst({
+          where: {
+            scholar_profile_id: scholar.profile_id,
+            status: 'COMPLETED',
+          },
+          orderBy: { updated_at: 'desc' },
+          include: {
+            disbursement: true,
+          },
+        }),
+      ]);
+
+    let enrollment = activeEnrollment;
+    let completedEnrollment = initialCompletedEnrollment;
 
     if (
       enrollment &&
@@ -494,25 +506,27 @@ export class ScholarEnrollmentService {
       enrollment &&
       (enrollment.status === 'APPROVED' || enrollment.status === 'SUBMITTED')
     ) {
-      const confirmedCcg = await this.prisma.scholarDocument.findFirst({
-        where: {
-          scholar_profile_id: scholar.profile_id,
-          document_type: 'CCG',
-          status: { in: ['STUDENT_CONFIRMED', 'VERIFIED'] },
-        },
-      });
-      const hasGradeReport = await this.prisma.gradeReport.findFirst({
-        where: {
-          scholar_profile_id: scholar.profile_id,
-          OR: [
-            { term_enrollment_id: enrollment.enrollment_id },
-            {
-              academic_year: enrollment.academic_year,
-              semester: enrollment.semester,
-            },
-          ],
-        },
-      });
+      const [confirmedCcg, hasGradeReport] = await Promise.all([
+        this.prisma.scholarDocument.findFirst({
+          where: {
+            scholar_profile_id: scholar.profile_id,
+            document_type: 'CCG',
+            status: { in: ['STUDENT_CONFIRMED', 'VERIFIED'] },
+          },
+        }),
+        this.prisma.gradeReport.findFirst({
+          where: {
+            scholar_profile_id: scholar.profile_id,
+            OR: [
+              { term_enrollment_id: enrollment.enrollment_id },
+              {
+                academic_year: enrollment.academic_year,
+                semester: enrollment.semester,
+              },
+            ],
+          },
+        }),
+      ]);
 
       let hasMatchingCcg = false;
       if (confirmedCcg) {
@@ -554,20 +568,19 @@ export class ScholarEnrollmentService {
               : 'Term concluded with CCG submission. Cleared for next term enrollment.',
           },
         });
+        completedEnrollment = await this.prisma.termEnrollment.findFirst({
+          where: {
+            scholar_profile_id: scholar.profile_id,
+            status: 'COMPLETED',
+          },
+          orderBy: { updated_at: 'desc' },
+          include: {
+            disbursement: true,
+          },
+        });
         enrollment = null;
       }
     }
-
-    let completedEnrollment = await this.prisma.termEnrollment.findFirst({
-      where: {
-        scholar_profile_id: scholar.profile_id,
-        status: 'COMPLETED',
-      },
-      orderBy: { updated_at: 'desc' },
-      include: {
-        disbursement: true,
-      },
-    });
 
     // Self-heal an enrollment that was prematurely auto-completed before Coordinator review
     if (
@@ -1653,8 +1666,10 @@ export class ScholarEnrollmentService {
 
   // 7. Pre-audit calculation before final submission
   async runPreAudit(userId: number, dto: SubmitEnrollmentDto) {
-    const scholar = await this.getScholarProfile(userId);
-    const auditMeta = await this.buildSubmitAuditMeta(dto);
+    const [scholar, auditMeta] = await Promise.all([
+      this.getScholarProfile(userId),
+      this.buildSubmitAuditMeta(dto),
+    ]);
     return this.auditEngineService.runAudit(
       scholar.profile_id,
       dto.enrolled_subjects,
