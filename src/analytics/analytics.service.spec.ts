@@ -1681,4 +1681,217 @@ describe('AnalyticsService', () => {
       expect(result.keyHighlights).toEqual(['Status: Active Semester Report']);
     });
   });
+
+  describe('historical term awareness and verified graduate counts', () => {
+    const setupHistoricalDataset = () => {
+      prisma.termEnrollment.findMany.mockResolvedValue([
+        {
+          academic_year: '2022-2023',
+          semester: '1st Semester',
+          total_assessment: '30000',
+          status: 'ENROLLED',
+        },
+        {
+          academic_year: '2023-2024',
+          semester: '1st Semester',
+          total_assessment: '35000',
+          status: 'ENROLLED',
+        },
+        {
+          academic_year: '2025-2026',
+          semester: '1st Semester',
+          total_assessment: '40000',
+          status: 'ENROLLED',
+        },
+      ]);
+      prisma.disbursement.findMany.mockResolvedValue([
+        {
+          academic_year: '2023-2024',
+          semester: '1st Semester',
+          amount: '35000',
+          status: 'SETTLED',
+        },
+        {
+          academic_year: '2025-2026',
+          semester: '1st Semester',
+          amount: '40000',
+          status: 'SETTLED',
+        },
+      ]);
+
+      const graduatedScholar = makeScholar({
+        profile_id: 101,
+        first_name: 'Maria',
+        last_name: 'Clara',
+        current_year_level: 4,
+        archived_at: new Date('2024-06-15T00:00:00.000Z'),
+        archive_reason: 'GRADUATED',
+        enrollments: [
+          makeEnrollment({
+            academic_year: '2022-2023',
+            semester: '1st Semester',
+            year_level: 3,
+          }),
+          makeEnrollment({
+            academic_year: '2023-2024',
+            semester: '1st Semester',
+            year_level: 4,
+            total_assessment: '35000',
+          }),
+        ],
+        grade_reports: [
+          makeGradeReport({
+            academic_year: '2022-2023',
+            semester: '1st Semester',
+            gpa: '3.5',
+          }),
+          makeGradeReport({
+            academic_year: '2023-2024',
+            semester: '1st Semester',
+            gpa: '3.8',
+          }),
+        ],
+        disbursements: [
+          makeDisbursement({
+            disbursement_id: 10,
+            academic_year: '2023-2024',
+            semester: '1st Semester',
+            amount: '35000',
+            status: 'SETTLED',
+          }),
+        ],
+      });
+
+      const seniorContinuingScholar = makeScholar({
+        profile_id: 102,
+        first_name: 'Jose',
+        last_name: 'Rizal',
+        current_year_level: 4,
+        archived_at: null,
+        archive_reason: null,
+        enrollments: [
+          makeEnrollment({
+            academic_year: '2023-2024',
+            semester: '1st Semester',
+            year_level: 4,
+            total_assessment: '30000',
+          }),
+          makeEnrollment({
+            academic_year: '2025-2026',
+            semester: '1st Semester',
+            year_level: 5,
+            total_assessment: '40000',
+          }),
+        ],
+        grade_reports: [
+          makeGradeReport({
+            academic_year: '2025-2026',
+            semester: '1st Semester',
+            gpa: '3.2',
+          }),
+        ],
+        disbursements: [],
+      });
+
+      prisma.scholarProfile.findMany.mockResolvedValue([
+        graduatedScholar,
+        seniorContinuingScholar,
+      ]);
+    };
+
+    it('marks latest academic year as non-historical and earlier years as historical', async () => {
+      setupHistoricalDataset();
+
+      const activeRes = await loadAnalytics({
+        academicYear: '2025-2026',
+        semester: '1st Semester',
+      });
+      expect(activeRes.filterOptions.isHistoricalTerm).toBe(false);
+      expect(activeRes.filterOptions.graduationClassYear).toBe(2026);
+
+      const pastRes = await loadAnalytics({
+        academicYear: '2023-2024',
+        semester: '1st Semester',
+      });
+      expect(pastRes.filterOptions.isHistoricalTerm).toBe(true);
+      expect(pastRes.filterOptions.graduationClassYear).toBe(2024);
+    });
+
+    it('scopes verified graduate counts to their graduation academic year and separates continuing seniors', async () => {
+      setupHistoricalDataset();
+
+      const sy2324 = await loadAnalytics({
+        academicYear: '2023-2024',
+        semester: '1st Semester',
+      });
+
+      const maria = sy2324.scholars.find((s) => s.id === 101);
+      const jose = sy2324.scholars.find((s) => s.id === 102);
+
+      expect(maria).toMatchObject({
+        isGraduating: true,
+        isGraduatedInTerm: true,
+        archiveReason: 'GRADUATED',
+      });
+      expect(jose).toMatchObject({
+        isGraduating: true,
+        isGraduatedInTerm: false,
+      });
+      expect(sy2324.academicAspect.graduatingCount).toBe(2);
+      expect(sy2324.academicAspect.graduatedCount).toBe(1);
+      expect(sy2324.academicAspect.graduatedPercent).toBe(50);
+
+      // Earlier term (2022-2023) before graduation should not count Maria as graduated yet
+      const sy2223 = await loadAnalytics({
+        academicYear: '2022-2023',
+        semester: '1st Semester',
+      });
+      expect(sy2223.academicAspect.graduatedCount).toBe(0);
+      expect(sy2223.scholars[0].isGraduatedInTerm).toBe(false);
+    });
+
+    it('generates past-tense narratives and historical heuristics for past terms', async () => {
+      setupHistoricalDataset();
+
+      const sy2324 = await loadAnalytics({
+        academicYear: '2023-2024',
+        semester: '1st Semester',
+      });
+
+      expect(sy2324.descriptiveNarratives.financialSummary).toContain('was');
+      expect(sy2324.descriptiveNarratives.financialSummary).toContain(
+        'had no recorded disbursement',
+      );
+      expect(sy2324.descriptiveNarratives.academicSummary).toContain(
+        'graduated in SY 2023-2024',
+      );
+      expect(sy2324.descriptiveNarratives.academicSummary).not.toContain(
+        'graduating this academic year',
+      );
+
+      const heuristic = service['generateStatisticalHeuristicExplanation'](
+        makeExplainDto({
+          chartType: 'ACADEMIC_COMPLIANCE_SUMMARY',
+          metrics: {
+            isHistoricalTerm: true,
+            unsubmittedGradesPercent: 50,
+            unsubmittedGradesCount: 1,
+            notEnrolledPercent: 0,
+            notEnrolledCount: 0,
+            graduatingPercent: 100,
+            graduatingCount: 2,
+            graduatedPercent: 50,
+            graduatedCount: 1,
+          },
+        }),
+      );
+
+      expect(heuristic.summary).toContain('graduated during this term');
+      expect(heuristic.keyHighlights).toEqual([
+        'Missing Grade Records: 50% (1 scholars)',
+        'No Enrollment Record: 0% (0 scholars)',
+        'Graduated Scholars: 50% (1 scholars)',
+      ]);
+    });
+  });
 });

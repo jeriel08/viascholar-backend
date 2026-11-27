@@ -75,6 +75,8 @@ export interface AcademicAspectData {
   enrolledPercent: number;
   graduatingCount: number;
   graduatingPercent: number;
+  graduatedCount: number;
+  graduatedPercent: number;
   undergradCount: number;
   undergradPercent: number;
   totalScholarsCount: number;
@@ -97,6 +99,7 @@ export interface ScholarOperationalItem {
   track: string;
   yearLevel: number;
   isGraduating: boolean;
+  isGraduatedInTerm: boolean;
   enrollmentStatus: 'ENROLLED' | 'NOT_ENROLLED';
   gradeStatus: 'SUBMITTED' | 'UNSUBMITTED';
   gwa: number;
@@ -114,6 +117,8 @@ export interface AnalyticsFilterOptions {
   termsByYear?: Record<string, string[]>;
   selectedSemester: string;
   selectedAcademicYear: string;
+  isHistoricalTerm: boolean;
+  graduationClassYear: number | null;
 }
 
 @Injectable()
@@ -602,6 +607,44 @@ export class AnalyticsService {
         let totalPendingAmount = 0;
 
         const latestAcademicYear = availableAcademicYears[0];
+        const parseAyBounds = (
+          ay?: string | null,
+        ): { start: number; end: number } | null => {
+          const norm = normalizeAy(ay);
+          if (!norm || norm === 'all') return null;
+          const spanMatch = norm.match(/^(\d{4})\s*-\s*(\d{4})$/);
+          if (spanMatch) {
+            return {
+              start: Number(spanMatch[1]),
+              end: Number(spanMatch[2]),
+            };
+          }
+          const singleMatch = norm.match(/(\d{4})/);
+          if (singleMatch) {
+            const yr = Number(singleMatch[1]);
+            return { start: yr, end: yr };
+          }
+          return null;
+        };
+
+        const selectedAyBounds =
+          selectedAcademicYear !== 'ALL'
+            ? parseAyBounds(selectedAcademicYear)
+            : null;
+        const latestAyBounds = latestAcademicYear
+          ? parseAyBounds(latestAcademicYear)
+          : null;
+        const isHistoricalTerm =
+          selectedAcademicYear !== 'ALL' &&
+          Boolean(latestAcademicYear) &&
+          normalizeAy(selectedAcademicYear) !== normalizeAy(latestAcademicYear) &&
+          (selectedAyBounds && latestAyBounds
+            ? selectedAyBounds.start < latestAyBounds.start
+            : true);
+        const graduationClassYear = selectedAyBounds
+          ? selectedAyBounds.end
+          : null;
+
         const isSummerSelected =
           normalizeSemester(selectedSemester) === 'Summer';
 
@@ -664,6 +707,48 @@ export class AnalyticsService {
               ? enrollmentYearLevel
               : scholar.current_year_level || 1;
           const isGraduating = yearLevel >= 4;
+
+          let isGraduatedInTerm = false;
+          if (scholar.archive_reason === 'GRADUATED') {
+            if (selectedAcademicYear === 'ALL') {
+              isGraduatedInTerm = true;
+            } else {
+              const recordedAcademicYears = [
+                ...scholar.enrollments
+                  .filter((e) => this.isOfficialEnrollmentForAnalytics(e))
+                  .map((e) => e.academic_year),
+                ...scholar.disbursements.map((d) => d.academic_year),
+                ...scholar.grade_reports
+                  .filter(
+                    (g) =>
+                      !this.isForm9OrApplicationGrade(g) &&
+                      !this.isUnverifiedDocStatus(g.document?.status),
+                  )
+                  .map((g) => g.academic_year),
+              ].filter((ay): ay is string => Boolean(ay && ay.trim()));
+
+              let finalRecordedAy: string | null = null;
+              let maxStartYear = -1;
+              for (const ay of recordedAcademicYears) {
+                const bounds = parseAyBounds(ay);
+                if (bounds && bounds.start > maxStartYear) {
+                  maxStartYear = bounds.start;
+                  finalRecordedAy = normalizeAcademicYear(ay) || ay;
+                }
+              }
+
+              if (finalRecordedAy) {
+                isGraduatedInTerm = academicYearsMatchForTerm(
+                  finalRecordedAy,
+                  selectedAcademicYear,
+                );
+              } else if (scholar.archived_at && graduationClassYear !== null) {
+                isGraduatedInTerm =
+                  new Date(scholar.archived_at).getFullYear() ===
+                  graduationClassYear;
+              }
+            }
+          }
 
           const hasEnrolled = Boolean(activeEnrollment);
 
@@ -838,6 +923,7 @@ export class AnalyticsService {
             track,
             yearLevel,
             isGraduating,
+            isGraduatedInTerm,
             enrollmentStatus: hasEnrolled ? 'ENROLLED' : 'NOT_ENROLLED',
             gradeStatus: hasSubmittedGrade ? 'SUBMITTED' : 'UNSUBMITTED',
             gwa: Number(gwa.toFixed(2)),
@@ -920,6 +1006,14 @@ export class AnalyticsService {
             ? Number(((graduatingCount / totalN) * 100).toFixed(1))
             : 0;
 
+        const graduatedCount = operationalScholars.filter(
+          (s) => s.isGraduatedInTerm,
+        ).length;
+        const graduatedPercent =
+          totalN > 0
+            ? Number(((graduatedCount / totalN) * 100).toFixed(1))
+            : 0;
+
         const undergradCount = totalN - graduatingCount;
         const undergradPercent =
           totalN > 0 ? Number(((undergradCount / totalN) * 100).toFixed(1)) : 0;
@@ -990,6 +1084,8 @@ export class AnalyticsService {
           enrolledPercent,
           graduatingCount,
           graduatingPercent,
+          graduatedCount,
+          graduatedPercent,
           undergradCount,
           undergradPercent,
           totalScholarsCount: totalN,
@@ -1006,8 +1102,9 @@ export class AnalyticsService {
         const scholarWord = (count: number) =>
           count === 1 ? 'scholar' : 'scholars';
 
-        let financialSummary =
-          'No active scholars found for the selected semester and school year.';
+        let financialSummary = isHistoricalTerm
+          ? 'No scholars found for the selected historical term.'
+          : 'No active scholars found for the selected semester and school year.';
         if (totalN > 0) {
           const totalProjectedStr =
             financialAspect.totalSemesterAssessment.toLocaleString();
@@ -1015,37 +1112,73 @@ export class AnalyticsService {
             financialAspect.totalDisbursedAmount.toLocaleString();
           const totalPendingStr =
             financialAspect.totalPendingAmount.toLocaleString();
-          const intro = `For ${termLabel}, the total projected semester imbursement is ₱${totalProjectedStr} across ${totalN} ${scholarWord(totalN)}.`;
 
-          if (undisbursedCount === 0) {
-            const allText =
-              totalN === 1
-                ? 'All 1 scholar (100%) has'
-                : `All ${totalN} scholars (100%) have`;
-            financialSummary = `${intro} ${allText} received disbursements totaling ₱${totalDisbursedStr}, with no pending allocations remaining.`;
-          } else if (disbursedCount === 0) {
-            if (
-              financialAspect.totalPendingAmount > 0 ||
-              financialAspect.totalSemesterAssessment > 0
-            ) {
-              financialSummary = `${intro} No disbursements have been released yet, with ${undisbursedPercent}% (${undisbursedCount} ${scholarWord(undisbursedCount)}) awaiting release totaling ₱${totalPendingStr} in pending allocations.`;
+          if (isHistoricalTerm) {
+            const intro = `For ${termLabel}, the total recorded semester imbursement was ₱${totalProjectedStr} across ${totalN} ${scholarWord(totalN)}.`;
+            if (undisbursedCount === 0) {
+              const allText =
+                totalN === 1
+                  ? 'All 1 scholar (100%) received disbursements'
+                  : `All ${totalN} scholars (100%) received disbursements`;
+              financialSummary = `${intro} ${allText} totaling ₱${totalDisbursedStr}, with no remaining balance.`;
+            } else if (disbursedCount === 0) {
+              if (
+                financialAspect.totalPendingAmount > 0 ||
+                financialAspect.totalSemesterAssessment > 0
+              ) {
+                financialSummary = `${intro} No disbursements were recorded, leaving ${undisbursedPercent}% (${undisbursedCount} ${scholarWord(undisbursedCount)}) without a released disbursement (₱${totalPendingStr} unrecorded/undisbursed).`;
+              } else {
+                financialSummary = `For ${termLabel}, no semester assessments or disbursements were recorded across ${totalN} ${scholarWord(totalN)}.`;
+              }
             } else {
-              financialSummary = `For ${termLabel}, no semester assessments or disbursements have been recorded yet across ${totalN} ${scholarWord(totalN)}.`;
+              const pendingPhrase =
+                financialAspect.totalPendingAmount > 0
+                  ? ` (₱${totalPendingStr} undisbursed)`
+                  : '';
+              financialSummary = `${intro} ${disbursedPercent}% (${disbursedCount} ${scholarWord(disbursedCount)}) received disbursements totaling ₱${totalDisbursedStr}, while ${undisbursedPercent}% (${undisbursedCount} ${scholarWord(undisbursedCount)}) had no recorded disbursement${pendingPhrase}.`;
             }
           } else {
-            const pendingPhrase =
-              financialAspect.totalPendingAmount > 0
-                ? ` representing ₱${totalPendingStr} in pending allocations`
-                : '';
-            financialSummary = `${intro} Currently, ${disbursedPercent}% (${disbursedCount} ${scholarWord(disbursedCount)}) ${disbursedCount === 1 ? 'has' : 'have'} received disbursements totaling ₱${totalDisbursedStr}, while ${undisbursedPercent}% (${undisbursedCount} ${scholarWord(undisbursedCount)}) ${undisbursedCount === 1 ? 'is' : 'are'} awaiting release${pendingPhrase}.`;
+            const intro = `For ${termLabel}, the total projected semester imbursement is ₱${totalProjectedStr} across ${totalN} ${scholarWord(totalN)}.`;
+
+            if (undisbursedCount === 0) {
+              const allText =
+                totalN === 1
+                  ? 'All 1 scholar (100%) has'
+                  : `All ${totalN} scholars (100%) have`;
+              financialSummary = `${intro} ${allText} received disbursements totaling ₱${totalDisbursedStr}, with no pending allocations remaining.`;
+            } else if (disbursedCount === 0) {
+              if (
+                financialAspect.totalPendingAmount > 0 ||
+                financialAspect.totalSemesterAssessment > 0
+              ) {
+                financialSummary = `${intro} No disbursements have been released yet, with ${undisbursedPercent}% (${undisbursedCount} ${scholarWord(undisbursedCount)}) awaiting release totaling ₱${totalPendingStr} in pending allocations.`;
+              } else {
+                financialSummary = `For ${termLabel}, no semester assessments or disbursements have been recorded yet across ${totalN} ${scholarWord(totalN)}.`;
+              }
+            } else {
+              const pendingPhrase =
+                financialAspect.totalPendingAmount > 0
+                  ? ` representing ₱${totalPendingStr} in pending allocations`
+                  : '';
+              financialSummary = `${intro} Currently, ${disbursedPercent}% (${disbursedCount} ${scholarWord(disbursedCount)}) ${disbursedCount === 1 ? 'has' : 'have'} received disbursements totaling ₱${totalDisbursedStr}, while ${undisbursedPercent}% (${undisbursedCount} ${scholarWord(undisbursedCount)}) ${undisbursedCount === 1 ? 'is' : 'are'} awaiting release${pendingPhrase}.`;
+            }
           }
         }
 
-        let academicSummary =
-          'No active scholars found for the selected semester and school year.';
+        let academicSummary = isHistoricalTerm
+          ? 'No scholars found for the selected historical term.'
+          : 'No active scholars found for the selected semester and school year.';
         if (totalN > 0) {
           let enrollmentClause = '';
-          if (notEnrolledCount === 0) {
+          if (isHistoricalTerm) {
+            if (notEnrolledCount === 0) {
+              enrollmentClause = `For ${termLabel}, ${enrolledPercent}% (${enrolledCount} ${scholarWord(enrolledCount)}) completed enrollment.`;
+            } else if (enrolledCount === 0) {
+              enrollmentClause = `For ${termLabel}, ${notEnrolledPercent}% (${notEnrolledCount} ${scholarWord(notEnrolledCount)}) had no enrollment record on file.`;
+            } else {
+              enrollmentClause = `For ${termLabel}, ${enrolledPercent}% (${enrolledCount} ${scholarWord(enrolledCount)}) completed enrollment, while ${notEnrolledPercent}% (${notEnrolledCount} ${scholarWord(notEnrolledCount)}) had no enrollment record on file.`;
+            }
+          } else if (notEnrolledCount === 0) {
             enrollmentClause = `For ${termLabel}, ${enrolledPercent}% (${enrolledCount} ${scholarWord(enrolledCount)}) ${enrolledCount === 1 ? 'has' : 'have'} completed enrollment.`;
           } else if (enrolledCount === 0) {
             enrollmentClause = `For ${termLabel}, ${notEnrolledPercent}% (${notEnrolledCount} ${scholarWord(notEnrolledCount)}) ${notEnrolledCount === 1 ? 'has' : 'have'} not enrolled yet.`;
@@ -1055,15 +1188,20 @@ export class AnalyticsService {
 
           let gradesClause = '';
           if (unsubmittedGradesCount === 0) {
-            const allGradesText =
-              submittedGradesCount === 1
+            const allGradesText = isHistoricalTerm
+              ? `All ${submittedGradesCount === 1 ? '1 scholar (100%)' : `${submittedGradesCount} scholars (100%)`}`
+              : submittedGradesCount === 1
                 ? 'All 1 scholar (100%) has'
                 : `All ${submittedGradesCount} scholars (100%) have`;
             gradesClause = `${allGradesText} submitted their grade reports`;
           } else if (submittedGradesCount === 0) {
-            gradesClause = `${unsubmittedGradesPercent}% (${unsubmittedGradesCount} ${scholarWord(unsubmittedGradesCount)} ${unsubmittedGradesCount === 1 ? 'has' : 'have'}) not yet submitted their grades`;
+            gradesClause = isHistoricalTerm
+              ? `${unsubmittedGradesPercent}% (${unsubmittedGradesCount} ${scholarWord(unsubmittedGradesCount)}) had no recorded grade report`
+              : `${unsubmittedGradesPercent}% (${unsubmittedGradesCount} ${scholarWord(unsubmittedGradesCount)} ${unsubmittedGradesCount === 1 ? 'has' : 'have'}) not yet submitted their grades`;
           } else {
-            gradesClause = `${submittedGradesPercent}% (${submittedGradesCount} ${scholarWord(submittedGradesCount)}) submitted grades while ${unsubmittedGradesPercent}% (${unsubmittedGradesCount} ${scholarWord(unsubmittedGradesCount)} ${unsubmittedGradesCount === 1 ? 'has' : 'have'}) not yet submitted their grades`;
+            gradesClause = isHistoricalTerm
+              ? `${submittedGradesPercent}% (${submittedGradesCount} ${scholarWord(submittedGradesCount)}) submitted grades while ${unsubmittedGradesPercent}% (${unsubmittedGradesCount} ${scholarWord(unsubmittedGradesCount)}) had no recorded grade report`
+              : `${submittedGradesPercent}% (${submittedGradesCount} ${scholarWord(submittedGradesCount)}) submitted grades while ${unsubmittedGradesPercent}% (${unsubmittedGradesCount} ${scholarWord(unsubmittedGradesCount)} ${unsubmittedGradesCount === 1 ? 'has' : 'have'}) not yet submitted their grades`;
           }
 
           const standingParts: string[] = [];
@@ -1081,10 +1219,16 @@ export class AnalyticsService {
           const standingSuffix =
             standingParts.length > 0 ? ` (${standingParts.join(', ')})` : '';
 
-          const graduatingClause =
-            graduatingCount > 0
-              ? ` Additionally, ${graduatingPercent}% (${graduatingCount} ${scholarWord(graduatingCount)} ${graduatingCount === 1 ? 'is' : 'are'}) graduating this academic year.`
-              : '';
+          let graduatingClause = '';
+          if (isHistoricalTerm) {
+            if (graduatedCount > 0) {
+              graduatingClause = ` Additionally, ${graduatedPercent}% (${graduatedCount} ${scholarWord(graduatedCount)}) graduated in SY ${selectedAcademicYear}.`;
+            } else if (graduatingCount > 0) {
+              graduatingClause = ` Additionally, ${graduatingPercent}% (${graduatingCount} ${scholarWord(graduatingCount)}) belonged to the senior cohort (4th year and above).`;
+            }
+          } else if (graduatingCount > 0) {
+            graduatingClause = ` Additionally, ${graduatingPercent}% (${graduatingCount} ${scholarWord(graduatingCount)} ${graduatingCount === 1 ? 'is' : 'are'}) graduating this academic year.`;
+          }
 
           academicSummary = `${enrollmentClause} ${gradesClause}${standingSuffix}.${graduatingClause}`;
         }
@@ -1100,6 +1244,8 @@ export class AnalyticsService {
           termsByYear: formattedTermsByYear,
           selectedSemester,
           selectedAcademicYear,
+          isHistoricalTerm,
+          graduationClassYear,
         };
 
         const overallStats = this.computeDescriptiveStats(
@@ -1142,7 +1288,7 @@ ${dto.dataPoints ? `Sample Data Points: ${JSON.stringify(dto.dataPoints.slice(0,
 
 CRITICAL GUIDELINES:
 1. Speak in friendly, plain English. Do NOT use mathematical jargon like standard deviation, variance, quartiles, or Greek symbols.
-2. Focus strictly on current descriptive status: how many scholars are disbursed vs undisbursed, missing requirements (grades, enrollment), or graduating.
+2. Focus strictly on current descriptive status: how many scholars are disbursed vs undisbursed, missing requirements (grades, enrollment), or graduating (or, if metrics.isHistoricalTerm is true, refer to the selected term in past tense and distinguish graduated scholars from active graduating cohorts).
 3. NEVER mention or show time-series trends, forecasting, or historical drift — coordinators and grantors do NOT include trends in their reports.
 4. Provide practical next steps for coordinator requirement collection and grantor funding allocation.
 
@@ -1194,6 +1340,7 @@ Return ONLY a JSON object with this exact structure (no markdown formatting, no 
   private generateStatisticalHeuristicExplanation(dto: ExplainChartDto) {
     if (dto.chartType === 'FINANCIAL_DISBURSEMENT_SUMMARY') {
       const m = dto.metrics || {};
+      const isHistoricalTerm = Boolean(m.isHistoricalTerm);
       const disbursedPct = Number(m.disbursedPercent || 0);
       const undisbursedPct = Number(m.undisbursedPercent || 0);
       const disbursedCount = Number(m.disbursedCount || 0);
@@ -1201,6 +1348,23 @@ Return ONLY a JSON object with this exact structure (no markdown formatting, no 
       const totalAssessment = Number(m.totalSemesterAssessment || 0);
       const totalDisbursed = Number(m.totalDisbursedAmount || 0);
       const totalPending = Number(m.totalPendingAmount || 0);
+
+      if (isHistoricalTerm) {
+        return {
+          summary: `${disbursedPct}% of scholars (${disbursedCount}) received their semester disbursement, while ${undisbursedPct}% (${undisbursedCount}) had no recorded disbursement for this term.`,
+          statisticalInterpretation: `Out of the ₱${totalAssessment.toLocaleString()} assessed for this historical term, ₱${totalDisbursed.toLocaleString()} was disbursed to scholars or schools, leaving ₱${totalPending.toLocaleString()} undisbursed or unrecorded.`,
+          recommendations: [
+            'Reconcile any unrecorded historical disbursements against archived SOA and Official Receipt records.',
+            'Review undisbursed scholar accounts to confirm whether scholars withdrew or became ineligible prior to release.',
+          ],
+          keyHighlights: [
+            `Disbursed Scholars: ${disbursedPct}% (${disbursedCount})`,
+            `Undisbursed Scholars: ${undisbursedPct}% (${undisbursedCount})`,
+            `Total Disbursed: ₱${totalDisbursed.toLocaleString()}`,
+            `Undisbursed Balance: ₱${totalPending.toLocaleString()}`,
+          ],
+        };
+      }
 
       return {
         summary: `${disbursedPct}% of scholars (${disbursedCount}) have received their semester disbursement, while ${undisbursedPct}% (${undisbursedCount}) are waiting for funds release.`,
@@ -1220,12 +1384,32 @@ Return ONLY a JSON object with this exact structure (no markdown formatting, no 
 
     if (dto.chartType === 'ACADEMIC_COMPLIANCE_SUMMARY') {
       const m = dto.metrics || {};
+      const isHistoricalTerm = Boolean(m.isHistoricalTerm);
       const unsubmittedGradesPct = Number(m.unsubmittedGradesPercent || 0);
       const unsubmittedGradesCount = Number(m.unsubmittedGradesCount || 0);
       const notEnrolledPct = Number(m.notEnrolledPercent || 0);
       const notEnrolledCount = Number(m.notEnrolledCount || 0);
       const graduatingPct = Number(m.graduatingPercent || 0);
       const graduatingCount = Number(m.graduatingCount || 0);
+
+      if (isHistoricalTerm) {
+        const graduatedPct = Number(m.graduatedPercent ?? graduatingPct);
+        const graduatedCount = Number(m.graduatedCount ?? graduatingCount);
+
+        return {
+          summary: `${notEnrolledPct}% of scholars had no enrollment record on file, ${unsubmittedGradesPct}% had missing grade records, and ${graduatedPct}% graduated during this term.`,
+          statisticalInterpretation: `Historical academic snapshots capture verified enrollment, grade reports, and finalized graduation outcomes archived for the selected school year.`,
+          recommendations: [
+            'Audit missing historical COR and grade report records if legacy documents still need archival encoding.',
+            'Verify that all graduating seniors from this cohort have their GRADUATED alumni status recorded.',
+          ],
+          keyHighlights: [
+            `Missing Grade Records: ${unsubmittedGradesPct}% (${unsubmittedGradesCount} scholars)`,
+            `No Enrollment Record: ${notEnrolledPct}% (${notEnrolledCount} scholars)`,
+            `Graduated Scholars: ${graduatedPct}% (${graduatedCount} scholars)`,
+          ],
+        };
+      }
 
       return {
         summary: `${notEnrolledPct}% of scholars have not yet enrolled, ${unsubmittedGradesPct}% have pending grade submissions, and ${graduatingPct}% are in their graduating year.`,
