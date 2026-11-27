@@ -5,6 +5,7 @@ import { SettingsService } from '../settings/settings.service.js';
 import { Role } from '../generated/prisma/enums.js';
 import { AnalyticsQueryDto, ExplainChartDto } from './dto/analytics.dto.js';
 import { AppCacheService } from '../common/cache/app-cache.service.js';
+import { evaluateProspectusGraduation } from '../common/utils/graduation-readiness.util.js';
 import {
   academicYearsMatchForTerm,
   normalizeAcademicYear,
@@ -365,8 +366,12 @@ export class AnalyticsService {
               prospectus: {
                 include: {
                   subjects: {
-                    where: { status: { in: ['PASSED', 'CREDITED'] } },
-                    select: { units: true, grade: true },
+                    select: {
+                      units: true,
+                      grade: true,
+                      status: true,
+                      year_level: true,
+                    },
                   },
                 },
               },
@@ -706,7 +711,12 @@ export class AnalyticsService {
             Number.isFinite(enrollmentYearLevel) && enrollmentYearLevel > 0
               ? enrollmentYearLevel
               : scholar.current_year_level || 1;
-          const isGraduating = yearLevel >= 4;
+          const gradEval = evaluateProspectusGraduation(
+            scholar.prospectus,
+            yearLevel,
+            Boolean(scholar.archived_at),
+          );
+          const isGraduating = gradEval.isGraduating;
 
           let isGraduatedInTerm = false;
           if (scholar.archive_reason === 'GRADUATED') {
@@ -808,7 +818,10 @@ export class AnalyticsService {
             gwa = Number(latestReport.gpa);
           } else if (scholar.prospectus?.subjects?.length) {
             const graded = scholar.prospectus.subjects.filter(
-              (s) => s.grade != null && !isNaN(Number(s.grade)),
+              (s) =>
+                (!s.status || s.status === 'PASSED' || s.status === 'CREDITED') &&
+                s.grade != null &&
+                !isNaN(Number(s.grade)),
             );
             if (graded.length > 0) {
               const totalW = graded.reduce(

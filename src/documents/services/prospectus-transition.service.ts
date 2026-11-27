@@ -1,7 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { SettingsService } from '../../settings/settings.service.js';
 import { AppCacheService } from '../../common/cache/app-cache.service.js';
+import { NotificationsService } from '../../notifications/notifications.service.js';
+import { EventsGateway } from '../../events/events.gateway.js';
+import { Role } from '../../generated/prisma/enums.js';
+import { evaluateProspectusGraduation } from '../../common/utils/graduation-readiness.util.js';
 import {
   Application,
   SchoolGradingSystem,
@@ -9,10 +13,14 @@ import {
 
 @Injectable()
 export class ProspectusTransitionService {
+  private readonly logger = new Logger(ProspectusTransitionService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly settingsService: SettingsService,
     private readonly cacheService: AppCacheService,
+    @Optional() private readonly notificationsService?: NotificationsService,
+    @Optional() private readonly eventsGateway?: EventsGateway,
   ) {}
 
   private normalizeSubjectCode(code?: string | null): string {
@@ -132,6 +140,135 @@ export class ProspectusTransitionService {
       );
     }
     await this.cacheService.del(`baseline:review:${scholarProfileId}`);
+
+    if (matchedSubjectIds.size > 0) {
+      try {
+        await this.checkAndNotifyGraduationReadiness(scholarProfileId);
+      } catch (err) {
+        this.logger.warn(
+          `Failed graduation readiness check for scholar profile ${scholarProfileId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Checks whether an active scholar's frozen prospectus has reached 100% completion.
+   * When ready and not yet notified, sends a confirmation notification to staff.
+   */
+  async checkAndNotifyGraduationReadiness(
+    scholarProfileId: number,
+  ): Promise<boolean> {
+    const prospectus = await this.prisma.scholarProspectus.findUnique({
+      where: { scholar_profile_id: scholarProfileId },
+      include: {
+        subjects: true,
+        scholar_profile: {
+          select: {
+            profile_id: true,
+            user_id: true,
+            first_name: true,
+            last_name: true,
+            archived_at: true,
+            current_year_level: true,
+            course_of_study: true,
+            user: { select: { role: true, email: true } },
+          },
+        },
+      },
+    });
+
+    const profile = prospectus?.scholar_profile as
+      | {
+          profile_id: number;
+          user_id: number;
+          first_name?: string | null;
+          last_name?: string | null;
+          archived_at?: Date | null;
+          current_year_level?: number | null;
+          course_of_study?: string | null;
+          user?: { role?: string | null; email?: string | null } | null;
+        }
+      | undefined;
+
+    if (!prospectus || !profile) {
+      return false;
+    }
+
+    if (profile.archived_at) {
+      return false;
+    }
+
+    if (profile.user?.role && profile.user.role !== 'SCHOLAR') {
+      return false;
+    }
+
+    const evalResult = evaluateProspectusGraduation(
+      prospectus,
+      profile.current_year_level ?? 1,
+      false,
+    );
+
+    if (!evalResult.isReadyForGraduation) {
+      return false;
+    }
+
+    if (
+      typeof (this.prisma as unknown as { notification?: { findFirst?: unknown } })
+        .notification?.findFirst === 'function'
+    ) {
+      const existingUnread = await this.prisma.notification.findFirst({
+        where: {
+          category: 'graduation_ready',
+          is_read: false,
+          link: { contains: `/CoordinatorMonitor/${scholarProfileId}` },
+        },
+      });
+      if (existingUnread) {
+        return false;
+      }
+    }
+
+    const studentName =
+      `${profile.first_name || ''} ${profile.last_name || ''}`.trim() ||
+      profile.user?.email?.split('@')[0] ||
+      'Scholar';
+    const title = 'Graduation Confirmation Needed';
+    const message = `${studentName} has completed 100% of their prospectus (${evalResult.completedUnits}/${evalResult.totalUnits} units). Review and confirm graduation to update their status to Graduated.`;
+
+    if (typeof this.notificationsService?.createForRoles === 'function') {
+      await Promise.all([
+        this.notificationsService.createForRoles(
+          [Role.COORDINATOR, Role.ADMIN],
+          {
+            title,
+            message,
+            category: 'graduation_ready',
+            link: `/CoordinatorMonitor/${scholarProfileId}?action=confirm-graduation`,
+          },
+        ),
+        this.notificationsService.createForRoles([Role.GRANTOR], {
+          title,
+          message,
+          category: 'graduation_ready',
+          link: `/grantMonitor/${scholarProfileId}?action=confirm-graduation`,
+        }),
+      ]);
+    }
+
+    if (typeof this.cacheService?.delPattern === 'function') {
+      await this.cacheService.delPattern('sidebar-badges:');
+    }
+
+    if (typeof this.eventsGateway?.emitToStaff === 'function') {
+      this.eventsGateway.emitToStaff('scholar:graduation_ready', {
+        scholarProfileId,
+        studentName,
+        completionPct: 100,
+      });
+    }
+
+    return true;
   }
 
   /**

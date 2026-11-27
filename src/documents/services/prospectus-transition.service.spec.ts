@@ -6,6 +6,10 @@ import { PrismaService } from '../../prisma/prisma.service.js';
 import { SettingsService } from '../../settings/settings.service.js';
 import { AppCacheService } from '../../common/cache/app-cache.service.js';
 
+import { NotificationsService } from '../../notifications/notifications.service.js';
+import { EventsGateway } from '../../events/events.gateway.js';
+import { Role } from '../../generated/prisma/enums.js';
+
 const createPrismaMock = () => ({
   scholarProspectus: {
     findUnique: vi.fn(),
@@ -20,13 +24,27 @@ const createPrismaMock = () => ({
     findFirst: vi.fn(),
     update: vi.fn(),
   },
+  notification: {
+    findFirst: vi.fn(),
+  },
 });
 
 const createSettingsMock = () => ({
   evaluateStudentGrade: vi.fn().mockReturnValue({ isPassing: true }),
 });
 
-const createCacheMock = () => ({ del: vi.fn().mockResolvedValue(undefined) });
+const createCacheMock = () => ({
+  del: vi.fn().mockResolvedValue(undefined),
+  delPattern: vi.fn().mockResolvedValue(undefined),
+});
+
+const createNotificationsMock = () => ({
+  createForRoles: vi.fn().mockResolvedValue([]),
+});
+
+const createEventsMock = () => ({
+  emitToStaff: vi.fn(),
+});
 
 const makeProspectus = (overrides: Record<string, unknown> = {}) => ({
   prospectus_id: 1,
@@ -66,13 +84,18 @@ describe('ProspectusTransitionService', () => {
   let prisma: ReturnType<typeof createPrismaMock>;
   let settings: ReturnType<typeof createSettingsMock>;
   let cache: ReturnType<typeof createCacheMock>;
+  let notifications: ReturnType<typeof createNotificationsMock>;
+  let events: ReturnType<typeof createEventsMock>;
 
   beforeEach(async () => {
     prisma = createPrismaMock();
     settings = createSettingsMock();
     cache = createCacheMock();
+    notifications = createNotificationsMock();
+    events = createEventsMock();
 
     prisma.scholarProspectus.findUnique.mockResolvedValue(makeProspectus());
+    prisma.notification.findFirst.mockResolvedValue(null);
     prisma.prospectusSubject.update.mockImplementation(
       ({
         where,
@@ -101,6 +124,8 @@ describe('ProspectusTransitionService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: SettingsService, useValue: settings },
         { provide: AppCacheService, useValue: cache },
+        { provide: NotificationsService, useValue: notifications },
+        { provide: EventsGateway, useValue: events },
       ],
     }).compile();
 
@@ -354,6 +379,122 @@ describe('ProspectusTransitionService', () => {
         where: { application_id: 42 },
         data: objectMatching({ stage: 'Flagged for Review' }),
       });
+    });
+  });
+
+  describe('checkAndNotifyGraduationReadiness', () => {
+    const makeFrozenCompletedProspectus = (
+      overrides: Record<string, unknown> = {},
+    ) => ({
+      prospectus_id: 1,
+      scholar_profile_id: 11,
+      is_frozen: true,
+      subjects: [
+        {
+          subject_id: 101,
+          subject_code: 'IT 401',
+          descriptive_title: 'Capstone 2',
+          status: 'PASSED',
+          units: 3,
+          year_level: 4,
+          semester: '2nd Semester',
+        },
+        {
+          subject_id: 102,
+          subject_code: 'GE 101',
+          descriptive_title: 'Purposive Comm',
+          status: 'CREDITED',
+          units: 3,
+          year_level: 1,
+          semester: '1st Semester',
+        },
+      ],
+      scholar_profile: {
+        profile_id: 11,
+        user_id: 7,
+        first_name: 'Maria',
+        last_name: 'Santos',
+        archived_at: null,
+        current_year_level: 4,
+        course_of_study: 'BSIT',
+        user: { role: 'SCHOLAR', email: 'maria@example.com' },
+      },
+      ...overrides,
+    });
+
+    it('notifies coordinators, admins, and grantors when a frozen prospectus reaches 100%', async () => {
+      prisma.scholarProspectus.findUnique.mockResolvedValue(
+        makeFrozenCompletedProspectus(),
+      );
+
+      const notified = await service.checkAndNotifyGraduationReadiness(11);
+
+      expect(notified).toBe(true);
+      expect(notifications.createForRoles).toHaveBeenCalledWith(
+        [Role.COORDINATOR, Role.ADMIN],
+        objectMatching({
+          category: 'graduation_ready',
+          link: '/CoordinatorMonitor/11?action=confirm-graduation',
+        }),
+      );
+      expect(notifications.createForRoles).toHaveBeenCalledWith(
+        [Role.GRANTOR],
+        objectMatching({
+          category: 'graduation_ready',
+          link: '/grantMonitor/11?action=confirm-graduation',
+        }),
+      );
+      expect(cache.delPattern).toHaveBeenCalledWith('sidebar-badges:');
+      expect(events.emitToStaff).toHaveBeenCalledWith(
+        'scholar:graduation_ready',
+        {
+          scholarProfileId: 11,
+          studentName: 'Maria Santos',
+          completionPct: 100,
+        },
+      );
+    });
+
+    it('does not notify when prospectus is not frozen or has remaining subjects', async () => {
+      prisma.scholarProspectus.findUnique.mockResolvedValue(
+        makeFrozenCompletedProspectus({ is_frozen: false }),
+      );
+      expect(await service.checkAndNotifyGraduationReadiness(11)).toBe(false);
+
+      prisma.scholarProspectus.findUnique.mockResolvedValue(
+        makeFrozenCompletedProspectus({
+          subjects: [
+            { subject_id: 101, status: 'PASSED', units: 3, year_level: 4 },
+            { subject_id: 102, status: 'UNTAKEN', units: 3, year_level: 4 },
+          ],
+        }),
+      );
+      expect(await service.checkAndNotifyGraduationReadiness(11)).toBe(false);
+      expect(notifications.createForRoles).not.toHaveBeenCalled();
+    });
+
+    it('skips archived scholars and deduplicates unread notifications', async () => {
+      prisma.scholarProspectus.findUnique.mockResolvedValue(
+        makeFrozenCompletedProspectus({
+          scholar_profile: {
+            profile_id: 11,
+            user_id: 7,
+            first_name: 'Maria',
+            last_name: 'Santos',
+            archived_at: new Date(),
+            current_year_level: 4,
+            user: { role: 'SCHOLAR', email: 'maria@example.com' },
+          },
+        }),
+      );
+      expect(await service.checkAndNotifyGraduationReadiness(11)).toBe(false);
+
+      prisma.scholarProspectus.findUnique.mockResolvedValue(
+        makeFrozenCompletedProspectus(),
+      );
+      prisma.notification.findFirst.mockResolvedValue({ notification_id: 99 });
+      expect(await service.checkAndNotifyGraduationReadiness(11)).toBe(false);
+      expect(notifications.createForRoles).not.toHaveBeenCalled();
     });
   });
 });

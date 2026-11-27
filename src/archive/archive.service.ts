@@ -850,6 +850,38 @@ export class ArchiveService {
 
     await this.cacheService.delPattern('dashboard:');
     await this.cacheService.delPattern('analytics:');
+    await this.cacheService.delPattern('sidebar-badges:');
+
+    if (dto.archive_reason === 'GRADUATED') {
+      if (
+        typeof (
+          this.prisma as unknown as { notification?: { updateMany?: unknown } }
+        ).notification?.updateMany === 'function'
+      ) {
+        await this.prisma.notification.updateMany({
+          where: {
+            category: 'graduation_ready',
+            is_read: false,
+            OR: [
+              { link: { contains: `/CoordinatorMonitor/${profileId}` } },
+              { link: { contains: `/grantMonitor/${profileId}` } },
+            ],
+          },
+          data: { is_read: true },
+        });
+      }
+
+      if (typeof this.notificationsService?.notifyUser === 'function') {
+        await this.notificationsService.notifyUser(scholar.user_id, {
+          title: 'Graduation Confirmed!',
+          message:
+            'Congratulations! Your scholarship graduation has been confirmed and your status has been updated to Graduated.',
+          category: 'graduation_ready',
+          link: '/scholarDashboard',
+        });
+      }
+    }
+
     this.eventsGateway.emitToStaff('scholar:archived', updated);
 
     return {

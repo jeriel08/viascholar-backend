@@ -815,6 +815,55 @@ describe('ActiveScholarsAnalyticsService', () => {
         total_disbursements: 1,
         total_disbursed_amount: 15000,
         settled_disbursed_amount: 15000,
+        prospectus_completion_pct: 50,
+        max_curriculum_year: 4,
+        is_graduating: false,
+        ready_for_graduation: false,
+      });
+    });
+
+    it('flags ready_for_graduation and curriculum-aware graduating status across active scholars', async () => {
+      prisma.scholarProfile.findMany.mockResolvedValue([
+        makeScholar({
+          profile_id: 1,
+          current_year_level: 4,
+          prospectus: {
+            prospectus_id: 60,
+            is_frozen: true,
+            subjects: [
+              makeSubject({ status: 'PASSED', units: 3, year_level: 4 }),
+              makeSubject({ status: 'CREDITED', units: 3, year_level: 1 }),
+            ],
+          },
+        }),
+        makeScholar({
+          profile_id: 2,
+          current_year_level: 4,
+          prospectus: {
+            prospectus_id: 61,
+            is_frozen: true,
+            subjects: [
+              makeSubject({ status: 'PASSED', units: 3, year_level: 4 }),
+              makeSubject({ status: 'UNTAKEN', units: 3, year_level: 5 }),
+            ],
+          },
+        }),
+      ]);
+
+      const scholars = await service.getCoordinatorActiveScholars();
+      expect(scholars[0]).toMatchObject({
+        id: 1,
+        is_graduating: true,
+        ready_for_graduation: true,
+        prospectus_completion_pct: 100,
+        max_curriculum_year: 4,
+      });
+      expect(scholars[1]).toMatchObject({
+        id: 2,
+        is_graduating: false,
+        ready_for_graduation: false,
+        prospectus_completion_pct: 50,
+        max_curriculum_year: 5,
       });
     });
   });

@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { AuditService } from '../../audit/audit.service.js';
@@ -10,6 +11,7 @@ import { EventsGateway } from '../../events/events.gateway.js';
 import { BatchUpdateSubjectsDto } from '../dto/batch-update-subjects.dto.js';
 import { FreezeBaselineDto } from '../dto/freeze-baseline.dto.js';
 import { AppCacheService } from '../../common/cache/app-cache.service.js';
+import { ProspectusTransitionService } from '../../documents/services/prospectus-transition.service.js';
 import {
   findLatestApprovedShift,
   pruneStalePreShiftSubjects,
@@ -24,6 +26,8 @@ export class CoordinatorBaselineService {
     private readonly auditService: AuditService,
     private readonly eventsGateway: EventsGateway,
     private readonly cacheService: AppCacheService,
+    @Optional()
+    private readonly prospectusTransitionService?: ProspectusTransitionService,
   ) {}
 
   private async isAwaitingShiftProspectusUpload(
@@ -341,6 +345,16 @@ export class CoordinatorBaselineService {
       `baseline:review:${prospectus.scholar_profile_id}`,
     );
 
+    try {
+      await this.prospectusTransitionService?.checkAndNotifyGraduationReadiness(
+        prospectus.scholar_profile_id,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Graduation readiness check after coordinator subject edit failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
     return {
       message: 'Prospectus subjects updated by coordinator.',
       prospectus: updated,
@@ -500,6 +514,16 @@ export class CoordinatorBaselineService {
       `baseline:review:${prospectus.scholar_profile_id}`,
     );
     await this.cacheService.delPattern('dashboard:coordinator:');
+
+    try {
+      await this.prospectusTransitionService?.checkAndNotifyGraduationReadiness(
+        prospectus.scholar_profile_id,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Graduation readiness check after baseline freeze failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     return {
       message: `Academic baseline for ${studentName} has been frozen and locked successfully.`,

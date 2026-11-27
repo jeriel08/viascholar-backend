@@ -13,6 +13,7 @@ export interface SidebarBadgesResult {
   disbursements: number | string | null;
   schools: number | null;
   programs: number | null;
+  graduationConfirmations?: number | null;
 }
 
 @Injectable()
@@ -21,6 +22,27 @@ export class SidebarBadgesService {
     private readonly prisma: PrismaService,
     private readonly cacheService: AppCacheService,
   ) {}
+
+  private async countPendingGraduationConfirmations(): Promise<number> {
+    if (typeof this.prisma.scholarProfile?.count !== 'function') {
+      return 0;
+    }
+    return this.prisma.scholarProfile.count({
+      where: {
+        archived_at: null,
+        user: { role: Role.SCHOLAR, is_active: true },
+        prospectus: {
+          is: {
+            is_frozen: true,
+            subjects: {
+              some: {},
+              none: { status: { notIn: ['PASSED', 'CREDITED'] } },
+            },
+          },
+        },
+      },
+    });
+  }
 
   private countValidScholarGradeDocs(
     docs: Array<{ document_type: string; label: string | null }>,
@@ -99,6 +121,7 @@ export class SidebarBadgesService {
               pendingEnrollments,
               pendingDisbursements,
               pendingAppeals,
+              pendingGraduationConfirmations,
             ] = await Promise.all([
               Promise.all(commonStaffQueries),
               this.prisma.termEnrollment.count({
@@ -116,15 +139,20 @@ export class SidebarBadgesService {
               this.prisma.gradeReport.count({
                 where: { appeal_status: 'PENDING_GRANTOR' },
               }),
+              this.countPendingGraduationConfirmations(),
             ]);
 
             return {
               applicants,
               meetings,
-              scholars: pendingEnrollments + pendingAppeals,
+              scholars:
+                pendingEnrollments +
+                pendingAppeals +
+                pendingGraduationConfirmations,
               disbursements: pendingDisbursements,
               schools,
               programs,
+              graduationConfirmations: pendingGraduationConfirmations,
             };
           }
 
@@ -135,6 +163,7 @@ export class SidebarBadgesService {
               pendingEnrollments,
               pendingDisbursements,
               gradeDocs,
+              pendingGraduationConfirmations,
             ] = await Promise.all([
               Promise.all(commonStaffQueries),
               this.prisma.scholarProfile.count({
@@ -159,6 +188,7 @@ export class SidebarBadgesService {
                 },
                 select: { document_type: true, label: true },
               }),
+              this.countPendingGraduationConfirmations(),
             ]);
 
             const pendingGradeAudits =
@@ -168,10 +198,14 @@ export class SidebarBadgesService {
               applicants,
               meetings,
               scholars:
-                pendingBaselines + pendingEnrollments + pendingGradeAudits,
+                pendingBaselines +
+                pendingEnrollments +
+                pendingGradeAudits +
+                pendingGraduationConfirmations,
               disbursements: pendingDisbursements,
               schools,
               programs,
+              graduationConfirmations: pendingGraduationConfirmations,
             };
           }
 
@@ -182,6 +216,7 @@ export class SidebarBadgesService {
             pendingDisbursements,
             gradeDocs,
             pendingAppeals,
+            pendingGraduationConfirmations,
           ] = await Promise.all([
             Promise.all(commonStaffQueries),
             this.prisma.scholarProfile.count({
@@ -218,6 +253,7 @@ export class SidebarBadgesService {
             this.prisma.gradeReport.count({
               where: { appeal_status: 'PENDING_GRANTOR' },
             }),
+            this.countPendingGraduationConfirmations(),
           ]);
 
           const pendingGradeAudits = this.countValidScholarGradeDocs(gradeDocs);
@@ -229,10 +265,12 @@ export class SidebarBadgesService {
               pendingBaselines +
               pendingEnrollments +
               pendingGradeAudits +
-              pendingAppeals,
+              pendingAppeals +
+              pendingGraduationConfirmations,
             disbursements: pendingDisbursements,
             schools,
             programs,
+            graduationConfirmations: pendingGraduationConfirmations,
           };
         }
 
@@ -254,6 +292,7 @@ export class SidebarBadgesService {
             disbursements: null,
             schools: null,
             programs: null,
+            graduationConfirmations: null,
           };
         }
 
@@ -286,6 +325,7 @@ export class SidebarBadgesService {
           disbursements: role === 'SCHOLAR' && needsOrCount > 0 ? '!' : null,
           schools: null,
           programs: null,
+          graduationConfirmations: null,
         };
       },
       30 * 1000,

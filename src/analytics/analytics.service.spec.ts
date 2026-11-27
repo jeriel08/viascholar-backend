@@ -1893,5 +1893,74 @@ describe('AnalyticsService', () => {
         'Graduated Scholars: 50% (1 scholars)',
       ]);
     });
+
+    it('uses prospectus final curriculum year for graduating status (supports 5-year courses)', async () => {
+      prisma.termEnrollment.findMany.mockResolvedValue([
+        {
+          academic_year: '2025-2026',
+          semester: '1st Semester',
+          total_assessment: '40000',
+          status: 'ENROLLED',
+        },
+      ]);
+      prisma.disbursement.findMany.mockResolvedValue([]);
+
+      const fourthYearFiveYearCourse = makeScholar({
+        profile_id: 201,
+        first_name: 'Archi',
+        last_name: 'Student',
+        current_year_level: 4,
+        enrollments: [
+          makeEnrollment({
+            academic_year: '2025-2026',
+            semester: '1st Semester',
+            year_level: 4,
+          }),
+        ],
+        prospectus: {
+          is_frozen: true,
+          subjects: [
+            makeSubject({ status: 'PASSED', year_level: 4, units: 3 }),
+            makeSubject({ status: 'UNTAKEN', year_level: 5, units: 3 }),
+          ],
+        },
+      });
+
+      const fifthYearFiveYearCourse = makeScholar({
+        profile_id: 202,
+        first_name: 'Senior',
+        last_name: 'Archi',
+        current_year_level: 5,
+        enrollments: [
+          makeEnrollment({
+            academic_year: '2025-2026',
+            semester: '1st Semester',
+            year_level: 5,
+          }),
+        ],
+        prospectus: {
+          is_frozen: true,
+          subjects: [
+            makeSubject({ status: 'PASSED', year_level: 4, units: 3 }),
+            makeSubject({ status: 'ENROLLED', year_level: 5, units: 3 }),
+          ],
+        },
+      });
+
+      prisma.scholarProfile.findMany.mockResolvedValue([
+        fourthYearFiveYearCourse,
+        fifthYearFiveYearCourse,
+      ]);
+
+      const res = await loadAnalytics({
+        academicYear: '2025-2026',
+        semester: '1st Semester',
+      });
+
+      const archi4 = res.scholars.find((s) => s.id === 201);
+      const archi5 = res.scholars.find((s) => s.id === 202);
+      expect(archi4?.isGraduating).toBe(false);
+      expect(archi5?.isGraduating).toBe(true);
+    });
   });
 });

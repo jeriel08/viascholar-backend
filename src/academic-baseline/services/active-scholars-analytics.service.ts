@@ -1,5 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
+import { evaluateProspectusGraduation } from '../../common/utils/graduation-readiness.util.js';
 
 @Injectable()
 export class ActiveScholarsAnalyticsService {
@@ -60,7 +61,6 @@ export class ActiveScholarsAnalyticsService {
         prospectus: {
           include: {
             subjects: {
-              where: { status: { in: ['CREDITED', 'PASSED', 'FAILED'] } },
               select: {
                 status: true,
                 grade: true,
@@ -112,7 +112,10 @@ export class ActiveScholarsAnalyticsService {
         scholar.prospectus.subjects.length > 0
       ) {
         const graded = scholar.prospectus.subjects.filter(
-          (s) => s.grade != null && !isNaN(Number(s.grade)),
+          (s) =>
+            ['CREDITED', 'PASSED', 'FAILED'].includes(s.status) &&
+            s.grade != null &&
+            !isNaN(Number(s.grade)),
         );
         if (graded.length > 0) {
           const totalWeighted = graded.reduce(
@@ -264,6 +267,12 @@ export class ActiveScholarsAnalyticsService {
         });
       }
 
+      const gradEval = evaluateProspectusGraduation(
+        scholar.prospectus,
+        scholar.current_year_level || 1,
+        false,
+      );
+
       return {
         id: scholar.profile_id,
         user_id: scholar.user.user_id,
@@ -272,6 +281,10 @@ export class ActiveScholarsAnalyticsService {
         course,
         school,
         year_level: scholar.current_year_level || 1,
+        is_graduating: gradEval.isGraduating,
+        ready_for_graduation: gradEval.isReadyForGraduation,
+        prospectus_completion_pct: gradEval.completionPct,
+        max_curriculum_year: gradEval.maxCurriculumYear,
         gwa: Number(gwa.toFixed(2)),
         trend,
         docs: docsText,
@@ -532,6 +545,12 @@ export class ActiveScholarsAnalyticsService {
       .filter((d) => d.status === 'SETTLED' || d.status === 'CLAIMED')
       .reduce((sum, d) => sum + Number(d.amount || 0), 0);
 
+    const gradEval = evaluateProspectusGraduation(
+      scholar.prospectus,
+      scholar.current_year_level || 1,
+      Boolean(scholar.archived_at),
+    );
+
     return {
       scholar_profile: {
         profile_id: scholar.profile_id,
@@ -635,6 +654,10 @@ export class ActiveScholarsAnalyticsService {
         total_disbursements: scholar.disbursements.length,
         total_disbursed_amount: Number(totalDisbursedAmount.toFixed(2)),
         settled_disbursed_amount: Number(settledDisbursedAmount.toFixed(2)),
+        prospectus_completion_pct: gradEval.completionPct,
+        max_curriculum_year: gradEval.maxCurriculumYear,
+        is_graduating: gradEval.isGraduating,
+        ready_for_graduation: gradEval.isReadyForGraduation,
       },
     };
   }
